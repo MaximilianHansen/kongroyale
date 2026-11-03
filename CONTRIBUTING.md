@@ -43,6 +43,8 @@ touched multiplayer.
 - **Art, models, sound and fonts must be yours or clearly free to use** (CC0, or CC-BY with credit). Say where each
   one came from in the pull request. Nothing taken from other games, and no lookalikes of other games' characters
   or logos.
+- **No file over 10 MB.** Every clone downloads the whole history, so a big file stays a cost even after it's
+  deleted. Compress it, or ask in an issue first. CI checks this.
 - **AI-assisted work is welcome.** Kong Royale was largely built with AI. You're responsible for every line: read
   it, run it, and be ready to explain it. Point your agent at [AGENTS.md](AGENTS.md).
 

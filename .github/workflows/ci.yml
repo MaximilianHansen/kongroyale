@@ -44,6 +44,21 @@ jobs:
         run: |
           found=$(git ls-files | grep -E '(^|/)(\.env($|\.)|\.admin-key|id_rsa|id_ed25519)|\.(pem|key|p12)$' || true)
           if [ -n "$found" ]; then echo "These files must never be committed:"; echo "$found"; exit 1; fi
+      - name: no file over 10 MB
+        run: |
+          # every clone downloads the whole history, so a big file stays a cost even after it's deleted
+          big=$(git ls-files -z | xargs -0 stat -c '%s %n' | awk -v max="$MAX_BYTES" '$1 > max')
+          # a pull request: also every file any of its commits added (one added then deleted would still be in its history)
+          if [ -n "$BASE" ]; then
+            added=$(git rev-list --objects "$BASE..$HEAD_SHA" | git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' |
+              awk -v max="$MAX_BYTES" '$1 == "blob" && $2 > max { sub(/^blob /, ""); print }')
+            big=$(printf '%s\n%s\n' "$big" "$added" | grep . | sort -u || true)
+          fi
+          if [ -n "$big" ]; then echo "Files over $MAX_BYTES bytes (size in bytes, path):"; echo "$big"; exit 1; fi
+        env:
+          MAX_BYTES: 10485760
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       - name: gitleaks (secret scanner)
         run: |
           V=8.28.0

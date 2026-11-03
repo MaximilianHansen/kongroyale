@@ -1,10 +1,18 @@
 # Opens pull requests when a dependency or a CI action has a security fix or a new version. They're reviewed like any other.
+# Minor and patch updates arrive together in one weekly pull request; each major update gets its own.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # the types must match the Node version the game runs on (22, see .nvmrc and engines), not the newest Node
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
