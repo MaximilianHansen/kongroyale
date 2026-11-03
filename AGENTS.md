@@ -50,7 +50,8 @@ pieces fit; read it before changing networking, the simulation or world loading.
 3. **Never commit secrets.** No `.env` files, keys, tokens or `.admin-key`. CI scans every pull request for them.
 4. **Every asset needs a source and a licence.** Art, models, sounds and fonts must be your own or clearly free to use
    (CC0, or CC-BY with credit). Say where each one came from in the pull request and add it to
-   [CREDITS.md](CREDITS.md) if it needs credit. Nothing taken from other games.
+   [CREDITS.md](CREDITS.md) if it needs credit. Nothing taken from other games. No single file over 10 MB; CI rejects
+   it, because every clone downloads the whole history.
 5. **One change per pull request.** A bug fix doesn't come with a refactor of the file around it.
 6. **Run `npm run build` and `npm test` before you open the pull request.** Both must pass. If a test fails on
    something you didn't touch, say so in the pull request. Never edit a test just to make it pass.

@@ -1,0 +1,7 @@
+# Baked data files: GitHub collapses their diffs in pull requests and leaves them out of the language stats.
+# Change the generator (tools/), re-run it, and review the generator's diff instead.
+shared/pois/*-baked.json linguist-generated=true
+shared/pois/town-interiors.json linguist-generated=true
+public/assets/audio/kr/manifest.json linguist-generated=true
+public/assets/audio/kr/rooms.json linguist-generated=true
+public/assets/audio/kr/steps-floor.json linguist-generated=true
