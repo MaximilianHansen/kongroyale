@@ -7,9 +7,11 @@
 // grips, round scooter mirrors, a whip aerial with a pennant, and one big cyclops headlight under a chrome brow.
 //
 // Frame = the sim's body frame: +X right, +Y up, −Z forward, origin on the ground under the middle of the wheelbase.
-// Everything is merged per material per moving part (≈ 30 draws close up, 12 beyond DETAIL_M); the parts that move:
+// Everything is merged per material per moving part close up; beyond FAR_M the whole rest pose is one merge per
+// material (buildFar, ≈ 10 draws). The parts that move:
 // the three wheels, the steering (bars + fork + mudguard), the cabin on its springs, the aerial, the dice, the horn bulb.
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { Batch, M, box, cyl, mat, rbox, sph, type MatKey } from "../world/pois/_kit/coast-kit";
 import { wheel } from "../world/pois/_kit/coast-vehicles";
 import { bananaHand, crate } from "../world/pois/_kit/coast-props";
@@ -18,6 +20,9 @@ import { TUK, VF, VS } from "../../../shared/sim/vehicle";
 const Y = 0xf8d42c, YD = 0xe2a81a, BR = 0x4a2c17, BD = 0x2a1d14, CO = 0xe2553d, COD = 0xb93f2c, TQ = 0x2bb6b0, CR = 0xfff0d2, CH = 0xe2e2e2, DK = 0x27272b, BRASS = 0xdfa63c;
 /** small props (fringe, dice, cargo, bolts) are drawn within this distance (m) */
 const DETAIL_M = 70;
+/** beyond this distance (m) a tuk-tuk is drawn as its FAR merge: the rest pose's lod-0 parts, one mesh per material
+ * (≈ 10 draws instead of ≈ 100: the moving parts' motion can't be seen out there) */
+const FAR_M = 70;
 /** steering head (body frame) and the fork's rake (rad): the bars, the fork and the front wheel turn about this axis */
 const HEAD: readonly [number, number, number] = [0, 1.16, -1.0];
 const RAKE = Math.atan2(TUK.FRONT - 1.0, 1.16 - TUK.WHEEL_R);
@@ -319,6 +324,37 @@ let SHARED: Parts | null = null, SHARED_WRECK: Parts | null = null;
 /** the merged geometry is built once and shared by every tuk-tuk (each instance only owns its transforms) */
 function partsFor(burnt: boolean): Parts { return burnt ? (SHARED_WRECK ??= build(true)) : (SHARED ??= build(false)); }
 const share = (g: THREE.Group) => { const c = g.clone(); return c; };
+/** the FAR merge per part set (built once from the first tuk-tuk dressed with it, shared by every tuk-tuk) */
+const FAR = new WeakMap<Parts, THREE.Group>();
+/** `pose` (a dressed tuk-tuk at rest, root at the origin) → one mesh per material of its lod-0 parts, the small detail
+ * groups (`skip`: fringe, aerial, dice, brake lamps) left out */
+function buildFar(pose: THREE.Object3D, skip: THREE.Object3D[]): THREE.Group {
+  pose.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(pose.matrixWorld).invert(), m = new THREE.Matrix4();
+  const byMat = new Map<THREE.Material, { geos: THREE.BufferGeometry[]; shadow: boolean }>();
+  const walk = (o: THREE.Object3D) => {
+    if (skip.includes(o)) return;
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh && !Array.isArray(mesh.material) && !((mesh.userData.lod as number | undefined) ?? 0)) {
+      let e = byMat.get(mesh.material);
+      if (!e) byMat.set(mesh.material, (e = { geos: [], shadow: false }));
+      e.geos.push(mesh.geometry.clone().applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld)));
+      e.shadow ||= mesh.castShadow;
+    }
+    for (const c of o.children) walk(c);
+  };
+  walk(pose);
+  const far = new THREE.Group(); far.name = "tuk:far";
+  for (const [material, e] of byMat) {
+    const g = mergeGeometries(e.geos, false);
+    for (const x of e.geos) x.dispose();
+    if (!g) continue;
+    const mesh = new THREE.Mesh(g, material);
+    mesh.name = `tuk:far:${material.name}`; mesh.castShadow = e.shadow; mesh.receiveShadow = true;
+    far.add(mesh);
+  }
+  return far;
+}
 
 /** one tuk-tuk in the scene */
 export function createTukTuk(): TukView {
@@ -347,7 +383,14 @@ export function createTukTuk(): TukView {
     wF.add(share(P.wheel)); wL.add(share(P.wheel)); wR.add(share(P.wheel));
     aerial.add(share(P.aerial)); dice.add(share(P.dice)); bulb.add(share(P.bulb)); brake.add(share(P.brake));
     brake.visible = false;
+    // the far merge: built from this tuk-tuk while it is still at rest (dress() runs first inside createTukTuk), so
+    // the shared geometry is the rest pose
+    farG?.removeFromParent();
+    let fg = FAR.get(P);
+    if (!fg) { fg = buildFar(root, [detail, aerial, dice, brake]); FAR.set(P, fg); }
+    farG = fg.clone(); farG.visible = false; root.add(farG);
   };
+  let farG: THREE.Group | null = null;
   dress();
   // ---- its own little motions
   let spin = 0, steer = 0, lastVf = 0, lastYaw = 0, have = false;
@@ -364,6 +407,8 @@ export function createTukTuk(): TukView {
       root.position.set(s.x, s.y, s.z); root.rotation.set(s.pitch, s.yaw, s.roll, "YXZ");
       const d2 = (cam.x - s.x) ** 2 + (cam.y - s.y) ** 2 + (cam.z - s.z) ** 2;
       detail.visible = d2 < DETAIL_M * DETAIL_M && !view.firstPerson; aerial.visible = d2 < DETAIL_M * DETAIL_M; dice.visible = detail.visible;
+      const far = d2 > FAR_M * FAR_M && !view.firstPerson;
+      lean.visible = !far; if (farG) farG.visible = far;
       if (wreck) { lean.rotation.set(0, 0, 0.07); lean.position.y = -0.06; cabin.position.y = 0; cabin.rotation.set(0.05, 0, 0); return; }
       dt = Math.min(dt, 0.05);
       // what the body feels: forward / sideways acceleration from the drawn motion itself
