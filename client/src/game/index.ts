@@ -568,6 +568,8 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     }
     // tuk-tuk: the view key swaps the driver's view (behind it ↔ from the saddle)
     if (input.matches("rideView", code) && !paused && !resultsOpen && cm?.pred.st === PS.Ride) { render?.toggleRideView(); return true; }
+    // on foot (alive, not watching anybody): the same key swaps first ↔ third person (SETTINGS → Camera view)
+    if (input.matches("rideView", code) && !paused && !resultsOpen && !videoMenuOpen() && !hud.mapOpen && cm && cm.pred.st !== PS.Dead && cm.pred.st !== PS.Spectate && cm.pred.st !== PS.Plane && !spectating()) { render?.toggleFootView(); return true; }
     if (input.matches("map", code) && !paused && !resultsOpen && !videoMenuOpen()) { toggleMap(); return true; }
     // the inventory key (Tab) opens AND closes the inventory; Esc closes it too
     if (input.matches("inventory", code) && !paused && !resultsOpen && !videoMenuOpen()) { toggleInventory(); return true; }

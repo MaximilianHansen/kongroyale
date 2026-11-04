@@ -40,6 +40,10 @@ export type AimAssistFn = (yaw: number, pitch: number, dt: number, look: number,
 export class GameInput {
   readonly down = new Set<string>();
   yaw = 0; pitch = 0;
+  /** third person (game/render.ts thirdAim): what to add to the look to aim FROM THE EYES at the point under the
+   *  crosshair (the camera sits over a shoulder, so the two rays differ). The client sends look + this as its aim and
+   *  turns the move keys by the same yaw, so walking stays camera-relative. 0 in first person. Radians. */
+  aimDYaw = 0; aimDPitch = 0;
   /** look delta accumulated since the viewmodel last read it (mouse counts; the controller adds the equivalent) */
   dx = 0; dy = 0;
   sens = 0.0021;                       // rad per counted pixel at 1× (user setting)

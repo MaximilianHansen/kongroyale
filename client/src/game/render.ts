@@ -1,7 +1,8 @@
 // Turns the ClientMatch into pixels + sound: camera, view model, kong actors, loot/chests, plane, gliders, storm,
 // tracers/impacts, rockets, HUD state. Uses ONLY the module contracts (actors/weapons/audio api) + the storm/ui APIs.
 // Game feel lives here: recoil patterns (aim kick that recovers + a camera punch that springs back), trauma camera
-// shake, footsteps per surface (local + nearby remotes), death cam, the cargo-bay ride in the plane.
+// shake, footsteps per surface (local + nearby remotes), death cam, the cargo-bay ride in the plane, and the optional
+// third-person camera (over the shoulder on foot, behind the kong in the drop; SETTINGS → Camera view).
 // Per-frame code allocates nothing (scratch vectors, pooled rockets, reused HUD rows).
 import * as THREE from "three";
 import { RangeView } from "./range";
@@ -26,7 +27,7 @@ import { AMMO_TYPES, PS, SK, consumableId, weaponId, rarityOf, eyeY as simEyeY, 
 import { PLANE_OPEN_S, FREEFALL_FOV, FREEFALL_FOV_MAX, GLIDE_FOV, PLANE_FOV } from "../../../shared/sim/plane";
 import { ZIP_LINES, zipNear } from "../../../shared/sim/zipline";
 import { PLANE_BAY_S, CHUTE_CUT_HOLD_S, CONSUMABLE_DEFS, DT, PLANE_ALT, PLANE_SPEED, WEAPON_DEFS, SPRINT, SOLO_REDEPLOYS, WARMUP_S, resurgenceDelay, scopeSway, SCOPE_SWAY } from "../../../shared/sim/const";
-import { makeShotResult } from "../../../shared/sim/hitscan";
+import { makeShotResult, traceShot } from "../../../shared/sim/hitscan";
 import { weaponDef, currentSpread } from "../../../shared/sim/player";
 import { IK, type Item } from "../../../shared/sim/loot";
 import { makeHit, surfaceById } from "../../../shared/sim/world";
@@ -327,6 +328,19 @@ export class GameRender implements EventSink {
    * was my own predicted one (1: 50 ms apart, on time) or one heard from the server (0: they arrive in 33 ms packets) */
   private readonly gunLastAt = new Float64Array(TUK.MAX).fill(-1e9); private readonly gunLocal = new Uint8Array(TUK.MAX);
   private readonly blendP = new THREE.Vector3(); private readonly blendQ = new THREE.Quaternion(); private readonly keptP = new THREE.Vector3(); private readonly keptQ = new THREE.Quaternion();
+  // ---- third person (SETTINGS → Camera view; the Camera view key on foot): an over-the-shoulder camera on foot and a
+  // chase camera in the drop, my own kong drawn (thirdPersonCamera), my shots aimed from its eyes at the crosshair (thirdAim)
+  /** this frame's camera is the third-person one */
+  private third = false;
+  /** its smoothed distance behind the shoulder (aiming pulls it in), the shoulder side (−1 left … +1 right, eased so a
+   *  swap travels), and how much of the side / back offset the walls left free (pulled in at once, eased back out) */
+  private tpDist = TP_DIST; private tpSide = 1; private tpSideFree = 1; private tpFree = 1;
+  /** the camera is clear of my kong (a wall at my back can push it into the fur: then the kong is not drawn) */
+  private tpShow = true;
+  /** my last shot (performance.now): the third-person kong's recoil and muzzle */
+  private meFireAt = -1e9;
+  /** the Camera view key on foot: first ↔ third person (saved, like the settings row) */
+  toggleFootView() { preferences.set({ thirdPerson: !preferences.value.thirdPerson }); this.sfx("ui:click", { volume: 0.5 }); }
   /** V: the driver's view, behind the tuk-tuk ↔ from the saddle */
   toggleRideView() { if (this.cm.pred.st === PS.Ride && this.cm.pred.seat === 0) { this.rideThird = !this.rideThird; this.camMode = -2; this.sfx("ui:click", { volume: 0.5 }); } }
 
@@ -705,6 +719,7 @@ export class GameRender implements EventSink {
     { const gv = gunOf(this.cm.vehs, this.cm.pred); if (gv) { this.gunFire(gv.id); return; } }
     const p = this.cm.pred; const slot = p.slots[p.active]; const w = WEAPON_DEFS[weaponId(slot.id)];
     this.kits.viewModel.fire();
+    this.meFireAt = performance.now();
     { const r = FIRE_RUMBLE[w.id]; if (r) gamepads.rumble(r[0], r[1], r[2], { right: r[3] }); }
     // ---- aim recoil (moves where the next bullet goes; recovers after the burst unless the player pulled down)
     const now = performance.now();
@@ -737,7 +752,7 @@ export class GameRender implements EventSink {
     // ---- INSTANT hit feedback: trace every pellet exactly like the server will (same spread seed, same drawn
     // hitboxes, same world) — tracer to where it really stops, impact there, predicted marker + number now; the
     // server's EV.Hit / EV.Shot for these pellets confirm (or take back) the prediction ~1 RTT later.
-    this.kits.viewModel.muzzle(V3);
+    if (this.third && this.meActor) this.meActor.muzzle(V3); else this.kits.viewModel.muzzle(V3);
     const ox = p.x, oy = simEyeY(p), oz = p.z;
     let hitV = -1, hitZone = 0, hitT = 0, total = 0;
     for (let i = 0; i < p.fired; i++) {
@@ -975,6 +990,9 @@ export class GameRender implements EventSink {
     this.deployLook(dt);
     this.stepPlaneClock(dt);
     const myVeh = !dead && !victory && !spec ? cm.myVehicle() : null;
+    // third person (SETTINGS → Camera view): on foot and in the drop; never through the sniper scope (it is the eyes')
+    const third = !this.caster && !victory && !spec && !dead && !inPlane && !myVeh && !p.scoped && preferences.value.thirdPerson && tpState(p.st);
+    this.third = third;
     this.specSmooth(spec, dt);
     this.updateVehicles(dt, t);
     if (this.caster) this.caster.camera(dt);
@@ -983,14 +1001,15 @@ export class GameRender implements EventSink {
     else if (inPlane) this.planeCamera(dt);
     else if (dead) this.deathCamera(dt);
     else if (myVeh) this.rideCamera(dt, myVeh);
-    else this.firstPersonCamera(dt);
+    else { this.firstPersonCamera(dt); if (third) this.thirdPersonCamera(dt); }
     if (!myVeh) this.rideOn = false;
     else if (p.seat !== this.rideSeatAt) { this.rideSeatAt = p.seat; this.rideAt = performance.now(); }
     // climbing in / out / swapping the view: the camera travels there (0.38 s) instead of cutting
-    this.blendCamera(dt, victory || spec || inPlane || dead || this.caster ? -1 : myVeh ? (p.seat === 0 && this.rideThird ? 1 : 2 + p.seat) : 0);
+    this.blendCamera(dt, victory || spec || inPlane || dead || this.caster ? -1 : myVeh ? (p.seat === 0 && this.rideThird ? 1 : 2 + p.seat) : third ? TP_CAM_MODE : 0);
     // the local door gunner holds TOP BANANA under its camera (actors/heli-tripo.ts gunnerView): after the camera is final
     if (myVeh && myVeh.kind === VKind.Heli) (this.tuks.get(myVeh.id) as (TukView & { gunnerView?(c: THREE.Camera | null): void }) | undefined)?.gunnerView?.(p.seat === HELI.GUN_SEAT && !dead ? this.engine.camera : null);
     this.dropCamera(dt, inPlane || dead || victory || !!spec || !!myVeh || !!this.caster);
+    this.thirdAim();
     // actors: my own kong in first person while falling /
     // gliding — arms in frame in freefall, fists on the bar + legs below under the glider
     if (inPlane && !this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
@@ -1003,11 +1022,22 @@ export class GameRender implements EventSink {
     }
     if (!victory && !spec && !dead && (p.st === PS.Freefall || p.st === PS.Glide)) {
       if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
-      if (this.meActor?.pov) { const mp = this.mePose; this.dropBody(V3); mp.x = V3.x; mp.y = V3.y; mp.z = V3.z; mp.yaw = this.input.yaw; mp.pitch = this.input.pitch; mp.vx = p.vx; mp.vy = p.vy; mp.vz = p.vz; mp.state = p.st === PS.Glide ? "glide" : "freefall"; mp.weapon = null; mp.team = p.team; mp.friendly = true; this.meActor.setVisible(true); cam.updateMatrixWorld(); this.meActor.pov(cam, mp, dt); }
+      if (this.meActor && (this.meActor.pov || third)) { const mp = this.mePose; this.dropBody(V3); mp.x = V3.x; mp.y = V3.y; mp.z = V3.z; mp.yaw = third ? this.dropYaw : this.input.yaw; mp.pitch = this.input.pitch; mp.vx = p.vx; mp.vy = p.vy; mp.vz = p.vz; mp.state = p.st === PS.Glide ? "glide" : "freefall"; mp.weapon = null; mp.team = p.team; mp.friendly = true; mp.crouch = false; mp.sprint = false; mp.fired = false; mp.reloading = false;
+        // (third person: the kong as everybody else sees it in the drop — a plain apply() leaves the first-person body)
+        this.meActor.setVisible(!third || this.tpShow);
+        if (third) this.meActor.apply(mp, dt); else if (this.meActor.pov) { cam.updateMatrixWorld(); this.meActor.pov(cam, mp, dt); } }
     } else if (myVeh && p.seat === 0 && this.rideThird) {
       // at the bars, seen from behind: my own kong drives
       if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
       if (this.meActor) { const mp = this.mePose; this.seatPose(mp, myVeh, 0, myVeh.yaw + myVeh.oyaw, 0); mp.weapon = null; mp.team = p.team; mp.friendly = true; mp.crouch = false; mp.sprint = false; this.meActor.setVisible(true); this.meActor.apply(mp, dt); }
+    } else if (third) {
+      // third person on foot: my own kong, on the body the camera follows
+      if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
+      if (this.meActor) {
+        const mp = this.mePose, s = p.slots[p.active]; this.footPose(mp);
+        this.meActor.setVisible(this.tpShow); this.meActor.apply(mp, dt);
+        this.kits.weapons.setHeldMythic?.(this.meActor.object, mp.weapon !== null && mythicOf(s.rarity) !== null);
+      }
     } else if (this.meActor && !victory) this.meActor.setVisible(false);
     // scope (the only zoom in the game)
     const scoped = p.scoped && !spec;
@@ -1054,7 +1084,7 @@ export class GameRender implements EventSink {
     // a banana bomb in hand: the throwing hand comes up, the gun goes down
     const bombHand = this.bombFx.firstPerson(!victory && !spec && !dead ? p.cookT : 0, dt, t);
     const casterHands = this.caster?.hands?.() ?? null;
-    this.kits.viewModel.object.visible = casterHands ? true : !victory && !spec && !inPlane && !dead && !atBars && !gunner && !bombHand;   // (both fists are on the bars / the gun's grips)
+    this.kits.viewModel.object.visible = casterHands ? true : !victory && !spec && !inPlane && !dead && !atBars && !gunner && !bombHand && !third;   // (both fists are on the bars / the gun's grips)
     // swimming: the gun stowed (the sim's swim gun timer) → both hands swim
     const swimHands = !victory && !spec && !dead && p.st === PS.Ground && p.swim && (p.under || p.swGun <= 0) && SWIM_DEV.hands;
     { const vm = this.kits.viewModel as ViewModel & Partial<AirHands>;
@@ -1367,6 +1397,76 @@ export class GameRender implements EventSink {
     if (p.swim && !p.under) { const y = cam.position.y, m = 0.26 + this.swellS, d = y - m; cam.position.y = m + 0.5 * (d + Math.sqrt(d * d + 0.0225)); }
     // a hard entry dips the eye under the surface for a moment
     cam.position.y += this.waterFx.dipY() * motion;
+  }
+  /** third person (SETTINGS → Camera view). On foot: over the shoulder — the head on the same smoothed body and eye
+   *  springs as the first-person eye (no walk bob: the kong's own gait shows it), the camera beside it and back along the
+   *  whole look, so the crosshair stays the screen's centre. Aiming down sights pulls it in. In the drop it hangs straight
+   *  behind the body, farther back (and higher under the glider), on the drop's smoothed look. Walls pull it in at once
+   *  (the side leg, then the back leg) and let it out slowly; it never goes under the ground or, swimming, the sea. Runs
+   *  after firstPersonCamera, which keeps every eye spring warm for a switch back. */
+  private thirdPersonCamera(dt: number) {
+    const cm = this.cm, p = cm.pred, cam = this.engine.camera, b = this.body, w = cm.world;
+    const air = p.st === PS.Freefall || p.st === PS.Glide, pitch = this.lookS[0], yaw = this.lookS[1];
+    const k = 1 - Math.exp(-dt * 8);
+    this.tpDist += ((p.st === PS.Glide ? TP_GLIDE_DIST : air ? TP_FALL_DIST : this.adsOn ? TP_ADS_DIST : TP_DIST + (p.sprint ? 0.3 : 0)) - this.tpDist) * k;
+    this.tpSide += ((air ? 0 : preferences.value.shoulder === "left" ? -1 : 1) - this.tpSide) * k;
+    // the head: the first-person eye without its bob, dip and roll (eyeSmooth carries crouch, slide and swim heights)
+    const hx = b.x, hy = b.y + (p.st === PS.Glide ? TP_GLIDE_UP : air ? TP_FALL_UP : this.eyeSmooth + this.stepOff + (p.swim && !p.under ? this.swellS : 0)), hz = b.z;
+    // the shoulder point (right = (cos yaw, −sin yaw)); a wall on that side shortens it
+    const so = TP_SIDE * this.tpSide, up = air ? 0 : TP_UP, rx = Math.cos(yaw) * so, rz = -Math.sin(yaw) * so, sl = Math.hypot(so, up);
+    const su = sl > 1e-3 ? Math.min(1, camCast(w, hx, hy, hz, hx + rx, hy + up, hz + rz, 0.2) / sl) : 1;
+    this.tpSideFree = su < this.tpSideFree ? su : this.tpSideFree + (su - this.tpSideFree) * Math.min(1, dt * 4);
+    const sx = hx + rx * this.tpSideFree, sy = hy + up * this.tpSideFree, sz = hz + rz * this.tpSideFree;
+    // back along the look
+    const cp = Math.cos(pitch), fx = -Math.sin(yaw) * cp, fy = Math.sin(pitch), fz = -Math.cos(yaw) * cp, d = this.tpDist;
+    let cx = sx - fx * d, cy = sy - fy * d; const cz = sz - fz * d;
+    cy = Math.max(cy, this.engine.terrain.height(cx, cz) + 0.3);
+    if (p.swim && !p.under) cy = Math.max(cy, WATER_Y + 0.3);
+    const want = Math.hypot(cx - sx, cy - sy, cz - sz), free = camCast(w, sx, sy, sz, cx, cy, cz, 0.25), u = want > 1e-3 ? Math.min(1, free / want) : 1;
+    this.tpFree = u < this.tpFree ? u : this.tpFree + (u - this.tpFree) * Math.min(1, dt * 3.5);
+    cx = sx + (cx - sx) * this.tpFree; cy = sy + (cy - sy) * this.tpFree;
+    cam.position.set(cx, cy, sz + (cz - sz) * this.tpFree);
+    const f = this.feelOffsets();
+    E.set(pitch + f[0], yaw + f[1], f[2] * 0.5 + (air ? this.bank * 0.5 : 0), "YXZ");
+    cam.quaternion.setFromEuler(E);
+    this.tpShow = Math.hypot(cam.position.x - hx, cam.position.y - hy, cam.position.z - hz) > 0.75;
+  }
+  /** third person: aim from the EYES (where the server traces my shots from) at the point under the crosshair — the first
+   *  thing the camera's centre ray meets past my own kong: a wall, the ground, the sea, a kong's hitbox (the trace the
+   *  shot prediction uses) or the end of a bullet's range. GameInput.aimDYaw / aimDPitch carry the difference into the
+   *  next inputs (client.ts). Zero in first person, in the drop and in vehicles. */
+  private thirdAim() {
+    const inp = this.input, p = this.cm.pred;
+    if (!this.third || p.st === PS.Freefall || p.st === PS.Glide) { inp.aimDYaw = 0; inp.aimDPitch = 0; return; }
+    const c = this.engine.camera.position, b = this.body, yaw = inp.yaw, pitch = inp.pitch, cp = Math.cos(pitch);
+    const dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
+    const ex = b.x, ey = b.y + simEyeY(p) - p.y, ez = b.z;
+    // start level with the eyes: what lies between the camera and my kong cannot be aimed at
+    const t0 = Math.max(0, (ex - c.x) * dx + (ey - c.y) * dy + (ez - c.z) * dz);
+    const ox = c.x + dx * t0, oy = c.y + dy * t0, oz = c.z + dz * t0;
+    traceShot(this.cm.world, ox, oy, oz, dx, dy, dz, this.cm.viewTargets, this.cm.remotes.length, AIM_HIT);
+    const vx = ox + dx * AIM_HIT.t - ex, vy = oy + dy * AIM_HIT.t - ey, vz = oz + dz * AIM_HIT.t - ez, h = Math.hypot(vx, vz);
+    // (the point is at my own feet or straight overhead: keep the look)
+    if (h < 0.6) { inp.aimDYaw = 0; inp.aimDPitch = 0; return; }
+    inp.aimDYaw = Math.max(-TP_AIM_MAX, Math.min(TP_AIM_MAX, wrapPi(Math.atan2(-vx, -vz) - yaw)));
+    inp.aimDPitch = Math.max(-TP_AIM_MAX, Math.min(TP_AIM_MAX, Math.atan2(vy, h) - pitch));
+  }
+  /** my kong as the third-person camera shows it: on the drawn body (the camera's own pivot, so they never jitter
+   *  apart), facing where it aims, in the sim's state, holding what my hands hold */
+  private footPose(mp: KongPose) {
+    const p = this.cm.pred, b = this.body, inp = this.input, sp = Math.hypot(p.vx, p.vz), s = p.slots[p.active];
+    mp.x = b.x; mp.y = b.y + (p.swim && !p.under && p.st === PS.Ground ? this.swellS : 0); mp.z = b.z;
+    mp.yaw = inp.yaw + inp.aimDYaw; mp.pitch = inp.pitch + inp.aimDPitch;
+    // a climber's body faces its ladder / trunk whatever it looks at (as updateActors draws everybody else)
+    if (p.st === PS.Climb) { const c = this.climbViews.nearest(p.x, p.y, p.z); if (c) mp.yaw = Math.atan2(c.nx, c.nz); }
+    mp.vx = p.vx; mp.vy = p.vy; mp.vz = p.vz;
+    mp.state = p.swim && p.st === PS.Ground ? (p.under ? "dive" : "swim") : p.st === PS.Mantle ? "mantle" : p.st === PS.Zip ? "zip" : p.st === PS.Climb ? "climb"
+      : !p.grounded ? (p.vy > 1 ? "jump" : "fall") : p.crouch && p.mvT > 0 ? "slide" : sp > 0.6 ? "move" : "idle";
+    mp.crouch = p.crouch; mp.sprint = p.sprint;
+    // (swimming with the gun stowed: both arms stroke)
+    mp.weapon = s.kind === SK.Weapon && !(p.swim && (p.under || p.swGun <= 0)) ? weaponId(s.id) : null;
+    mp.fired = performance.now() - this.meFireAt < 90; mp.reloading = p.reloadT > 0; mp.hurt = false;
+    mp.team = p.team; mp.friendly = true; mp.seatPitch = 0; mp.seatRoll = 0; mp.grips = null;
   }
   /** the drop's look is spring-smoothed — a critically damped follow of the mouse
    *  (w 25: 63 % of a turn-rate change in ~85 ms, no overshoot) instead of every mouse step landing in one frame. The sim
@@ -2122,7 +2222,7 @@ export class GameRender implements EventSink {
       // overshoot, rising from the shoulders to its 2.3 m) over ~0.45 s
       if (this.myGlider && this.gliderOpenAt < 0) this.gliderOpenAt = this.engine.time;
       const u = Math.min(1, (this.engine.time - this.gliderOpenAt) / 0.45), ob = 1 + 2.2 * (u - 1) ** 3 + 1.2 * (u - 1) ** 2;
-      if (this.myGlider) { this.dropBody(V3); this.myGlider.object.visible = true; this.myGlider.object.scale.setScalar(Math.max(0.15, ob)); this.myGlider.object.position.set(V3.x, V3.y + 1.2 + 1.1 * Math.min(1, ob), V3.z); this.myGlider.object.rotation.set(0, this.dropYaw, 0); this.myGlider.setBank(-this.cm.cur.mx * 0.35, this.input.pitch * 0.3); this.gripRisers(this.myGlider); this.myGlider.update(dt, t); }
+      if (this.myGlider) { this.dropBody(V3); this.myGlider.object.visible = true; this.myGlider.object.scale.setScalar(Math.max(0.15, ob)); this.myGlider.object.position.set(V3.x, V3.y + 1.2 + 1.1 * Math.min(1, ob), V3.z); this.myGlider.object.rotation.set(0, this.dropYaw, 0); this.myGlider.setBank(-this.cm.cur.mx * 0.35, this.input.pitch * 0.3); if (this.third) this.restRisers(this.myGlider); else this.gripRisers(this.myGlider); this.myGlider.update(dt, t); }
     } else { if (this.myGlider) this.myGlider.object.visible = false; this.gliderOpenAt = -1; }
   }
   /** wind streaks — a world-fixed lattice of faint motes wrapped around the camera
@@ -2196,6 +2296,11 @@ export class GameRender implements EventSink {
     g.object.updateMatrixWorld();
     g.object.worldToLocal(L).lerpVectors(this.riserDef[0], L, w); g.object.worldToLocal(R).lerpVectors(this.riserDef[1], R, w);
     g.setHands(L, R);
+  }
+  /** third person: the risers end where the glider's own model has them (the third-person kong's fists on the bar) */
+  private restRisers(g: GliderProps) {
+    this.riserDef ??= [g.handL.clone(), g.handR.clone()];
+    g.setHands(this.riserL.copy(this.riserDef[0]), this.riserR.copy(this.riserDef[1]));
   }
   private riserL = new THREE.Vector3(); private riserR = new THREE.Vector3();
   private updatePlane(dt: number, t: number) {
@@ -2666,6 +2771,18 @@ const ISLET_POI = POIS.findIndex((q) => q.id === "lobby-islet");
 const TUK_PROMPT: NonNullable<HudState["interact"]> = { label: "DRIVE TUK-TUK", key: "E" }, RIDE_PROMPT: NonNullable<HudState["interact"]> = { label: "GET OUT", key: "E" };
 /** tuk-tuks are drawn within this distance of the camera (m); helicopters farther (they are up in the sky) */
 const TUK_DRAW_R = 520, HELI_DRAW_R = 1100;
+/** third person (render.ts thirdPersonCamera), framed so the kong stands in the lower left with the crosshair clear of
+ *  it: the camera's distance behind the shoulder from the hip / aiming down sights (m), how far beside the head the
+ *  shoulder point sits and how far above it (m, so the view looks down over the shoulder); in freefall and under the
+ *  glider, its distance behind the body and the height over the feet it orbits (m: the glider's whole canopy in view);
+ *  the largest eye-to-crosshair aim correction (rad) */
+const TP_DIST = 3.7, TP_ADS_DIST = 2.75, TP_SIDE = 1.15, TP_UP = 0.45;
+const TP_FALL_DIST = 5.6, TP_FALL_UP = 1.1, TP_GLIDE_DIST = 7.5, TP_GLIDE_UP = 1.9, TP_AIM_MAX = 0.6;
+/** blendCamera's id for the third-person camera on foot (0 is first person, 1+ the vehicle views) */
+const TP_CAM_MODE = 9;
+/** the states the third-person camera follows (the rest keep their own cameras) */
+const tpState = (st: number) => st === PS.Ground || st === PS.Mantle || st === PS.Climb || st === PS.Zip || st === PS.Freefall || st === PS.Glide;
+const AIM_HIT = makeShotResult();
 /** the helicopter's chase camera: its distance at a hover (m; up to 1.5 m less flat out — nose down at speed it
  * shows far less of itself, the view widens with speed too), the point it orbits —
  * this far back from the middle (over the boom's root) and up (just over the blades) */
