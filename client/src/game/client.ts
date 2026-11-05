@@ -53,6 +53,8 @@ export interface VehRemote {
   x: number; y: number; z: number; yaw: number; pitch: number; roll: number;
   /** forward speed (m/s), bars (rad, + = left), health, VF flags, VS state, who sits where */
   vf: number; steer: number; hp: number; flags: number; st: number; seats: [number, number, number];
+  /** the flat tyres as drawn (shared/sim/vehicle.ts TYRE) */
+  tyres: number;
   /** the radio station (0 = off), the server's word (latest snapshot) */
   radio: number;
   /** drawn from my prediction (I drive it) */
@@ -64,7 +66,7 @@ export interface VehRemote {
   ox: number; oy: number; oz: number; oyaw: number; swap: boolean;
 }
 const VRING = 8;
-const makeVehRemote = (id: number): VehRemote => ({ id, live: false, n: 0, lastTick: -1, ring: Array.from({ length: VRING }, makeVehSnap), gap: SNAP_EVERY, extra: 0, kind: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, steer: 0, hp: TUK.HP, flags: 0, st: VS.Gone, seats: [-1, -1, -1], radio: 0, mine: false, gunY: 0, gunP: 0, gunSpin: 0, gunHeat: 0, gunBelt: 0, gunLock: false, ox: 0, oy: 0, oz: 0, oyaw: 0, swap: false });
+const makeVehRemote = (id: number): VehRemote => ({ id, live: false, n: 0, lastTick: -1, ring: Array.from({ length: VRING }, makeVehSnap), gap: SNAP_EVERY, extra: 0, kind: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, steer: 0, hp: TUK.HP, flags: 0, st: VS.Gone, seats: [-1, -1, -1], tyres: 0, radio: 0, mine: false, gunY: 0, gunP: 0, gunSpin: 0, gunHeat: 0, gunBelt: 0, gunLock: false, ox: 0, oy: 0, oz: 0, oyaw: 0, swap: false });
 const RING = 12;
 const makeRemote = (id: number): Remote => ({ id, present: false, lastTick: -1, team: 0, ring: Array.from({ length: RING }, makePlayerSnap), n: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, vz: 0, st: 0, crouch: false, sprint: false, swim: false, grounded: false, hp: 0, shield: 0, held: 0xff, anim: 0, name: "", gap: SNAP_EVERY, extra: 0, hpNow: 0, hpTick: -1, deadNow: false, veh: -1, seat: 0 });
 
@@ -472,7 +474,7 @@ export class ClientMatch {
     if (vr.n > 0 && gap > 16) vr.n = 0;          // a long silence (parked / far): never blend across it
     vr.live = true; vr.lastTick = s.tick; vr.gap = gap; vr.kind = s.kind;
     const extra = gap - gGap; vr.extra = extra <= 0 || vr.n === 0 ? 0 : vr.extra + (extra - vr.extra) * 0.3;
-    copyVeh(vr.ring[vr.n % VRING], s); vr.n++; vr.radio = s.radio;
+    copyVeh(vr.ring[vr.n % VRING], s); vr.n++; vr.radio = s.radio; sim.tyres = s.tyres;
     for (const [k, id] of [[0, s.s0], [1, s.s1], [2, s.s2]] as const) { const rm = id >= 0 ? this.remotes[id] : null; if (rm) { rm.veh = s.id; rm.seat = k; } }
     if (this.driving === s.id) { sim.hp = s.hp; sim.seats[1] = s.s1; sim.seats[2] = s.s2; sim.flags = (sim.flags & ~(VF.BURN | VF.AWAKE)) | (s.flags & (VF.BURN | VF.AWAKE)); return; }
     mirrorVeh(sim, s, this.gunning !== s.id);
@@ -832,7 +834,7 @@ export class ClientMatch {
         blendVeh(this.vPrev, 0, this.vCur, 0, f, POSE);
         const sim = this.vehs.list[vr.id];
         vr.x = POSE[0] + E[0]; vr.y = POSE[1] + E[1]; vr.z = POSE[2] + E[2]; vr.yaw = POSE[3] + E[3]; vr.pitch = POSE[4]; vr.roll = POSE[5];
-        vr.vf = -sim.vx * Math.sin(sim.yaw) - sim.vz * Math.cos(sim.yaw); vr.steer = sim.steer; vr.hp = sim.hp; vr.flags = sim.flags | VF.AWAKE; vr.st = sim.st;
+        vr.vf = -sim.vx * Math.sin(sim.yaw) - sim.vz * Math.cos(sim.yaw); vr.steer = sim.steer; vr.hp = sim.hp; vr.flags = sim.flags | VF.AWAKE; vr.st = sim.st; vr.tyres = sim.tyres;
         vr.seats[0] = this.me; vr.seats[1] = sim.seats[1]; vr.seats[2] = sim.seats[2]; vr.mine = true;
       } else {
         const rtr = rt - vr.extra, cnt = Math.min(vr.n, VRING);
@@ -845,7 +847,7 @@ export class ClientMatch {
         blendVeh(VA, 0, VB, 0, f, POSE);
         vr.x = POSE[0]; vr.y = POSE[1]; vr.z = POSE[2]; vr.yaw = POSE[3]; vr.pitch = POSE[4]; vr.roll = POSE[5];
         const m = f < 0.5 ? a : bb;
-        vr.vf = a.vf + (bb.vf - a.vf) * f; vr.steer = a.steer + (bb.steer - a.steer) * f; vr.hp = m.hp; vr.flags = m.flags; vr.st = m.st;
+        vr.vf = a.vf + (bb.vf - a.vf) * f; vr.steer = a.steer + (bb.steer - a.steer) * f; vr.hp = m.hp; vr.flags = m.flags; vr.st = m.st; vr.tyres = m.tyres;
         vr.seats[0] = m.s0; vr.seats[1] = m.s1; vr.seats[2] = m.s2; vr.mine = false;
       }
       // a helicopter's door gun: my own prediction while I man it, else the snapshots' blend (the same render tick)
@@ -1008,7 +1010,7 @@ const wrapPi = (a: number) => { a %= Math.PI * 2; return a > Math.PI ? a - Math.
 /** the server's exact state of the tuk-tuk I drive → its sim copy */
 function loadVeh(v: Vehicle, a: VehSelf) {
   v.kind = a.kind; v.x = a.x; v.y = a.y; v.z = a.z; v.yaw = a.yaw; v.vx = a.vx; v.vy = a.vy; v.vz = a.vz; v.steer = a.steer; v.tip = a.tip; v.tipV = a.tipV; v.gPitch = a.gPitch; v.gRoll = a.gRoll;
-  v.st = a.st; v.air = a.air; v.surf = a.surf === 255 ? 255 : a.surf; v.hp = a.hp; v.hopT = a.hopT; v.flags = (v.flags & (VF.HORN | VF.SKID | VF.BRAKE | VF.REV | VF.AIR)) | (a.flags & ~(VF.HORN | VF.SKID | VF.BRAKE | VF.REV | VF.AIR));
+  v.st = a.st; v.air = a.air; v.surf = a.surf === 255 ? 255 : a.surf; v.hp = a.hp; v.hopT = a.hopT; v.tyres = a.tyres; v.flags = (v.flags & (VF.HORN | VF.SKID | VF.BRAKE | VF.REV | VF.AIR)) | (a.flags & ~(VF.HORN | VF.SKID | VF.BRAKE | VF.REV | VF.AIR));
   v.rightT = 0; v.rightFrom = 0; v.evt = 0; v.crashV = 0; v.rolls = 0;
 }
 /** a snapshot entry → the sim copy a kong on foot collides with: the drawn pose AS the pose (its lean is in the roll);
@@ -1030,7 +1032,7 @@ function loadGun(v: Vehicle, g: GunSelf) {
   v.gunAimY = g.aimY; v.gunAimP = g.aimP; v.gunSpin = g.spin; v.gunHeat = g.heat; v.gunCool = g.cool; v.gunIdle = g.idle; v.gunBelt = g.belt; v.gunLock = g.lock; v.gunArm = g.arm;
 }
 function copyVeh(d: VehSnap, s: VehSnap) {
-  d.id = s.id; d.x = s.x; d.y = s.y; d.z = s.z; d.yaw = s.yaw; d.pitch = s.pitch; d.roll = s.roll; d.vf = s.vf; d.steer = s.steer; d.hp = s.hp; d.flags = s.flags; d.st = s.st; d.kind = s.kind; d.s0 = s.s0; d.s1 = s.s1; d.s2 = s.s2; d.tick = s.tick; d.radio = s.radio;
+  d.id = s.id; d.x = s.x; d.y = s.y; d.z = s.z; d.yaw = s.yaw; d.pitch = s.pitch; d.roll = s.roll; d.vf = s.vf; d.steer = s.steer; d.hp = s.hp; d.flags = s.flags; d.st = s.st; d.kind = s.kind; d.s0 = s.s0; d.s1 = s.s1; d.s2 = s.s2; d.tick = s.tick; d.radio = s.radio; d.tyres = s.tyres;
   d.gunY = s.gunY; d.gunP = s.gunP; d.gunSpin = s.gunSpin; d.gunHeat = s.gunHeat; d.gunBelt = s.gunBelt; d.gunLock = s.gunLock;
 }
 function copySnap(d: PlayerSnap, s: PlayerSnap) {

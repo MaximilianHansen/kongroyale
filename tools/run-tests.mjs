@@ -17,6 +17,7 @@ const checks = [
   ["building walk graph", "npx", ["tsx", "tools/buildings/walkgraph.test.mts"]],
   ["path solver", "npx", ["tsx", "tools/play/solver-tests.mts", "--json", tmp("solver-tests.json")]],
   ["glass", "npx", ["tsx", "tools/glass/test.mts"]],
+  ["tuk-tuk tyres", "npx", ["tsx", "tools/tuk/tyres-test.mts"]],
   ["wire / matrix / geometry / http / splat parity", "npm", ["run", "bench:verify"]],
   ["headless match (seed 42)", "npm", ["run", "sim"]],
   ["admin lobby red team", "node", ["tools/admin-lobby/redteam.mjs", "--md", tmp("redteam.md")]],
