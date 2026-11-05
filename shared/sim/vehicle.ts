@@ -11,6 +11,8 @@
 //     inside wheel lifts — ease off and it slams back down, hold it and the whole thing goes over
 //   • on its side everybody is thrown out; E beside it heaves it back onto its wheels. Every tip-over and every further
 //     quarter roll costs it health; at zero the engine catches fire, the horn sticks, and a moment later it explodes
+//   • a bullet in a tyre bursts it for good: a flat rear tyre pulls the tuk-tuk to its own side, a flat front one takes
+//     nearly all the steering away
 //
 // Frames: the BODY frame is three.js' — +X right, +Y up, −Z forward — and the pose (yaw, pitch, roll) is the Euler YXZ
 // rotation three.js builds from rotation.set(pitch, yaw, roll): forward = (−sin yaw · cos pitch, sin pitch, −cos yaw · cos
@@ -41,6 +43,10 @@ export const TUK = {
   G_SLOPE: 11,
   /** steering lock (rad) at rest / at top speed, and how fast the bars follow the stick (rad/s) */
   STEER_LO: 0.62, STEER_HI: 0.28, STEER_RATE: 2.6,
+  /** flat tyres: the bars a flat rear tyre pulls toward its own side (rad, at every speed: the driver holds the other
+   * way to run straight), and what is left of the steering on a flat front tyre / on two flat rear tyres (their pulls
+   * cancel, the grip is what goes) */
+  FLAT_PULL: 0.06, FLAT_FRONT: 0.15, FLAT_REARS: 0.6,
   /** tyre grip (max lateral m/s²) on tarmac — more than it takes to lift a wheel: on a road it rolls before it slides;
    * with the handbrake on the tail lets go */
   MU: 32, MU_HB: 9,
@@ -120,14 +126,19 @@ const EXITS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
   [[-1.62, 0.74], [1.62, 0.74], [0, 2.45], [-1.62, -0.3], [1.62, -0.3], [0, -2.5]],
   [[1.62, 0.74], [-1.62, 0.74], [0, 2.45], [1.62, -0.3], [-1.62, -0.3], [0, -2.5]],
 ];
-/** what stops a bullet, body frame [cx, cy, cz, hx, hy, hz]: the tub (floor, side panels, wheels), the nose fairing, the
- * seat back + engine cover, the roof. Between the belt line and the roof it is open: riders are exposed from the chest up. */
+/** what stops a bullet, body frame [cx, cy, cz, hx, hy, hz]: the tub (floor, side panels), the nose fairing, the seat
+ * back + engine cover, the roof, then the three tyres from TYRE_BOX on (front, rear left, rear right). Between the belt
+ * line and the roof it is open: riders are exposed from the chest up. */
 export const HITBOXES: ReadonlyArray<readonly [number, number, number, number, number, number]> = [
   [0, 0.62, 0.32, 0.92, 0.36, 1.22],
   [0, 0.98, -1.16, 0.5, 0.62, 0.3],
   [0, 1.22, 1.46, 0.86, 0.5, 0.14],
   [0, 2.07, 0.3, 0.92, 0.06, 1.2],
+  [0, TUK.WHEEL_R, -TUK.FRONT, 0.16, TUK.WHEEL_R, TUK.WHEEL_R],
+  [-TUK.HW, TUK.WHEEL_R, TUK.REAR, 0.16, TUK.WHEEL_R, TUK.WHEEL_R],
+  [TUK.HW, TUK.WHEEL_R, TUK.REAR, 0.16, TUK.WHEEL_R, TUK.WHEEL_R],
 ];
+const TYRE_BOX = 4;
 
 /** the shape every kind shares with the seats, the bullets, the kongs on foot and the E key (the numbers above are the
  * tuk-tuk's; shared/sim/heli.ts gives the helicopter's) */
@@ -168,6 +179,8 @@ export const enum VS { Ok = 0, Tipped = 1, Righting = 2, Wreck = 3, Sunk = 4, Go
 export const VF = { AWAKE: 1, BURN: 2, HORN: 4, SKID: 8, AIR: 16, BRAKE: 32, REV: 64, PARK: 128 } as const;
 /** what the deterministic step tells the match about this tick (Vehicle.evt) */
 export const VE = { TIP: 1, ROLL: 2, CRASH: 4, LAND: 8, SLAM: 16, SUNK: 32, HOP: 64 } as const;
+/** Vehicle.tyres bits: which tyres are flat (bit k = tyre k, numbered like the wheels: 0 front, 1 rear left, 2 rear right) */
+export const TYRE = { FRONT: 1, LEFT: 2, RIGHT: 4 } as const;
 /** pose history stride: x, y, z, yaw, pitch, roll, state — the numbers the snapshots carried (quantised) */
 export const VH = 7;
 
@@ -199,6 +212,8 @@ export interface Vehicle {
   hopT: number;
   // ---- match state (server truth, mirrored from snapshots)
   hp: number; flags: number;
+  /** the flat tyres (TYRE bits; match state like hp, but the driver's prediction steers with it) */
+  tyres: number;
   /** player id per seat, −1 = empty */
   seats: [number, number, number];
   /** the radio station (0 = off; TUK.RADIO_N): match state like hp — any rider's radio key steps it, it stays tuned
@@ -227,7 +242,7 @@ export interface Vehicle {
 export function makeVehicle(id: number): Vehicle {
   return {
     id, kind: VKind.Tuk, live: false, touch: -1e9, x: 0, y: 0, z: 0, yaw: 0, vx: 0, vy: 0, vz: 0, steer: 0, tip: 0, tipV: 0, gPitch: 0, gRoll: 0, st: VS.Gone, air: false,
-    rightT: 0, rightFrom: 0, surf: 255, hopT: 0, hp: TUK.HP, flags: 0, seats: [-1, -1, -1], radio: 1, evt: 0, crashV: 0, rolls: 0,
+    rightT: 0, rightFrom: 0, surf: 255, hopT: 0, hp: TUK.HP, flags: 0, tyres: 0, seats: [-1, -1, -1], radio: 1, evt: 0, crashV: 0, rolls: 0,
     gunAimY: 0, gunAimP: 0, gunSpin: 0, gunHeat: 0, gunCool: 0, gunIdle: 9, gunLock: false, gunArm: false, gunBelt: 0,
     fuse: -1, lastBy: -1, idleT: 0, wreckT: 0, home: -1, ramT: new Int32Array(64).fill(-1e9), bump: new Float32Array(64), hist: new Float32Array(HISTORY_TICKS * VH),
   };
@@ -235,7 +250,7 @@ export function makeVehicle(id: number): Vehicle {
 /** park a fresh vehicle of `kind` at (x, z) facing `yaw`, sitting on whatever is under its wheels / skids */
 export function spawnVehicle(v: Vehicle, world: StaticWorld, x: number, z: number, yaw: number, kind: VKind = VKind.Tuk, y?: number) {
   v.kind = kind; v.live = true; v.x = qpos(x); v.z = qpos(z); v.yaw = qyaw(yaw); v.vx = v.vy = v.vz = 0; v.steer = 0; v.tip = 0; v.tipV = 0; v.st = VS.Ok; v.air = false;
-  v.rightT = 0; v.rightFrom = 0; v.hopT = 0; v.hp = specOf(kind).HP; v.flags = VF.PARK; v.seats[0] = v.seats[1] = v.seats[2] = -1; v.radio = kind === VKind.Tuk ? 1 : 0; v.evt = 0; v.crashV = 0; v.rolls = 0;
+  v.rightT = 0; v.rightFrom = 0; v.hopT = 0; v.hp = specOf(kind).HP; v.flags = VF.PARK; v.tyres = 0; v.seats[0] = v.seats[1] = v.seats[2] = -1; v.radio = kind === VKind.Tuk ? 1 : 0; v.evt = 0; v.crashV = 0; v.rolls = 0;
   v.fuse = -1; v.lastBy = -1; v.idleT = 0; v.wreckT = 0; v.ramT.fill(-1e9);
   v.y = y ?? world.ground(v.x, v.z) + 0.6; v.gPitch = 0; v.gRoll = 0;
   if (kind === VKind.Heli) { HELI_HOOKS.settle(v, world); HELI_HOOKS.arm(v); }
@@ -323,9 +338,12 @@ export function vehPoint(P: ArrayLike<number>, lx: number, ly: number, lz: numbe
 /** where seat `k` of a vehicle of `kind` at pose P is (the rider's feet) → out[0..2] */
 export const seatPoint = (P: ArrayLike<number>, kind: number, k: number, out: Float64Array | number[]) => { const S = specOf(kind).SEATS[k] ?? specOf(kind).SEATS[0]; return vehPoint(P, S[0], S[1], S[2], out); };
 
+/** the tyre the last rayVehicle hit (0 front, 1 rear left, 2 rear right), or −1: a panel, or nothing */
+export let RAY_TYRE = -1;
 /** ray (unit dir) vs a vehicle of `kind` at pose P: metres to the first panel it hits, or −1 */
 export function rayVehicle(P: ArrayLike<number>, kind: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number): number {
   const SP = specOf(kind), HITBOXES = SP.HITBOXES;
+  RAY_TYRE = -1;
   // broad phase: a ball round the cabin
   const wx = ox - P[0], wy = oy - (P[1] + SP.BALL_Y), wz = oz - P[2];
   const b = wx * dx + wy * dy + wz * dz, c = wx * wx + wy * wy + wz * wz - SP.BALL_R2;
@@ -336,7 +354,8 @@ export function rayVehicle(P: ArrayLike<number>, kind: number, ox: number, oy: n
   const lx = M3[0] * px + M3[3] * py + M3[6] * pz, ly = M3[1] * px + M3[4] * py + M3[7] * pz, lz = M3[2] * px + M3[5] * py + M3[8] * pz;
   const ldx = M3[0] * dx + M3[3] * dy + M3[6] * dz, ldy = M3[1] * dx + M3[4] * dy + M3[7] * dz, ldz = M3[2] * dx + M3[5] * dy + M3[8] * dz;
   let best = -1;
-  for (const B of HITBOXES) {
+  for (let i = 0; i < HITBOXES.length; i++) {
+    const B = HITBOXES[i];
     let t0 = 0, t1 = best < 0 ? maxT : best, ok = true;
     for (let a = 0; a < 3 && ok; a++) {
       const o = (a === 0 ? lx : a === 1 ? ly : lz) - B[a], d = a === 0 ? ldx : a === 1 ? ldy : ldz, h = B[a + 3];
@@ -344,7 +363,7 @@ export function rayVehicle(P: ArrayLike<number>, kind: number, ox: number, oy: n
       let lo = (-h - o) / d, hi = (h - o) / d; if (lo > hi) { const k = lo; lo = hi; hi = k; }
       if (lo > t0) t0 = lo; if (hi < t1) t1 = hi; if (t0 > t1) ok = false;
     }
-    if (ok && t0 > 0 && t0 < (best < 0 ? maxT : best)) best = t0;
+    if (ok && t0 > 0 && t0 < (best < 0 ? maxT : best)) { best = t0; RAY_TYRE = kind === VKind.Tuk && i >= TYRE_BOX ? i - TYRE_BOX : -1; }
   }
   return best;
 }
@@ -388,6 +407,14 @@ const BIOME_GRIP: ReadonlyArray<readonly [number, number, number]> = [
 const ROAD: readonly [number, number, number] = [1, 1, 1];
 
 // ------------------------------------------------------------------------------------------------ the step
+/** the bars as the road takes them (rad, + = left): what the flat tyres leave of `v.steer`, plus their pull */
+function roadSteer(v: Vehicle): number {
+  const t = v.tyres;
+  if (t === 0) return v.steer;
+  const rears = t & (TYRE.LEFT | TYRE.RIGHT), both = rears === (TYRE.LEFT | TYRE.RIGHT);
+  const left = (t & TYRE.FRONT ? TUK.FLAT_FRONT : 1) * (both ? TUK.FLAT_REARS : 1);
+  return v.steer * left + (both || !rears ? 0 : rears === TYRE.LEFT ? TUK.FLAT_PULL : -TUK.FLAT_PULL);
+}
 /**
  * One deterministic tick. `thr` −1..1 (forward / brake-reverse), `str` −1..1 (right +), `hb` handbrake. Nobody at the
  * bars = (0, 0, parked). Raises `evt` bits for the match (tip-over, rolls, crashes, hard landings, sinking).
@@ -408,7 +435,7 @@ export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: nu
   v.steer += ds > maxS ? maxS : ds < -maxS ? -maxS : ds;
   const grounded = !v.air;
   if (grounded) {
-    let w = (vf * Math.tan(v.steer)) / TUK.WHEELBASE;
+    let w = (vf * Math.tan(roadSteer(v))) / TUK.WHEELBASE;
     if (hb && spd > 3) w *= 1.3;                                                  // handbrake: the tail steps out
     if (v.tip !== 0) w *= 1 - 0.5 * Math.min(1, Math.abs(v.tip) / 0.6);          // on two wheels the front bites less
     v.yaw = wrapPi(v.yaw + w * dt);
@@ -530,8 +557,9 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
     let turn = 0.55 * (lz * px - lx * pz) / (off * off + 0.3);
     // held against it by the engine: scrub round the way the front wheel points (once per tick) — the driver's turn
     // wins over the wall's
-    if (DRIVE !== 0 && v.steer !== 0 && (nx * sy + nz * cy) * DRIVE > 0.25 * Math.abs(DRIVE)) {
-      const scrub = (TUK.SCRAPE_V * Math.tan(v.steer) / TUK.WHEELBASE) * DRIVE * dt;
+    const bars = roadSteer(v);
+    if (DRIVE !== 0 && bars !== 0 && (nx * sy + nz * cy) * DRIVE > 0.25 * Math.abs(DRIVE)) {
+      const scrub = (TUK.SCRAPE_V * Math.tan(bars) / TUK.WHEELBASE) * DRIVE * dt;
       turn = turn * scrub < 0 ? scrub : turn + scrub; DRIVE = 0;
     }
     v.yaw = wrapPi(v.yaw + turn);

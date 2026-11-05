@@ -27,7 +27,8 @@ export const enum EV { Hit = 1, Shot = 2, Kill = 3, Chest = 4, SpawnItem = 5, Ta
   /** end-game loot regen: an opened chest / ammo box closed again, restocked (glow + hum back): [id u16] */ ChestReset = 45 }
 /** EV.Veh kinds. `a`: Enter / Exit / Flip = the kong, Crash / Land = how hard (m/s × 12, capped) */
 export const enum VK { Enter = 1, Exit = 2, Tip = 3, Flip = 4, Boom = 5, Crash = 6, Land = 7, Slam = 8, Sunk = 9, Burn = 10,
-  /** a helicopter's rotor cut a kong down: a = the kong, (x, y, z) = where */ Chop = 11 }
+  /** a helicopter's rotor cut a kong down: a = the kong, (x, y, z) = where */ Chop = 11,
+  /** a bullet burst a tuk-tuk's tyre: a = the tyre (0 front, 1 rear left, 2 rear right), (x, y, z) = where */ Tyre = 12 }
 
 const TAU = Math.PI * 2;
 export const yawEnc = (a: number) => Math.round((a / TAU) * 65536) & 0xffff;
@@ -137,8 +138,8 @@ export interface GunSelf { aimY: number; aimP: number; spin: number; heat: numbe
 export const makeGunSelf = (): GunSelf => ({ aimY: 0, aimP: 0, spin: 0, heat: 0, cool: 0, idle: 0, belt: 0, lock: false, arm: false });
 /** the predicted part of a Vehicle (shared/sim/vehicle.ts), full precision, + what only the server knows (hp, flags) */
 /** `kind`: the vehicle's VKind; `hopT`: the tuk-tuk hop's cool-down */
-export interface VehSelf { x: number; y: number; z: number; yaw: number; vx: number; vy: number; vz: number; steer: number; tip: number; tipV: number; gPitch: number; gRoll: number; st: number; air: boolean; surf: number; hp: number; flags: number; hopT: number; kind: number }
-export const makeVehSelf = (): VehSelf => ({ x: 0, y: 0, z: 0, yaw: 0, vx: 0, vy: 0, vz: 0, steer: 0, tip: 0, tipV: 0, gPitch: 0, gRoll: 0, st: 0, air: false, surf: 255, hp: 0, flags: 0, hopT: 0, kind: 0 });
+export interface VehSelf { x: number; y: number; z: number; yaw: number; vx: number; vy: number; vz: number; steer: number; tip: number; tipV: number; gPitch: number; gRoll: number; st: number; air: boolean; surf: number; hp: number; flags: number; hopT: number; kind: number; tyres: number }
+export const makeVehSelf = (): VehSelf => ({ x: 0, y: 0, z: 0, yaw: 0, vx: 0, vy: 0, vz: 0, steer: 0, tip: 0, tipV: 0, gPitch: 0, gRoll: 0, st: 0, air: false, surf: 255, hp: 0, flags: 0, hopT: 0, kind: 0, tyres: 0 });
 export const makeSelfState = (): SelfState => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, coyote: 0, jumpBuf: 0, airT: 0, fallV: 0, mvT: 0, mvY: 0, st: 0, crouch: false, grounded: false, swim: false, slope: false, sprint: false, prevButtons: 0, shotSeq: 0, hp: 0, shield: 0, veh: -1, seat: 0, drive: false, v: makeVehSelf(), buffT: 0, gun: false, g: makeGunSelf(), under: false, breath: 1, swGun: 0 });
 /** `v`: the vehicle `p` rides (null on foot). 114 bytes (incl. the red banana buff f64; swimming: `under` in the
  * flag byte's top bit), + 16 while swimming (breath + the swim gun timer, f64), + 113 while driving
@@ -152,7 +153,7 @@ export function writeSelf(w: Writer, p: Player, v: Vehicle | null = null) {
   if (p.swim) w.f64(p.breath).f64(p.swGun);   // (swimming only: on land the air is full and the gun is not stowed)
   if (drive) {
     w.f64(v.x).f64(v.y).f64(v.z).f64(v.yaw).f64(v.vx).f64(v.vy).f64(v.vz).f64(v.steer).f64(v.tip).f64(v.tipV).f64(v.gPitch).f64(v.gRoll)
-      .u8(v.st).u8(v.air ? 1 : 0).u8(v.surf & 0xff).f32(v.hp).u8(v.flags).f64(v.hopT).u8(v.kind);   // (the hop's cool-down; the kind)
+      .u8(v.st).u8((v.air ? 1 : 0) | (v.tyres << 1)).u8(v.surf & 0xff).f32(v.hp).u8(v.flags).f64(v.hopT).u8(v.kind);   // (the hop's cool-down; the kind)
   }
   if (gun) w.f64(v.gunAimY).f64(v.gunAimP).f64(v.gunSpin).f64(v.gunHeat).f64(v.gunCool).f64(v.gunIdle).u16(v.gunBelt).u8((v.gunLock ? 1 : 0) | (v.gunArm ? 2 : 0));
 }
@@ -165,7 +166,7 @@ export function readSelf(r: Reader, o: SelfState) {
   if (o.drive) {
     const v = o.v;
     v.x = r.f64(); v.y = r.f64(); v.z = r.f64(); v.yaw = r.f64(); v.vx = r.f64(); v.vy = r.f64(); v.vz = r.f64(); v.steer = r.f64(); v.tip = r.f64(); v.tipV = r.f64(); v.gPitch = r.f64(); v.gRoll = r.f64();
-    v.st = r.u8(); v.air = r.u8() !== 0; v.surf = r.u8(); v.hp = r.f32(); v.flags = r.u8(); v.hopT = r.f64(); v.kind = r.u8();
+    v.st = r.u8(); const ab = r.u8(); v.air = (ab & 1) !== 0; v.tyres = ab >> 1; v.surf = r.u8(); v.hp = r.f32(); v.flags = r.u8(); v.hopT = r.f64(); v.kind = r.u8();
   }
   if (o.gun) {
     const g = o.g;
@@ -220,10 +221,10 @@ export function readPlayer(r: Reader, o: PlayerSnap) {
 // kind (VKind) in its high nibble; the hull byte is a share of that kind's HP; after the seats, the radio station
 // (u8). A helicopter adds its door gun (what everybody draws): the aim (u16 world yaw, i16 pitch × 10000), barrel spin and
 // heat (u8 shares), the belt (u16), overheated (bit 0).
-export interface VehSnap { id: number; x: number; y: number; z: number; yaw: number; pitch: number; roll: number; vf: number; steer: number; hp: number; flags: number; st: number; kind: number; s0: number; s1: number; s2: number; tick: number; radio: number;
+export interface VehSnap { id: number; x: number; y: number; z: number; yaw: number; pitch: number; roll: number; vf: number; steer: number; hp: number; flags: number; st: number; kind: number; s0: number; s1: number; s2: number; tick: number; radio: number; tyres: number;
   /** a helicopter's door gun: aim (world yaw / pitch), spin 0..1, heat 0..1, rounds left, overheated */
   gunY: number; gunP: number; gunSpin: number; gunHeat: number; gunBelt: number; gunLock: boolean }
-export const makeVehSnap = (): VehSnap => ({ id: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, steer: 0, hp: 0, flags: 0, st: VS.Gone, kind: 0, s0: -1, s1: -1, s2: -1, tick: 0, radio: 0, gunY: 0, gunP: 0, gunSpin: 0, gunHeat: 0, gunBelt: 0, gunLock: false });
+export const makeVehSnap = (): VehSnap => ({ id: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, steer: 0, hp: 0, flags: 0, st: VS.Gone, kind: 0, s0: -1, s1: -1, s2: -1, tick: 0, radio: 0, tyres: 0, gunY: 0, gunP: 0, gunSpin: 0, gunHeat: 0, gunBelt: 0, gunLock: false });
 export const VEH_BYTES = 25, VEH_GUN_BYTES = 9;
 const VPOSE = new Float64Array(6);
 const seatByte = (id: number) => (id < 0 ? 255 : id);
@@ -234,7 +235,7 @@ export function writeVehicle(w: Writer, v: Vehicle) {
     .u16(yawEnc(VPOSE[3])).i8(qVPitch(VPOSE[4])).i16(qVRoll(VPOSE[5]))
     .i16(Math.max(-32767, Math.min(32767, Math.round(vf * 256)))).i8(Math.max(-127, Math.min(127, Math.round(v.steer * 127))))
     .u8(Math.max(0, Math.min(255, Math.ceil((v.hp / specOf(v.kind).HP) * 255)))).u8(v.flags & 0xff).u8((v.st & 0x0f) | ((v.kind & 0x0f) << 4))
-    .u8(seatByte(v.seats[0])).u8(seatByte(v.seats[1])).u8(seatByte(v.seats[2])).u8(v.radio & 0xff);   // (the radio station)
+    .u8(seatByte(v.seats[0])).u8(seatByte(v.seats[1])).u8(seatByte(v.seats[2])).u8((v.radio & 0x0f) | (v.tyres << 4));   // (the radio station; the flat tyres)
   if (v.kind === VKind.Heli) {
     w.u16(yawEnc(v.gunAimY)).i16(Math.max(-32767, Math.min(32767, Math.round(v.gunAimP * 10000)))).u8(Math.round(Math.max(0, Math.min(1, v.gunSpin)) * 255))
       .u8(Math.round(Math.max(0, Math.min(1, v.gunHeat)) * 255)).u16(Math.max(0, Math.min(65535, v.gunBelt))).u8(v.gunLock ? 1 : 0);
@@ -243,7 +244,7 @@ export function writeVehicle(w: Writer, v: Vehicle) {
 export function readVehicle(r: Reader, o: VehSnap) {
   o.id = r.u8(); o.x = r.i24() / POS_Q; o.y = r.i24() / POS_Q; o.z = r.i24() / POS_Q; o.yaw = yawDec(r.u16()); o.pitch = r.i8() / PITCH_VQ; o.roll = r.i16() / ROLL_VQ;
   o.vf = r.i16() / 256; o.steer = r.i8() / 127; const hq = r.u8() / 255; o.flags = r.u8(); const sb = r.u8(); o.st = sb & 0x0f; o.kind = sb >> 4; o.hp = hq * specOf(o.kind).HP;
-  const a = r.u8(), b = r.u8(), c = r.u8(); o.s0 = a === 255 ? -1 : a; o.s1 = b === 255 ? -1 : b; o.s2 = c === 255 ? -1 : c; o.radio = r.u8();
+  const a = r.u8(), b = r.u8(), c = r.u8(); o.s0 = a === 255 ? -1 : a; o.s1 = b === 255 ? -1 : b; o.s2 = c === 255 ? -1 : c; const rb = r.u8(); o.radio = rb & 0x0f; o.tyres = rb >> 4;
   if (o.kind === VKind.Heli) { o.gunY = yawDec(r.u16()); o.gunP = r.i16() / 10000; o.gunSpin = r.u8() / 255; o.gunHeat = r.u8() / 255; o.gunBelt = r.u16(); o.gunLock = (r.u8() & 1) !== 0; }
   else { o.gunSpin = 0; o.gunHeat = 0; o.gunBelt = 0; o.gunLock = false; }
 }
@@ -278,9 +279,10 @@ export function readInventory(r: Reader, p: Player, e: EconView | null = null) {
  *  byte on the vehicle entry) · 8: swimming — `under` + breath + the swim gun timer in the self state, HELD_STOWED on the
  *  held byte, bullets stop at the water surface · 9: INV.Spectate (the spectator picks who
  *  to watch) and EV.ChestReset (end-game loot regen re-closes a chest) · 10: event lobbies
- *  (admin lobby: shared/net/event.ts — JSON only, the binary frames are unchanged) — the server's "welcome" carries it; a
+ *  (admin lobby: shared/net/event.ts — JSON only, the binary frames are unchanged) · 11: flat tyres — VK.Tyre, the TYRE
+ *  bits in the driver's air byte and over the radio station on the vehicle entry — the server's "welcome" carries it; a
  *  client on another version reloads */
-export const NET_VERSION = 10;
+export const NET_VERSION = 11;
 export class Events {
   readonly w = new Writer(new ArrayBuffer(32768));
   n = 0;

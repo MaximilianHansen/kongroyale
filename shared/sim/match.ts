@@ -25,7 +25,7 @@ import { inStorm, makeStormState, planStorm, stormAt, STORM_TICK_S, type StormPl
 import { makeHit, type StaticWorld } from "./world";
 import { ANN, Events, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, SURF_PLAYER, VK, histSlot, yawDec, yawEnc } from "../net/proto";
 import {
-  TUK, VE, VF, VH, VKind, VS, VehicleSet, blendVeh, enterVehicle, exitVehicle, flipVehicle, footDist, freeSeat, rayVehicle, recordVehicle,
+  TUK, VE, VF, VH, VKind, VS, VehicleSet, blendVeh, enterVehicle, exitVehicle, flipVehicle, footDist, freeSeat, rayVehicle, RAY_TYRE, recordVehicle,
   restVehicle, seatRider, seatRiderAt, spawnVehicle, specOf, stepVehicle, vehPose, vehicleInReach, type Vehicle,
 } from "./vehicle";
 import { fleetSpots, isletSpots, rangeSpots, type TukSpot } from "./tuk-spots";
@@ -638,7 +638,10 @@ export class Match {
         if (killed) { T[victim.id * TARGET_STRIDE + 3] = 0; this.kill(victim, p.id, killWeapon(WEAPONS.indexOf(w.id), s.rarity)); }
         else this.brains[victim.id]?.onHurt(p.id);
       } else {
-        if (tuk >= 0) this.hurtTuk(this.vehs.list[tuk], pelletDamage(w, s.rarity, bestT, 0), p.id, ox + dx * bestT, oy + dy * bestT, oz + dz * bestT);
+        if (tuk >= 0) {
+          this.burstTyre(this.vehs.list[tuk], ox + dx * bestT, oy + dy * bestT, oz + dz * bestT);
+          this.hurtTuk(this.vehs.list[tuk], pelletDamage(w, s.rarity, bestT, 0), p.id, ox + dx * bestT, oy + dy * bestT, oz + dz * bestT);
+        }
         if (RES.cover >= 0) this.hurtCover(RES.cover, pelletDamage(w, s.rarity, bestT, 0));
         this.ev.shot(p.id, WEAPONS.indexOf(w.id), ox, oy, oz, ox + dx * bestT, oy + dy * bestT, oz + dz * bestT, RES.worldHit ? RES.surf : 0, RES.worldHit);
       }
@@ -671,7 +674,7 @@ export class Match {
       if (killed) { T[victim.id * TARGET_STRIDE + 3] = 0; this.kill(victim, p.id, KILL_GUN); }
       else this.brains[victim.id]?.onHurt(p.id);
     } else {
-      if (tuk >= 0) this.hurtTuk(this.vehs.list[tuk], pelletDamage(w, 0, t, 0), p.id, ex, ey, ez);
+      if (tuk >= 0) { this.burstTyre(this.vehs.list[tuk], ex, ey, ez); this.hurtTuk(this.vehs.list[tuk], pelletDamage(w, 0, t, 0), p.id, ex, ey, ez); }
       this.ev.shot(p.id, KILL_GUN, ox, oy, oz, ex, ey, ez, RES.worldHit ? RES.surf : 0, RES.worldHit);
     }
   }
@@ -839,8 +842,10 @@ export class Match {
     seatRiderAt(p, v.kind, blendVeh(h, vslot(this.vA), h, vslot(this.vB), this.vF, SEATP));
   }
   /** the nearest tuk-tuk panel on a ray (unit dir) within `maxT`: as the shooter SAW them (the last viewBlend — the
-   * rewind of a hitscan shot), or `now` as they stand (rockets). Returns its id (the distance in `vt`) or −1. */
+   * rewind of a hitscan shot), or `now` as they stand (rockets). Returns its id (the distance in `vt`, the tyre it met
+   * in `vTyre`: −1 = a panel) or −1. */
   private vt = 0;
+  private vTyre = -1;
   private rayTuks(skip: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number, now: boolean): number {
     let best = -1; this.vt = maxT;
     const ia = vslot(this.vA), ib = vslot(this.vB);
@@ -852,9 +857,16 @@ export class Match {
       if (now) vehPose(v, VP);
       else { const h = v.hist; if (h[ia + 6] < 0 || h[ib + 6] < 0) continue; blendVeh(h, ia, h, ib, this.vF, VP); }
       const t = rayVehicle(VP, v.kind, ox, oy, oz, dx, dy, dz, this.vt);
-      if (t >= 0 && t < this.vt) { this.vt = t; best = v.id; }
+      if (t >= 0 && t < this.vt) { this.vt = t; this.vTyre = RAY_TYRE; best = v.id; }
     }
     return best;
+  }
+  /** a bullet the last rayTuks stopped: if it met a tyre, that tyre is flat for the rest of this tuk-tuk's life */
+  private burstTyre(v: Vehicle, x: number, y: number, z: number) {
+    const k = this.vTyre;
+    if (k < 0 || v.tyres & (1 << k) || (v.st !== VS.Ok && v.st !== VS.Tipped && v.st !== VS.Righting)) return;
+    v.tyres |= 1 << k; v.flags |= VF.AWAKE; v.idleT = 0; v.touch = this.tick;
+    this.ev.veh(v.id, VK.Tyre, k, x, y, z);
   }
   /** damage on a tuk-tuk (a bullet, a blast, a wall, a roll). by ≥ 0 = whose doing: the blast it ends in is theirs. */
   private hurtTuk(v: Vehicle, dmg: number, by: number, x: number, y: number, z: number) {

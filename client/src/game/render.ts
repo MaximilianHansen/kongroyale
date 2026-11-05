@@ -1753,7 +1753,7 @@ export class GameRender implements EventSink {
       const vyRaw = A.seen && dt > 1e-4 ? Math.max(-60, Math.min(60, (D.y - A.ly) / dt)) : 0;
       A.vy += (vyRaw - A.vy) * Math.min(1, dt * 12);
       A.lx = D.x; A.ly = D.y; A.lz = D.z; A.seen = true;
-      D.vf = vr.vf; D.vy = A.vy; D.steer = vr.steer; D.hp = vr.hp / SP.HP; D.flags = vr.flags; D.st = vr.st;
+      D.vf = vr.vf; D.vy = A.vy; D.steer = vr.steer; D.hp = vr.hp / SP.HP; D.flags = vr.flags; D.st = vr.st; D.tyres = vr.tyres;
       // (driving a tuk-tuk from the saddle hides its dice / wiper / fringe; a helicopter's cockpit is its own)
       v.firstPerson = !heli && vr.id === mine && cm.pred.seat === 0 && !this.rideThird;
       if (heli) {
@@ -1932,6 +1932,7 @@ export class GameRender implements EventSink {
       case VK.Crash: if (!mine) { this.play("tuk:crash", x, y, z, Math.min(1, 0.35 + a / 160)); if (v && d < 100 && a > 60) { v.hub(0, V3b); this.tukFx.sparks(V3b.x, V3b.y + 0.3, V3b.z, 0, 0, 6); } } break;
       case VK.Land: if (!mine) { this.play("tuk:land", x, y, z, Math.min(1, 0.4 + a / 200)); v?.bump(-1.6); } if (d < 100) for (let i = 0; i < 6; i++) this.tukFx.dust(x, y - 0.8, z, 0, 0, DUST[this.cm.world.groundBiome(x, z)] ?? TYRE_SMOKE, 1.3); break;
       case VK.Slam: if (!mine) { this.play("tuk:land", x, y, z, 0.55); v?.bump(-1.2); } break;
+      case VK.Tyre: this.play("tuk:backfire", x, y, z, 1); v?.bump(-0.8, a === 1 ? 0.5 : a === 2 ? -0.5 : 0); if (d < 100) { this.tukFx.sparks(x, y, z, 0, 0, 6); for (let i = 0; i < 6; i++) this.tukFx.dust(x, y, z, 0, 0, TYRE_SMOKE, 0.8); } break;
       case VK.Sunk: this.kits.fx.puff(V3.set(x, 0.1, z), "splash"); this.play("land", x, y, z, 1); break;
       // (the blast itself arrives as EV.Explosion: the kit's burst + the bang) — here its fireball, its black column and
       // its wheels, bars and banana-laden canopy sailing off
@@ -2670,7 +2671,7 @@ const TUK_DRAW_R = 520, HELI_DRAW_R = 1100;
  * shows far less of itself, the view widens with speed too), the point it orbits —
  * this far back from the middle (over the boom's root) and up (just over the blades) */
 const HELI_CAM_DIST = 15.5, HELI_CAM_BACK = 1.2, HELI_CAM_UP = 3.4, HELI_LOW_TIP = 0.25;
-const TDRAW: TukDraw = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, vy: 0, steer: 0, hp: 1, flags: 0, st: 0 };
+const TDRAW: TukDraw = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, vy: 0, steer: 0, hp: 1, flags: 0, st: 0, tyres: 0 };
 /** the drawn pose and the turret's angles of the helicopter being drawn (heli.ts gunAngles) */
 const GP6 = new Float64Array(6), GANG = new Float64Array(4);
 const GRIP: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];

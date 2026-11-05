@@ -31,7 +31,7 @@ const HZ = 20, CAP = REC_S * HZ + 40;
 /** player sample: tick x y z yaw pitch st bits hp shield held anim seat total */
 const PF = 14;
 /** vehicle sample: tick x y z yaw pitch roll vf steer hp flags st kind s0 s1 s2 radio gunY gunP gunSpin gunHeat gunBelt gunLock */
-const VFN = 23;
+const VFN = 24;
 const SPEEDS = [0.25, 0.5, 1];
 /** events recorded (and replayed); the visual ones are also MUTED live while a replay runs */
 const RECORD = new Set(["shot", "hit", "explosion", "rocket", "rocketEnd", "jump", "land", "veh", "vehHit", "bomb", "bombEnd"]);
@@ -135,7 +135,7 @@ export class Replay {
         const tr = this.vt[id], o = tr.push(), B = tr.buf;
         B[o] = s.tick; B[o + 1] = s.x; B[o + 2] = s.y; B[o + 3] = s.z; B[o + 4] = s.yaw; B[o + 5] = s.pitch; B[o + 6] = s.roll; B[o + 7] = s.vf; B[o + 8] = s.steer;
         B[o + 9] = s.hp; B[o + 10] = s.flags; B[o + 11] = s.st; B[o + 12] = s.kind; B[o + 13] = s.s0; B[o + 14] = s.s1; B[o + 15] = s.s2; B[o + 16] = s.radio;
-        B[o + 17] = s.gunY; B[o + 18] = s.gunP; B[o + 19] = s.gunSpin; B[o + 20] = s.gunHeat; B[o + 21] = s.gunBelt; B[o + 22] = s.gunLock ? 1 : 0;
+        B[o + 17] = s.gunY; B[o + 18] = s.gunP; B[o + 19] = s.gunSpin; B[o + 20] = s.gunHeat; B[o + 21] = s.gunBelt; B[o + 22] = s.gunLock ? 1 : 0; B[o + 23] = s.tyres;
         this.vLastT[id] = s.tick;
       }
       this.vLastN[id] = n;
@@ -256,7 +256,7 @@ export class Replay {
             const o = tr.off(i), B = tr.buf, s = ring[k++];
             s.id = id; s.tick = B[o]; s.x = B[o + 1]; s.y = B[o + 2]; s.z = B[o + 3]; s.yaw = B[o + 4]; s.pitch = B[o + 5]; s.roll = B[o + 6]; s.vf = B[o + 7]; s.steer = B[o + 8];
             s.hp = B[o + 9]; s.flags = B[o + 10]; s.st = B[o + 11]; s.kind = B[o + 12]; s.s0 = B[o + 13]; s.s1 = B[o + 14]; s.s2 = B[o + 15]; s.radio = B[o + 16];
-            s.gunY = B[o + 17]; s.gunP = B[o + 18]; s.gunSpin = B[o + 19]; s.gunHeat = B[o + 20]; s.gunBelt = B[o + 21]; s.gunLock = B[o + 22] !== 0;
+            s.gunY = B[o + 17]; s.gunP = B[o + 18]; s.gunSpin = B[o + 19]; s.gunHeat = B[o + 20]; s.gunBelt = B[o + 21]; s.gunLock = B[o + 22] !== 0; s.tyres = B[o + 23];
           }
           // who sits where at T (the sample at / before T)
           const m = ring[Math.min(k - 1, Math.max(0, j - lo))];

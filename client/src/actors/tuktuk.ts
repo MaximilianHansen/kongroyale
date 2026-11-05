@@ -13,7 +13,7 @@ import * as THREE from "three";
 import { Batch, M, box, cyl, mat, rbox, sph, type MatKey } from "../world/pois/_kit/coast-kit";
 import { wheel } from "../world/pois/_kit/coast-vehicles";
 import { bananaHand, crate } from "../world/pois/_kit/coast-props";
-import { TUK, VF, VS } from "../../../shared/sim/vehicle";
+import { TUK, TYRE, VF, VS } from "../../../shared/sim/vehicle";
 
 const Y = 0xf8d42c, YD = 0xe2a81a, BR = 0x4a2c17, BD = 0x2a1d14, CO = 0xe2553d, COD = 0xb93f2c, TQ = 0x2bb6b0, CR = 0xfff0d2, CH = 0xe2e2e2, DK = 0x27272b, BRASS = 0xdfa63c;
 /** small props (fringe, dice, cargo, bolts) are drawn within this distance (m) */
@@ -22,6 +22,8 @@ const DETAIL_M = 70;
 const HEAD: readonly [number, number, number] = [0, 1.16, -1.0];
 const RAKE = Math.atan2(TUK.FRONT - 1.0, 1.16 - TUK.WHEEL_R);
 const FORK_L = Math.hypot(TUK.FRONT - 1.0, 1.16 - TUK.WHEEL_R);
+/** a flat tyre's radius as a share of a full one: the rubber is gone, the wheel runs on what is left */
+const FLAT_K = 0.76;
 
 const mul = (a: THREE.Matrix4, b: THREE.Matrix4) => new THREE.Matrix4().multiplyMatrices(a, b);
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -277,6 +279,8 @@ function build(burnt: boolean): Parts {
 /** what the renderer feeds a vehicle each frame (the drawn pose + state of client.ts VehRemote). A helicopter reads
  * `steer` as its rotor's spool and `vy` as its climb (m/s, from the drawn motion). */
 export interface TukDraw { x: number; y: number; z: number; yaw: number; pitch: number; roll: number; vf: number; vy: number; steer: number; hp: number; flags: number; st: number;
+  /** the flat tyres (shared/sim/vehicle.ts TYRE): each runs on its rim and that corner of the body sinks */
+  tyres: number;
   // ---- a helicopter's door gun, TOP BANANA (shared/sim/heli.ts; render.ts fills these for helicopters only). The gun
   // swings on HELI.GUN_PIVOT (body frame); its barrels reach HELI.GUN_LEN out to the muzzle.
   /** turret yaw relative to the body (rad): 0 = straight out of the left door along −X, + = swung toward the nose
@@ -354,6 +358,7 @@ export function createTukTuk(): TukView {
   let bY = 0, bV = 0, rollS = 0, rollV = 0, pitS = 0, pitV = 0;         // cabin springs: heave, lean, squat / dive
   let aX = 0, aXV = 0, aZ = 0, aZV = 0, dX = 0, dXV = 0, dZ = 0, dZV = 0; // aerial + dice pendulums
   let hornK = 0, shake = 0;
+  let sagY = 0, sagP = 0, sagR = 0, tyres = 0;                          // the body settling onto its flat tyres
   const Q = new THREE.Vector3();
   const view: TukView = {
     object: root, firstPerson: false, kind: 0,
@@ -364,6 +369,12 @@ export function createTukTuk(): TukView {
       root.position.set(s.x, s.y, s.z); root.rotation.set(s.pitch, s.yaw, s.roll, "YXZ");
       const d2 = (cam.x - s.x) ** 2 + (cam.y - s.y) ** 2 + (cam.z - s.z) ** 2;
       detail.visible = d2 < DETAIL_M * DETAIL_M && !view.firstPerson; aerial.visible = d2 < DETAIL_M * DETAIL_M; dice.visible = detail.visible;
+      if (s.tyres !== tyres) {
+        tyres = s.tyres;
+        wF.scale.set(1, tyres & TYRE.FRONT ? FLAT_K : 1, tyres & TYRE.FRONT ? FLAT_K : 1);
+        wL.scale.set(1, tyres & TYRE.LEFT ? FLAT_K : 1, tyres & TYRE.LEFT ? FLAT_K : 1);
+        wR.scale.set(1, tyres & TYRE.RIGHT ? FLAT_K : 1, tyres & TYRE.RIGHT ? FLAT_K : 1);
+      }
       if (wreck) { lean.rotation.set(0, 0, 0.07); lean.position.y = -0.06; cabin.position.y = 0; cabin.rotation.set(0.05, 0, 0); return; }
       dt = Math.min(dt, 0.05);
       // what the body feels: forward / sideways acceleration from the drawn motion itself
@@ -386,7 +397,11 @@ export function createTukTuk(): TukView {
       if (running && upright) bV += (Math.sin(t * 31.7 + s.x) + Math.sin(t * 17.3 + s.z)) * Math.min(1, Math.abs(s.vf) / 9) * 1.1 * dt * 6;   // road chatter
       shake = running ? 1 : Math.max(0, shake - dt * 3);
       const idle = running ? (1 - Math.min(1, Math.abs(s.vf) / 6)) * 0.0035 + 0.0012 : 0;
-      lean.rotation.set(0, 0, rollS); lean.position.y = TUK.HW * Math.abs(Math.sin(rollS));
+      // the body rests on the plane through the three hubs, as shared/sim/vehicle.ts wheels() lays it on the road
+      const drop = TUK.WHEEL_R * (1 - FLAT_K), hF = tyres & TYRE.FRONT ? -drop : 0, hL = tyres & TYRE.LEFT ? -drop : 0, hR = tyres & TYRE.RIGHT ? -drop : 0, hB = (hL + hR) / 2;
+      const kS = Math.min(1, dt * 10);
+      sagY += (hB + (hF - hB) * (TUK.REAR / TUK.WHEELBASE) - sagY) * kS; sagP += ((hF - hB) / TUK.WHEELBASE - sagP) * kS; sagR += ((hR - hL) / (2 * TUK.HW) - sagR) * kS;
+      lean.rotation.set(sagP, 0, rollS + sagR); lean.position.y = TUK.HW * Math.abs(Math.sin(rollS)) + sagY;
       cabin.position.set(Math.sin(t * 43) * idle, Math.max(-0.07, Math.min(0.09, bY)) + Math.sin(t * 57 + 1) * idle, 0);
       cabin.rotation.set(pitS, 0, Math.sin(t * 49 + 2) * idle * 0.6);
       // ---- pendulums: the aerial whips against the motion, the dice swing
@@ -424,7 +439,7 @@ export function tukDebris(): THREE.Object3D[] {
 /** one of each (fresh + wreck) for the prewarm compile */
 export function tukPrefabs(): THREE.Object3D[] {
   const a = createTukTuk(), b = createTukTuk();
-  b.update({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, vy: 0, steer: 0, hp: 0, flags: 0, st: VS.Wreck }, 0.016, 0, new THREE.Vector3());
+  b.update({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, vf: 0, vy: 0, steer: 0, hp: 0, flags: 0, st: VS.Wreck, tyres: 0 }, 0.016, 0, new THREE.Vector3());
   const g = new THREE.Group(); g.add(a.object, b.object); b.object.position.x = 3;
   a.object.traverse((o) => { o.visible = true; });
   return [g];
