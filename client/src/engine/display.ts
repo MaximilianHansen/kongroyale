@@ -214,9 +214,12 @@ export class Display {
     try { atmos?.video?.({ aa: s.aa, ao: s.ao, post: s.post, shadows: s.shadows, effects: s.effects }); } catch (err) { console.warn("[display] atmos video", err); }
     e.setResolution(s.res3d);
     e.setDynamicRes(s.dynres);
-    // view distance: the engine's screen-size cull (a mesh stops drawing under minPx projected radius, never within minDist)
-    const vd = { low: [4, 60], medium: [3, 60], high: [2.4, 70], epic: [2, 80] }[s.viewDist];
-    e.cull.minPx = vd[0]; e.cull.minPxT = vd[0] * 1.5; e.cull.minDist = vd[1];
+    // view distance: the engine's screen-size cull (a mesh stops drawing under minPx projected radius, never within minDist;
+    // big meshes — buildings, POI modules — under min(minPx, bigMaxPx)). Medium up keep big meshes to 2.4 px (the skyline
+    // floor); Low lets them go by its own 4 px like everything else: 3-5 % fewer draws from the warm-up islet, where most
+    // of the island is ~1 km away and those meshes are a few pixels across (cull.ts)
+    const vd = { low: [4, 60, 4], medium: [3, 60, 2.4], high: [2.4, 70, 2.4], epic: [2, 80, 2.4] }[s.viewDist];
+    e.cull.minPx = vd[0]; e.cull.minPxT = vd[0] * 1.5; e.cull.minDist = vd[1]; e.cull.bigMaxPx = vd[2];
     // foliage → the veg tier (ONE string: density + distances + shadow casting — an object here pinned
     // veg to HIGH on every preset); the tier in effect is read back into vegState
     const veg = e.shared.get("veg") as VegQualityApi | undefined;
