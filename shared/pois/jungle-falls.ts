@@ -10,6 +10,7 @@ import rockProfiles from "./jungle-rock-profiles.json";
 import { peakTrail, trailBoxes, type TrailStep } from "./jungle-layout";
 import { LADDERS } from "./ladders";
 import { pathLines } from "../world/terrain-gen";
+import * as dmath from "../sim/dmath";
 
 export type H = (x: number, z: number) => number;
 export type Clearing = { x: number; z: number; r: number } | { x: number; z: number; hx: number; hz: number; yaw?: number };
@@ -125,8 +126,8 @@ export interface FallsResolved {
 function stackCliff(L: CliffLine, h: H, out: RockP[]) {
   const rnd = mulberry(L.seed);
   const segLen: number[] = []; let total = 0;
-  for (let i = 0; i + 1 < L.pts.length; i++) { const d = Math.hypot(L.pts[i + 1][0] - L.pts[i][0], L.pts[i + 1][1] - L.pts[i][1]); segLen.push(d); total += d; }
-  const at = (s: number): [number, number, number, number] => { let k = 0; while (k < segLen.length - 1 && s > segLen[k]) { s -= segLen[k]; k++; } const t = Math.min(1, s / segLen[k]); const a = L.pts[k], b = L.pts[k + 1]; const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz); return [a[0] + dx * t, a[1] + dz * t, dx / l, dz / l]; };
+  for (let i = 0; i + 1 < L.pts.length; i++) { const d = dmath.hypot(L.pts[i + 1][0] - L.pts[i][0], L.pts[i + 1][1] - L.pts[i][1]); segLen.push(d); total += d; }
+  const at = (s: number): [number, number, number, number] => { let k = 0; while (k < segLen.length - 1 && s > segLen[k]) { s -= segLen[k]; k++; } const t = Math.min(1, s / segLen[k]); const a = L.pts[k], b = L.pts[k + 1]; const dx = b[0] - a[0], dz = b[1] - a[1], l = dmath.hypot(dx, dz); return [a[0] + dx * t, a[1] + dz * t, dx / l, dz / l]; };
   const n = Math.ceil(total / (L.size[0] * 0.78));
   for (let i = 0; i <= n; i++) {
     const s = (i / n) * total, [cx, cz, tx, tz] = at(s), t = s / total;
@@ -140,7 +141,7 @@ function stackCliff(L: CliffLine, h: H, out: RockP[]) {
       let hTop = Math.min(hh, top - y + 1.5);
       for (const nt of L.notches ?? []) if (Math.abs(z - nt.z) < nt.hw + w * 0.45 && y + hTop > nt.top) hTop = nt.top - y;
       if (hTop < 0.8) break;
-      if (y + hTop > h(x, z) - 3) out.push({ x, y: y + hTop * 0.5, z, sx: w / 2, sy: hTop / 2, sz: d / 2, ry: Math.atan2(-tz, tx) + (rnd() - 0.5) * 0.35, seed: L.seed * 100 + i * 7 + row });
+      if (y + hTop > h(x, z) - 3) out.push({ x, y: y + hTop * 0.5, z, sx: w / 2, sy: hTop / 2, sz: d / 2, ry: dmath.atan2(-tz, tx) + (rnd() - 0.5) * 0.35, seed: L.seed * 100 + i * 7 + row });
       y += hTop * (0.78 + rnd() * 0.12); row++;
     }
   }
@@ -154,23 +155,23 @@ function skinRocks(h: H, out: RockP[], trails: TrailStep[][] = []) {
   const lanes: Array<{ pts: Array<[number, number]>; r: number }> = pathLines().filter((p) => FALLS.skinRoads.includes(p.id)).map((p) => ({ pts: p.pts as Array<[number, number]>, r: p.w * 1.2 + 1.5 }));
   for (const t of trails) lanes.push({ pts: t.map((st) => [st.x, st.z] as [number, number]), r: 2.5 });
   for (const L of FALLS.skinLanes) lanes.push({ pts: L, r: 3.5 });
-  const laneD = (x: number, z: number, L: { pts: Array<[number, number]> }) => { let m = Infinity; for (let i = 0; i + 1 < L.pts.length; i++) { const [ax, az] = L.pts[i], [bx, bz] = L.pts[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1, u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)); m = Math.min(m, Math.hypot(x - ax - dx * u, z - az - dz * u)); } return m; };
+  const laneD = (x: number, z: number, L: { pts: Array<[number, number]> }) => { let m = Infinity; for (let i = 0; i + 1 < L.pts.length; i++) { const [ax, az] = L.pts[i], [bx, bz] = L.pts[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1, u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)); m = Math.min(m, dmath.hypot(x - ax - dx * u, z - az - dz * u)); } return m; };
   for (let gx = S.x - S.r1; gx <= S.x + S.r1; gx += S.step) for (let gz = S.z - S.r1; gz <= S.z + S.r1; gz += S.step) {
     const jx = gx + (rnd() - 0.5) * S.step * 0.7, jz = gz + (rnd() - 0.5) * S.step * 0.7, rr = rnd(), rs = rnd(), rw = rnd(), rh = rnd(), rd = rnd(), ry = rnd();
-    const dc = Math.hypot(jx - S.x, (jz - S.z) * 1.05);
+    const dc = dmath.hypot(jx - S.x, (jz - S.z) * 1.05);
     if (dc < S.r0 || dc > S.r1) continue;
     if (jx < -175 && jx > -193 && jz > -448 && jz < -362) continue;       // the falls wall line owns this strip
     if (jx > -128 && Math.abs(jz + 402) < 15) continue;                     // river outlet / valley floor
-    if (Math.hypot(jx - FALLS.lookout.x, jz - FALLS.lookout.z) < 7) continue;
-    if (FALLS.skinKeep.some(([kx, kz, kr]) => Math.hypot(jx - kx, jz - kz) < kr)) continue;
-    if (FALLS.views.some(([cx, cz, tx, tz]) => { const dx = tx - cx, dz = tz - cz, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((jx - cx) * dx + (jz - cz) * dz) / L2)); return Math.hypot(jx - cx - dx * u, jz - cz - dz * u) < 7 + u * 3; })) continue;   // judged sight lines
-    const y = h(jx, jz), hx = (h(jx + 2, jz) - h(jx - 2, jz)) / 4, hz = (h(jx, jz + 2) - h(jx, jz - 2)) / 4, slope = Math.hypot(hx, hz);
+    if (dmath.hypot(jx - FALLS.lookout.x, jz - FALLS.lookout.z) < 7) continue;
+    if (FALLS.skinKeep.some(([kx, kz, kr]) => dmath.hypot(jx - kx, jz - kz) < kr)) continue;
+    if (FALLS.views.some(([cx, cz, tx, tz]) => { const dx = tx - cx, dz = tz - cz, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((jx - cx) * dx + (jz - cz) * dz) / L2)); return dmath.hypot(jx - cx - dx * u, jz - cz - dz * u) < 7 + u * 3; })) continue;   // judged sight lines
+    const y = h(jx, jz), hx = (h(jx + 2, jz) - h(jx - 2, jz)) / 4, hz = (h(jx, jz + 2) - h(jx, jz - 2)) / 4, slope = dmath.hypot(hx, hz);
     // never through a bridge deck or the walkway: skip a block that reaches the deck's height near its line
     { let hit = false;
       for (const b of FALLS.bridges) { const ax = b.a[0], az = b.a[1], bx = b.b[0], bz = b.b[1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((jx - ax) * dx + (jz - az) * dz) / L2));
         const ya = b.a[2] ?? h(ax, az) + 1.6, yb = b.b[2] ?? h(bx, bz) + 1.6, deck = ya + (yb - ya) * u - b.sag * 4 * u * (1 - u);
-        if (Math.hypot(jx - ax - dx * u, jz - az - dz * u) < 6.5 && y + 9 > deck - 2.5) hit = true; }
-      for (let i = 0; i + 1 < FALLS.walkway.length; i++) { const [ax, az, ay] = FALLS.walkway[i], [bx, bz] = FALLS.walkway[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((jx - ax) * dx + (jz - az) * dz) / L2)); if (Math.hypot(jx - ax - dx * u, jz - az - dz * u) < 5 && y + 9 > ay - 2.5) hit = true; }
+        if (dmath.hypot(jx - ax - dx * u, jz - az - dz * u) < 6.5 && y + 9 > deck - 2.5) hit = true; }
+      for (let i = 0; i + 1 < FALLS.walkway.length; i++) { const [ax, az, ay] = FALLS.walkway[i], [bx, bz] = FALLS.walkway[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((jx - ax) * dx + (jz - az) * dz) / L2)); if (dmath.hypot(jx - ax - dx * u, jz - az - dz * u) < 5 && y + 9 > ay - 2.5) hit = true; }
       if (hit) continue; }
     if (slope < S.minSlope * (0.85 + rr * 0.3)) continue;
     if (y < FALLS.pool.level - 0.5) continue;                                // never in the pool
@@ -182,8 +183,8 @@ function skinRocks(h: H, out: RockP[], trails: TrailStep[][] = []) {
     // the block's top never stands more than 1 m above the highest ground under it (tall ramparts along the cliff
     // tops walled off crevices players dropped into), and its foot reaches 0.8 m under the lowest ground under it (a
     // block floating over the downhill slope roofed a "covered" pocket)
-    const ryy = Math.atan2(-nx, -nz) + (ry - 0.5) * 0.5, cy0 = y + hh * (0.08 + steep * 0.12) + (rs - 0.5) * 1.2;
-    let gHi = -Infinity, gLo = Infinity; { const c = Math.cos(ryy), sn = Math.sin(ryy); for (const [u, v] of [[0, 0], [1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]]) { const lx = u * w / 2 * 0.85, lz = v * d / 2 * 0.85, gx = cx + lx * c + lz * sn, gz = cz - lx * sn + lz * c, g = h(gx, gz); gHi = Math.max(gHi, g); gLo = Math.min(gLo, g); } }
+    const ryy = dmath.atan2(-nx, -nz) + (ry - 0.5) * 0.5, cy0 = y + hh * (0.08 + steep * 0.12) + (rs - 0.5) * 1.2;
+    let gHi = -Infinity, gLo = Infinity; { const c = dmath.cos(ryy), sn = dmath.sin(ryy); for (const [u, v] of [[0, 0], [1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]]) { const lx = u * w / 2 * 0.85, lz = v * d / 2 * 0.85, gx = cx + lx * c + lz * sn, gz = cz - lx * sn + lz * c, g = h(gx, gz); gHi = Math.max(gHi, g); gLo = Math.min(gLo, g); } }
     const top = Math.min(cy0 + hh / 2, gHi + 1.0), bot = Math.min(cy0 - hh / 2, gLo - 0.8);
     if (top - bot < 1.5) continue;
     if (lanes.some((L) => laneD(cx, cz, L) < Math.max(w, d) * 0.45 + L.r)) continue;   // off the roads + trails
@@ -205,20 +206,20 @@ export function resolveFalls(h: H): FallsResolved {
   const boulders: RockP[] = [];
   const P = F.pool;
   for (let i = 0; i < 46; i++) {
-    const g = mulberry(4000 + i), a = g() * Math.PI * 2, rr = 0.9 + g() * 0.25, x = P.x + Math.cos(a) * P.rx * rr, z = P.z + Math.sin(a) * P.rz * rr;
+    const g = mulberry(4000 + i), a = g() * Math.PI * 2, rr = 0.9 + g() * 0.25, x = P.x + dmath.cos(a) * P.rx * rr, z = P.z + dmath.sin(a) * P.rz * rr;
     if (x < -168) continue;                                   // the falls' landing is open water
     // the outlet: the weir is the rim there (a rim boulder beside it left a sealed sandbar pocket)
     if (x > -140 && z > -422 && z < -380) continue;
     const r = 1.4 + g() * 2.8, y = h(x, z);
     boulders.push({ x, y: y + r * 0.2, z, sx: r * (1 + g() * 0.3), sy: r * 0.75, sz: r, ry: g() * 6.28, seed: 800 + i });
   }
-  for (let i = 0; i < 16; i++) { const g = mulberry(4600 + i), x = -166 + g() * 32, z = -416 + g() * 34; if (Math.hypot(x + 150, z + 398) < 5 || (x > -140 && z > -422 && z < -380)) continue; const r = 1.0 + g() * 1.6, floor = h(x, z), top = P.level + 0.5 + r * 0.55, sy = Math.max(r * 0.65, (top - floor) / 1.6); boulders.push({ x, y: top - sy * 0.8, z, sx: r * 1.2, sy, sz: r, ry: g() * 6.28, seed: 870 + i }); }
+  for (let i = 0; i < 16; i++) { const g = mulberry(4600 + i), x = -166 + g() * 32, z = -416 + g() * 34; if (dmath.hypot(x + 150, z + 398) < 5 || (x > -140 && z > -422 && z < -380)) continue; const r = 1.0 + g() * 1.6, floor = h(x, z), top = P.level + 0.5 + r * 0.55, sy = Math.max(r * 0.65, (top - floor) / 1.6); boulders.push({ x, y: top - sy * 0.8, z, sx: r * 1.2, sy, sz: r, ry: g() * 6.28, seed: 870 + i }); }
   // hard cover out in the plunge pool: big boulders poking ~1 m out of the water
   for (const [x, z, r] of F.poolCover) { const floor = Math.min(h(x, z), h(x + r, z), h(x - r, z), h(x, z + r), h(x, z - r)), top = P.level + 0.9, sy = Math.max(r * 0.7, (top - floor + 0.3) / 1.6); boulders.push({ x, y: top - sy * 0.8, z, sx: r * 1.15, sy, sz: r, ry: (x * 7 + z) % 6.28, seed: 5100 + Math.round(Math.abs(x + z)) }); }
   // lip boulders: big rounded stones flanking each fall's lip + a few in the channel breaking the edge of the sheet
   F.falls.forEach((f, fi) => {
     if (f.cascade) return;
-    const g = mulberry(4700 + fi), [dx, dz] = f.dir, dl = Math.hypot(dx, dz), ux = dx / dl, uz = dz / dl, sx = -uz, sz = ux;
+    const g = mulberry(4700 + fi), [dx, dz] = f.dir, dl = dmath.hypot(dx, dz), ux = dx / dl, uz = dz / dl, sx = -uz, sz = ux;
     for (const sd of [-1, 1]) { const r = 1.6 + g() * 0.8, off = f.width / 2 + r * 0.55, x = f.top[0] + sx * sd * off - ux * 0.6, z = f.top[2] + sz * sd * off - uz * 0.6; boulders.push({ x, y: f.top[1] + r * 0.2, z, sx: r * 1.1, sy: r * 0.8, sz: r, ry: g() * 6.28, seed: 4700 + fi * 10 + (sd + 1) }); }
     for (let k = 0; k < 3; k++) { const r = 0.45 + g() * 0.35, a = (g() - 0.5) * f.width * 0.8, back = 0.4 + g() * 1.6, x = f.top[0] + sx * a - ux * back, z = f.top[2] + sz * a - uz * back; boulders.push({ x, y: f.top[1] + 0.05, z, sx: r * 1.2, sy: r * 0.6, sz: r, ry: g() * 6.28, seed: 4705 + fi * 10 + k }); }
   });
@@ -243,31 +244,31 @@ export function resolveFalls(h: H): FallsResolved {
     const want = i === 0 ? F.weir.riverY : bed + 1.25;
     lv = Math.min(lv - (i ? 0.05 : 0), want); riverLevel.push(lv);
     // half width: march outward (normal to the local tangent) until the ground rises above the level
-    const nb = F.river[Math.min(F.river.length - 1, i + 1)], pb = F.river[Math.max(0, i - 1)], tx = nb[0] - pb[0], tz = nb[1] - pb[1], tl = Math.hypot(tx, tz), nx = -tz / tl, nz = tx / tl;
+    const nb = F.river[Math.min(F.river.length - 1, i + 1)], pb = F.river[Math.max(0, i - 1)], tx = nb[0] - pb[0], tz = nb[1] - pb[1], tl = dmath.hypot(tx, tz), nx = -tz / tl, nz = tx / tl;
     let hw = 6; for (const s of [-1, 1]) { let d = 2; while (d < 30 && h(x + nx * d * s, z + nz * d * s) < lv + 0.05) d += 1; hw = Math.max(hw, d + 3); }
     riverHalfW.push(Math.min(34, hw));
   });
   // river boulders along the banks + a few mid-stream (biome-06: big smooth grey-brown stones, 2–5 m)
   const riverRocks: RockP[] = [];
   /** water level at (x, z): the river level of the nearest centreline segment (interpolated) */
-  const lvAt = (x: number, z: number) => { let best = riverLevel[0], bd = Infinity; for (let i = 0; i + 1 < F.river.length; i++) { const [ax, az] = F.river[i], [bx, bz] = F.river[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)), d = Math.hypot(x - ax - dx * u, z - az - dz * u); if (d < bd) { bd = d; best = riverLevel[i] + (riverLevel[i + 1] - riverLevel[i]) * u; } } return best; };
+  const lvAt = (x: number, z: number) => { let best = riverLevel[0], bd = Infinity; for (let i = 0; i + 1 < F.river.length; i++) { const [ax, az] = F.river[i], [bx, bz] = F.river[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)), d = dmath.hypot(x - ax - dx * u, z - az - dz * u); if (d < bd) { bd = d; best = riverLevel[i] + (riverLevel[i + 1] - riverLevel[i]) * u; } } return best; };
   /** a river boulder sits on the bed and always shows a crown above the water (0.25–0.55 of its height) */
   const rockY = (x: number, z: number, r: number, sy: number, above: number) => Math.max(h(x, z) + r * 0.15, lvAt(x, z) + sy * (above * 2 - 1));
   // river boulders are ROUND (height ≈ 0.7 × width), sitting in the sand / water — never pancakes
   F.viewRocks.forEach(([x, z, r], i) => { const g = mulberry(5900 + i); riverRocks.push({ x, y: rockY(x, z, r, r * 0.95, 0.56 + g() * 0.15), z, sx: r * (1.02 + g() * 0.2), sy: r * 0.95, sz: r * 0.92, ry: g() * 6.28, seed: 990 + i }); });
   const pts = F.river;
   for (let s = 0; s + 1 < pts.length && s < 9; s++) {
-    const dx = pts[s + 1][0] - pts[s][0], dz = pts[s + 1][1] - pts[s][1], l = Math.hypot(dx, dz), nx = -dz / l, nz = dx / l;
+    const dx = pts[s + 1][0] - pts[s][0], dz = pts[s + 1][1] - pts[s][1], l = dmath.hypot(dx, dz), nx = -dz / l, nz = dx / l;
     const n = Math.round(l / 3.2);
     for (let i = 0; i < n; i++) {
       const g = mulberry(5000 + s * 100 + i), t = (i + g()) / n, side = g() < 0.5 ? -1 : 1;
       const px = pts[s][0] + dx * t, pz = pts[s][1] + dz * t, hw = riverHalfW[s] + (riverHalfW[s + 1] - riverHalfW[s]) * t;
       const off = side * (hw * (0.55 + g() * 0.45)), x = px + nx * off, z = pz + nz * off;
       const q = g(), r = q < 0.25 ? 2.2 + g() * 2.0 : q < 0.6 ? 1.1 + g() * 0.8 : 0.45 + g() * 0.45;   // 3 size classes
-      if (F.views.some(([vx, vz]) => Math.hypot(x - vx, z - vz) < r + 3.5) || Math.hypot(x - F.views[1][0], z - F.views[1][1]) < r + 11) continue;   // never inside a view (biome-06: the near water stays open)
+      if (F.views.some(([vx, vz]) => dmath.hypot(x - vx, z - vz) < r + 3.5) || dmath.hypot(x - F.views[1][0], z - F.views[1][1]) < r + 11) continue;   // never inside a view (biome-06: the near water stays open)
       riverRocks.push({ x, y: rockY(x, z, r, r * 0.84, 0.3 + g() * 0.3), z, sx: r * (1 + g() * 0.3), sy: r * 0.84, sz: r, ry: g() * 6.28, seed: 900 + s * 50 + i });
     }
-    for (let i = 0; i < 3; i++) { const g = mulberry(5500 + s * 100 + i), t = g(), px = pts[s][0] + dx * t, pz = pts[s][1] + dz * t, off = (g() - 0.5) * 8; const r = 0.6 + g() * 1.0; const x = px + nx * off, z = pz + nz * off; if (Math.hypot(x - F.views[1][0], z - F.views[1][1]) < r + 11) continue; riverRocks.push({ x, y: rockY(x, z, r, r * 0.6, 0.3), z, sx: r * 1.3, sy: r * 0.6, sz: r, ry: g() * 6.28, seed: 950 + s * 50 + i }); }
+    for (let i = 0; i < 3; i++) { const g = mulberry(5500 + s * 100 + i), t = g(), px = pts[s][0] + dx * t, pz = pts[s][1] + dz * t, off = (g() - 0.5) * 8; const r = 0.6 + g() * 1.0; const x = px + nx * off, z = pz + nz * off; if (dmath.hypot(x - F.views[1][0], z - F.views[1][1]) < r + 11) continue; riverRocks.push({ x, y: rockY(x, z, r, r * 0.6, 0.3), z, sx: r * 1.3, sy: r * 0.6, sz: r, ry: g() * 6.28, seed: 950 + s * 50 + i }); }
   }
   const bridges = F.bridges.map((b) => ({
     id: b.id, sag: b.sag, width: b.width, xBrace: b.xBrace,
@@ -276,7 +277,7 @@ export function resolveFalls(h: H): FallsResolved {
     anchors: [0, 0] as [number, number],
   }));
   for (const b of bridges) {
-    const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], l = Math.hypot(dx, dz);
+    const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], l = dmath.hypot(dx, dz);
     b.anchors = [h(b.a[0] - dx / l * 2.6, b.a[2] - dz / l * 2.6), h(b.b[0] + dx / l * 2.6, b.b[2] + dz / l * 2.6)];
   }
   // water level of the nearest river reach (the canoe floats when it sits in the water)
@@ -287,11 +288,11 @@ export function resolveFalls(h: H): FallsResolved {
     const nx = Math.round((x1 - x0) / step) + 1, nz = Math.round((z1 - z0) / step) + 1, hs: Array<number | null> = [], g = mulberry(7100 + bi);
     const ph = g() * 6.28, ph2 = g() * 6.28;
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-      const x = x0 + i * step, z = z0 + j * step, ze = B.zEdge + 1.1 * Math.sin(x * 0.19 + ph) + 0.6 * Math.sin(x * 0.47 + ph2), dz = (ze - z) * B.side;
+      const x = x0 + i * step, z = z0 + j * step, ze = B.zEdge + 1.1 * dmath.sin(x * 0.19 + ph) + 0.6 * dmath.sin(x * 0.47 + ph2), dz = (ze - z) * B.side;
       const t = Math.min(1, Math.max(0, (dz + 1) / 3.5)), rise = t * t * (3 - 2 * t), end = Math.min(1, Math.max(0, (x - B.x0) / 6)) * Math.min(1, Math.max(0, (B.x1 - x) / 6));
       // a BROAD sand terrace (a wide cream bar with the canoe + boulders on it) — rises 0.8 m at the waterline,
       // then keeps climbing gently (up to ~2 m) until it meets the bank
-      const L = lvAt(x, z), y = L - 0.32 + (0.8 * rise + 0.095 * Math.min(14, Math.max(0, dz))) * (0.6 + 0.4 * end) - 1.6 * (1 - end) + 0.05 * Math.sin(x * 1.3 + z * 0.9), th = h(x, z);
+      const L = lvAt(x, z), y = L - 0.32 + (0.8 * rise + 0.095 * Math.min(14, Math.max(0, dz))) * (0.6 + 0.4 * end) - 1.6 * (1 - end) + 0.05 * dmath.sin(x * 1.3 + z * 0.9), th = h(x, z);
       hs.push(y > th - 0.6 && dz > -6 ? r3(Math.max(y, th - 0.6)) : null);
     }
     return { x0, z0, nx, nz, step, h: hs };
@@ -299,10 +300,10 @@ export function resolveFalls(h: H): FallsResolved {
   const barAt = (x: number, z: number) => { let best = -Infinity; for (const b of bars) { const fi = (x - b.x0) / b.step, fj = (z - b.z0) / b.step, i = Math.floor(fi), j = Math.floor(fj); if (i < 0 || j < 0 || i >= b.nx - 1 || j >= b.nz - 1) continue; const q = [b.h[j * b.nx + i], b.h[j * b.nx + i + 1], b.h[(j + 1) * b.nx + i], b.h[(j + 1) * b.nx + i + 1]]; if (q.some((v) => v === null)) continue; const u = fi - i, v = fj - j; best = Math.max(best, ((q[0] as number) * (1 - u) + (q[1] as number) * u) * (1 - v) + ((q[2] as number) * (1 - u) + (q[3] as number) * u) * v); } return best; };
   const gnd = (x: number, z: number) => Math.max(h(x, z), barAt(x, z));
   // the canoe rests on the sand: height at its middle, pitch from stern → bow ground heights (bow down toward the water)
-  const cn = F.canoe, cbx = Math.cos(cn.yaw), cbz = -Math.sin(cn.yaw), hb = gnd(cn.x + cbx * cn.len * 0.4, cn.z + cbz * cn.len * 0.4), hs2 = gnd(cn.x - cbx * cn.len * 0.4, cn.z - cbz * cn.len * 0.4);
-  const canoeY = gnd(cn.x, cn.z) + 0.05, canoePitch = Math.atan2(hb - hs2, cn.len * 0.8);
+  const cn = F.canoe, cbx = dmath.cos(cn.yaw), cbz = -dmath.sin(cn.yaw), hb = gnd(cn.x + cbx * cn.len * 0.4, cn.z + cbz * cn.len * 0.4), hs2 = gnd(cn.x - cbx * cn.len * 0.4, cn.z - cbz * cn.len * 0.4);
+  const canoeY = gnd(cn.x, cn.z) + 0.05, canoePitch = dmath.atan2(hb - hs2, cn.len * 0.8);
   const lo = F.lookout, lookoutGround = Math.min(h(lo.x - 3, lo.z - 3), h(lo.x + 3, lo.z - 3), h(lo.x - 3, lo.z + 3), h(lo.x + 3, lo.z + 3));
-  const fx = Math.cos(lo.yaw), fz = -Math.sin(lo.yaw), lookoutPosts: Array<[number, number, number]> = [];
+  const fx = dmath.cos(lo.yaw), fz = -dmath.sin(lo.yaw), lookoutPosts: Array<[number, number, number]> = [];
   for (const a of [-lo.w / 2 + 0.25, 0, lo.w / 2 - 0.25]) for (const sd of [-lo.d / 2 + 0.25, lo.d / 2 - 0.25]) { const x = lo.x + fx * a - fz * sd, z = lo.z + fz * a + fx * sd; lookoutPosts.push([x, z, h(x, z)]); }
   // plug blocks closing the pockets a reachability scan found between the wall's blocks after the terrain re-bakes:
   // [x, z, half-size, top y]; foot 1 m under the lowest ground (a wall block: seed < 30000, collides like the wall)
@@ -323,7 +324,7 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
  *  gorge bridge). Tread centres [x, z, top y] along −fwd from the back edge. */
 export const LOOKOUT_STEP = { tread: 0.42, rise: 0.34, width: 1.8 };
 function lookoutSteps(h: H): Array<[number, number, number]> {
-  const lo = FALLS.lookout, fx = Math.cos(lo.yaw), fz = -Math.sin(lo.yaw), S = LOOKOUT_STEP, out: Array<[number, number, number]> = [];
+  const lo = FALLS.lookout, fx = dmath.cos(lo.yaw), fz = -dmath.sin(lo.yaw), S = LOOKOUT_STEP, out: Array<[number, number, number]> = [];
   for (let i = 0; i < 12; i++) {
     const d = lo.w / 2 + S.tread * (i + 0.5), x = lo.x - fx * d, z = lo.z - fz * d, y = lo.deckY - S.rise * (i + 1);
     const g = Math.max(h(x - fz * S.width / 2, z + fx * S.width / 2), h(x, z), h(x + fz * S.width / 2, z - fx * S.width / 2));
@@ -337,7 +338,7 @@ function lookoutSteps(h: H): Array<[number, number, number]> {
  *  within `r` + 1.3 m of the gorge bridge's north end (client wood.ts skips its rope + posts there too) */
 export function walkwayGap(x: number, z: number, r = 0): boolean {
   const g = FALLS.bridges.find((b) => b.id === "gorge")!;
-  return Math.hypot(x - g.b[0], z - g.b[1]) < r + 1.3;
+  return dmath.hypot(x - g.b[0], z - g.b[1]) < r + 1.3;
 }
 
 /** deck height of a bridge at parameter t (0 at a → 1 at b) */
@@ -354,7 +355,7 @@ export function fallsColliders(R: FallsResolved, tags?: string[]): Box[] {
   // rock had an invisible slab 0.3–2 m over its visible top (and box corners outside its round silhouette). The
   // client draws variant seed % 5 of the same family (mist-falls/index.ts lodPair → rockLOD3 proto = seed).
   const rockCols = (r: RockP, fam: "slate" | "boulder") => {
-    const cols = (rockProfiles as Record<string, number[][][]>)[fam][r.seed % 5], c = Math.cos(r.ry), sn = Math.sin(r.ry);
+    const cols = (rockProfiles as Record<string, number[][][]>)[fam][r.seed % 5], c = dmath.cos(r.ry), sn = dmath.sin(r.ry);
     for (const [x0, x1, z0, z1, y0, y1] of cols) {
       const lx = (x0 + x1) / 2 * r.sx, lz = (z0 + z1) / 2 * r.sz, ly = (y0 + y1) / 2 * r.sy;
       out.push(box(r.x + lx * c + lz * sn, r.y + ly, r.z - lx * sn + lz * c, (x1 - x0) * r.sx, (y1 - y0) * r.sy, (z1 - z0) * r.sz, sy(r.ry)));
@@ -368,7 +369,7 @@ export function fallsColliders(R: FallsResolved, tags?: string[]): Box[] {
   R.riverRocks.forEach((r, i) => { rockCols(r, "boulder"); tag("rrock" + i); });
   // bridges: flat deck segments (≤ 1.2 m, auto-step handles the sag) + rope-rail walls + end posts
   for (const b of R.bridges) {
-    const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], span = Math.hypot(dx, dz), yaw = Math.atan2(dz, dx), sx = -dz / span, sz = dx / span;
+    const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], span = dmath.hypot(dx, dz), yaw = dmath.atan2(dz, dx), sx = -dz / span, sz = dx / span;
     const n = Math.max(10, Math.round(span / 1.2));
     for (let i = 0; i < n; i++) {
       const tm = (i + 0.5) / n, ym = bridgeDeckY(b.a, b.b, b.sag, tm), cx = b.a[0] + dx * tm, cz = b.a[2] + dz * tm, len = span / n;
@@ -383,19 +384,19 @@ export function fallsColliders(R: FallsResolved, tags?: string[]): Box[] {
   out.push({ c: [lo.x, lo.deckY - 0.12, lo.z], h: [lo.w / 2, 0.14, lo.d / 2], yaw: sy(lo.yaw), surf: "wood" });
   // the rope railing on the deck's two long sides collides like it draws; the back
   // end is open onto the steps, the front onto the gorge bridge
-  { const fx = Math.cos(lo.yaw), fz = -Math.sin(lo.yaw);
+  { const fx = dmath.cos(lo.yaw), fz = -dmath.sin(lo.yaw);
     for (const sd of [-1, 1]) { const o = sd * (lo.d / 2 - 0.25); out.push({ c: [lo.x - fz * o, lo.deckY + 0.55, lo.z + fx * o], h: [lo.w / 2 - 0.25, 0.55, 0.06], yaw: sy(lo.yaw), surf: "wood", noShoot: true }); }
     for (const [x, z, y] of R.lookoutSteps ?? []) out.push({ c: [x, (y + R.lookoutGround - 0.5) / 2, z], h: [LOOKOUT_STEP.tread / 2 + 0.02, (y - R.lookoutGround + 0.5) / 2, LOOKOUT_STEP.width / 2], yaw: sy(lo.yaw), surf: "wood" }); }
   for (const [x, z, gy] of R.lookoutPosts) out.push(box(x, (gy + lo.deckY + lo.roofH) / 2, z, 0.4, lo.deckY + lo.roofH - gy + 0.6, 0.4, 0, "wood"));
   // walkway (flat 1.2 m segments)
   const W = FALLS.walkway;
   for (let i = 0; i + 1 < W.length; i++) {
-    const a = W[i], b = W[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], span = Math.hypot(dx, dz), n = Math.max(4, Math.round(span / 1.2));
+    const a = W[i], b = W[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], span = dmath.hypot(dx, dz), n = Math.max(4, Math.round(span / 1.2));
     // + the outer rope rail (pool side) collides like the bridges' rails
     const sx = -dz / span, sz = dx / span;
-    for (let k = 0; k < n; k++) { const t = (k + 0.5) / n, y = a[2] + (b[2] - a[2]) * t; out.push({ c: [a[0] + dx * t, y - 0.08, a[1] + dz * t], h: [span / n / 2 + 0.04, 0.1, 0.8], yaw: Math.atan2(dz, dx), surf: "wood" });
+    for (let k = 0; k < n; k++) { const t = (k + 0.5) / n, y = a[2] + (b[2] - a[2]) * t; out.push({ c: [a[0] + dx * t, y - 0.08, a[1] + dz * t], h: [span / n / 2 + 0.04, 0.1, 0.8], yaw: dmath.atan2(dz, dx), surf: "wood" });
       const rx = a[0] + dx * t + sx * 0.72, rz = a[1] + dz * t + sz * 0.72;
-      if (!walkwayGap(rx, rz, span / n / 2 + 0.6)) out.push({ c: [rx, y + 0.55, rz], h: [span / n / 2 + 0.04, 0.55, 0.05], yaw: Math.atan2(dz, dx), surf: "wood", noShoot: true }); }
+      if (!walkwayGap(rx, rz, span / n / 2 + 0.6)) out.push({ c: [rx, y + 0.55, rz], h: [span / n / 2 + 0.04, 0.55, 0.05], yaw: dmath.atan2(dz, dx), surf: "wood", noShoot: true }); }
   }
   const ho = FALLS.hoist; out.push(box(ho.x, FALLS.pillar.top + 2.6, ho.z, 0.5, 5.4, 0.5, 0, "wood"));
   tag("lookout/walkway/hoist");
@@ -417,7 +418,7 @@ export function fallsColliders(R: FallsResolved, tags?: string[]): Box[] {
  *  lookout deck, the pillar top by the hoist, both bridge heads, the weir crest, the canoe's sandbar, the river bridge
  *  bank, the north bluff; floor loot along the walkway, the gorge bridge, the sandbars, the pool shore, the banks */
 export function fallsLootCandidates(R: FallsResolved): { chests: Array<[number, number, number, number]>; floor: Array<[number, number, number]> } {
-  const F = FALLS, lo = F.lookout, c = Math.cos(lo.yaw), s = Math.sin(lo.yaw), gb = F.bridges[0], hb = F.bridges[1], rb = F.bridges[2];
+  const F = FALLS, lo = F.lookout, c = dmath.cos(lo.yaw), s = dmath.sin(lo.yaw), gb = F.bridges[0], hb = F.bridges[1], rb = F.bridges[2];
   const chests: Array<[number, number, number, number]> = [
     [lo.x - c * 1.8, lo.deckY, lo.z + s * 1.8, lo.yaw],                          // lookout deck (away from the stair side)
     [F.pillar.x + 2.2, F.pillar.top, F.pillar.z + 1.2, -0.25],                   // pillar top beside the hoist
@@ -435,7 +436,7 @@ export function fallsLootCandidates(R: FallsResolved): { chests: Array<[number, 
   // on the bridge decks (resolved ends [x, y, z]): gorge 30 / 70 %, river mid-span
   for (const [id, ts] of [["gorge", [0.3, 0.7]], ["river", [0.5]]] as Array<[string, number[]]>) { const b = R.bridges.find((q) => q.id === id); if (b) for (const t of ts) floor.push([b.a[0] + (b.b[0] - b.a[0]) * t, bridgeDeckY(b.a, b.b, b.sag, t), b.a[2] + (b.b[2] - b.a[2]) * t]); }
   // the sandbar mounds: the two highest cells of every bar
-  for (const b of R.bars ?? []) { const cells: Array<[number, number, number]> = []; for (let j = 0; j < b.nz; j += 2) for (let i = 0; i < b.nx; i += 2) { const v = b.h[j * b.nx + i]; if (v !== null) cells.push([b.x0 + i * b.step, v, b.z0 + j * b.step]); } cells.sort((a, c) => c[1] - a[1]); floor.push(...cells.filter((c, k) => k === 0 || Math.hypot(c[0] - cells[0][0], c[2] - cells[0][2]) > 8).slice(0, 2)); }
+  for (const b of R.bars ?? []) { const cells: Array<[number, number, number]> = []; for (let j = 0; j < b.nz; j += 2) for (let i = 0; i < b.nx; i += 2) { const v = b.h[j * b.nx + i]; if (v !== null) cells.push([b.x0 + i * b.step, v, b.z0 + j * b.step]); } cells.sort((a, c) => c[1] - a[1]); floor.push(...cells.filter((c, k) => k === 0 || dmath.hypot(c[0] - cells[0][0], c[2] - cells[0][2]) > 8).slice(0, 2)); }
   floor.push([F.pillar.x - 1.8, F.pillar.top, F.pillar.z - 1.6], [lo.x + c * 1.6, lo.deckY, lo.z - s * 1.6], [-141, 0, -424], [-130, 0, -380], [-110, 0, -422], [-95, 0, -432], [-86, 0, -382], [-160, 0, -362], [-165, 0, -436], [-120, 0, -360]);
   void R;
   return { chests, floor };
@@ -448,13 +449,13 @@ export function fallsClearings(R?: FallsResolved): Clearing[] {
     { x: F.lookout.x, z: F.lookout.z, r: 6 },
     { x: F.canoe.x, z: F.canoe.z, r: 5 },
     // the poi-09 camera stand + its sight line to the falls (no tree may stand in the view)
-    ...F.views.map(([x, z, tx, tz]) => ({ x: (x + tx) / 2, z: (z + tz) / 2, hx: Math.hypot(tx - x, tz - z) / 2, hz: 5, yaw: Math.atan2(tz - z, tx - x) })),
+    ...F.views.map(([x, z, tx, tz]) => ({ x: (x + tx) / 2, z: (z + tz) / 2, hx: dmath.hypot(tx - x, tz - z) / 2, hz: 5, yaw: dmath.atan2(tz - z, tx - x) })),
     ...F.views.map(([x, z]) => ({ x, z, r: 8 })),
     { x: -70, z: -392, hx: 17, hz: 8, yaw: 0.1 },         // biome-06: the sky window over the far (south) bank (open sky upper-left)
   ];
   // the falls-ridge road, the stone trails' line and the north walkway stay clear of scatter, terrain rocks
   // and trees (a rock / trunk in the lane blocks the road)
-  { const lane = (P: Array<[number, number]>, r: number) => { for (let i = 0; i + 1 < P.length; i++) { const [ax, az] = P[i], [bx, bz] = P[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 3)); for (let k = 0; k <= n; k++) out.push({ x: ax + (bx - ax) * k / n, z: az + (bz - az) * k / n, r }); } };
+  { const lane = (P: Array<[number, number]>, r: number) => { for (let i = 0; i + 1 < P.length; i++) { const [ax, az] = P[i], [bx, bz] = P[i + 1], n = Math.max(1, Math.ceil(dmath.hypot(bx - ax, bz - az) / 3)); for (let k = 0; k <= n; k++) out.push({ x: ax + (bx - ax) * k / n, z: az + (bz - az) * k / n, r }); } };
     for (const p of pathLines()) if (F.skinRoads.includes(p.id)) lane(p.pts as Array<[number, number]>, p.w * 1.2 + 2);
     lane(F.walkway.map(([x, z]) => [x, z] as [number, number]), 2.5);
     for (const L of F.skinLanes) lane(L, 3.5);

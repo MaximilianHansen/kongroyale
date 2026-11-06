@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "pois": {
+    "coconut-cove": {
+      "hash": "693204a6ba206d8f",
+      "tris": 1668,
+      "bytes": 21780
+    },
+    "peel-harbor": {
+      "hash": "c7040c2e08b70a98",
+      "tris": 6195,
+      "bytes": 67502
+    },
+    "mango-market": {
+      "hash": "929d1a768e093000",
+      "tris": 3718,
+      "bytes": 50608
+    },
+    "stilt-town": {
+      "hash": "53260058fc47791a",
+      "tris": 5406,
+      "bytes": 69276
+    },
+    "banana-temple": {
+      "hash": "f6eb8e0d130d02c2",
+      "tris": 10275,
+      "bytes": 107130
+    },
+    "ripe-peak": {
+      "hash": "85760d65c4e51033",
+      "tris": 7809,
+      "bytes": 74674
+    },
+    "mist-falls": {
+      "hash": "6154801ab22e2cb2",
+      "tris": 8262,
+      "bytes": 76284
+    },
+    "cnvs-lab": {
+      "hash": "b1a4c9fcb4b080b6",
+      "tris": 9417,
+      "bytes": 103922
+    },
+    "canopy-line": {
+      "hash": "a898c780c1cacee8",
+      "tris": 11676,
+      "bytes": 115648
+    },
+    "peel-strip": {
+      "hash": "991011ed27f7c232",
+      "tris": 6456,
+      "bytes": 75876
+    },
+    "the-plantation": {
+      "hash": "a3c45a43cb660a9e",
+      "tris": 10032,
+      "bytes": 100204
+    },
+    "lookout-point": {
+      "hash": "d6dc4acb7f11b31c",
+      "tris": 10202,
+      "bytes": 96984
+    },
+    "the-wreck": {
+      "hash": "2f643f9aff3caa5c",
+      "tris": 9038,
+      "bytes": 84860
+    },
+    "coco-caves": {
+      "hash": "667af0d960545139",
+      "tris": 11458,
+      "bytes": 128040
+    },
+    "wreck-bay": {
+      "hash": "105b4dca5711e792",
+      "tris": 2392,
+      "bytes": 27604
+    },
+    "the-murk": {
+      "hash": "e06be5701822292d",
+      "tris": 11092,
+      "bytes": 124112
+    }
+  }
+}

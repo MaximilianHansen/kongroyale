@@ -462,7 +462,7 @@ export function accentGem(b: PartBuilder, acc: PartBuilder, pos: V3 | THREE.Vect
   const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
   const upv = v3(up).applyQuaternion(q.clone().invert());
   const m = new THREE.Matrix4().compose(p.clone().addScaledVector(d, size * 0.32), q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, Math.atan2(upv.x, upv.z))), new THREE.Vector3(1, 1, 1));
-  acc.add(gem.toNonIndexed(), C.white, "emissive", m);
+  acc.add(gem, C.white, "emissive", m);
 }
 
 
