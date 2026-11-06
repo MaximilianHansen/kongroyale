@@ -16,7 +16,7 @@ import type { WorldCtx } from "../../engine/engine";
 import type { CamSpec } from "../../engine/views";
 import { AtmosState, PRESETS, lin, atmosFlags, gradeParams, type PresetId } from "./state";
 import { skyTable, gradeInv } from "./grade";
-import { ATMOS_PARS, makeAtmosUniforms, type AtmosUniforms } from "./glsl";
+import { ATMOS_PARS, makeAtmosGroup, makeAtmosUniforms, type AtmosUniforms } from "./glsl";
 import { SkyDome, HorizonSkirt, makeLUT, toHalf } from "./sky";
 import { Clouds, cloudField } from "./clouds";
 import { VIEW_IDS, SKY_VIEWS, camLook, type ViewCam } from "./cloud-field";
@@ -89,7 +89,8 @@ const mod: WorldModule = {
     const clouds = new Clouds(u, state, ctx.renderer, ctx.quality, ctx.shotMode);
     if (!flags.has("noclouds")) ctx.scene.add(clouds.group);
     clouds.noShadow = flags.has("nocloudshadow") || flags.has("noclouds");
-    shadows = new SunShadows(ctx.scene, ctx.renderer, u, ctx.quality, ctx.terrain);
+    // patched materials read the shared non-sampler uniforms from one uniform buffer (glsl.ts ATMOS_UBO)
+    shadows = new SunShadows(ctx.scene, ctx.renderer, u, ctx.quality, ctx.terrain, flags.has("noubo") ? null : makeAtmosGroup(u));
     const env = new SkyEnvironment(ctx.renderer);
     const flies = new Fireflies(ctx.terrain);
     ctx.scene.add(flies.points);

@@ -1,6 +1,8 @@
 // Shared GLSL for the atmos area. The sky colour function is used by the sky dome, the env-map bake, the clouds, the
 // water's reflections and the aerial-perspective patch injected into every material — so distance haze always matches
 // the sky behind it. Uniforms here are SHARED OBJECTS (see AtmosUniforms): update once per frame, every shader sees it.
+// Patched materials read the non-sampler ones from one uniform buffer (ATMOS_UBO): never change those in the middle of a
+// render() call.
 //
 // CONTRACT (other areas call these — keep the signatures):
 //   vec3  atmosSky(vec3 dirWorld)            sky radiance (linear, no sun disc) toward a world direction
@@ -180,11 +182,69 @@ export function makeAtmosUniforms(): AtmosUniforms {
   };
 }
 
-/** declarations: sky + haze + cloud-shadow uniforms and functions (fragment stage) */
+/** The non-sampler uniforms a PATCHED material reads (shadows.ts patch), as ONE std140 uniform buffer (block KrAtmos,
+ *  544 bytes). three uploads every loose uniform of a program on each material switch (~510 a frame in a match, ~30 of
+ *  them atmos'); a buffer goes up once per render() call that draws a patched material, and only the members that
+ *  changed. Samplers can't live in a buffer and stay loose, and so does everything in custom ShaderMaterials (sky,
+ *  clouds, water passes, splats, post): they include ATMOS_PARS without KR_ATMOS_UBO, which only the patch defines.
+ *
+ *  Layout: one row = one 16-byte slot (a mat4: four), in the order three lays the uniform objects out by their value
+ *  types (WebGLUniformsGroups): a vec3 and the float after it share a slot, as do two vec2s. The block declares only
+ *  mat4 and vec4 members (uAtmK<row>) and every value is read through a #define of its usual name — no vec3 member,
+ *  which drivers have laid out wrongly (Apple's among them). makeAtmosGroup checks each value's type against its row.
+ *  Never add a member after the first draw (three sizes the buffer once).
+ *
+ *  RULE: a value in here must not change between two patched draws of ONE render() call. three uploads the buffer at
+ *  the first patched draw of each render() call, so a write later in the same call (an onBeforeRender / onBeforeShadow
+ *  hook, a shadow render nested in it) reaches the GPU with the next render() call, not the next draw. Writes between
+ *  render() calls are fine: update hooks, post.ts around its passes and around the viewmodel pass. The one write inside
+ *  a render is shadows.ts bakeFar (uAtmFarMatrix = the far light's shadow matrix, refreshed by the bake's own shadow
+ *  render; uAtmFarParams.w), from a hook drawn first in the opaque list. Only content under a THREE.Group with a
+ *  negative renderOrder (CNVS Lab) sorts ahead of it: on a bake frame with that in view, all of that frame's patched
+ *  draws read the pre-bake values — a first bake's far shadows show one frame later, a re-bake for a new sun reads the
+ *  new map through the old matrix for that one frame (with loose uniforms only the draws before the hook did).
+ *  ?atmos=noubo = loose uniforms everywhere (A/B, or a driver that mishandles the buffer). */
+export const ATMOS_UBO = [
+  ["mat4", "uAtmAOVP"], ["mat4", "uAtmFarMatrix"],
+  ["vec4", "uAtmCloudShadowParams"], ["vec4", "uAtmVegGrade"], ["vec4", "uAtmAOSize"], ["vec4", "uAtmAOParams"], ["vec4", "uAtmGIParams"],
+  ["vec4", "uAtmVMEnv"], ["vec4", "uAtmSunBias"], ["vec4", "uAtmFarParams"], ["vec4", "uAtmJitter"],
+  ["vec3 float", "uAtmSunDir", "uAtmGlow"], ["vec3 float", "uAtmSunColor", "uAtmGlowSize"], ["vec3 float", "uAtmZenith", "uAtmRays"],
+  ["vec3 float", "uAtmMid", "uAtmSunHorizonAmt"], ["vec3 float", "uAtmLow", "uAtmGlowDesat"], ["vec3 float", "uAtmHorizon", "uAtmHazeDensity"],
+  ["vec3 float", "uAtmGlowColor", "uAtmHazeHeight"], ["vec3 float", "uAtmSunHorizon", "uAtmHazeSun"], ["vec3 float", "uAtmGroundHorizon", "uAtmFogDensity"],
+  ["vec3 float", "uAtmGroundNadir", "uAtmFogHeight"], ["vec3 float", "uAtmHazeColor", "uAtmRimLight"], ["vec3 float", "uAtmFogColor", "uAtmWet"],
+  ["vec3 float", "uAtmCamPos", "uAtmBounce"], ["vec3 float", "uAtmVegFill", "uAtmSkyVis"],
+  ["vec2 vec2", "uAtmCloudDrift", "uAtmSunRadius"], ["vec2 vec2", "uAtmTemporal", "uAtmFarSize"], ["vec2 vec2", "uAtmRes", "uAtmThin"],
+] as const satisfies ReadonlyArray<readonly ["mat4" | "vec4", keyof AtmosUniforms] | readonly ["vec3 float" | "vec2 vec2", keyof AtmosUniforms, keyof AtmosUniforms]>;
+const UBO_SWIZZLE: Record<(typeof ATMOS_UBO)[number][0], readonly string[]> = { "mat4": [""], "vec4": [""], "vec3 float": [".xyz", ".w"], "vec2 vec2": [".xy", ".zw"] };
+/** the block + a #define per value, identical in both stages (prepended to a patched material's shaders) */
+export const ATMOS_UBO_DECL = `layout(std140) uniform KrAtmos {\n${ATMOS_UBO.map(([t], i) => `  highp ${t === "mat4" ? "mat4" : "vec4"} uAtmK${i};\n`).join("")}};\n`
+  + ATMOS_UBO.map(([t, ...ks], i) => ks.map((k, j) => `#define ${k} uAtmK${i}${UBO_SWIZZLE[t][j]}\n`).join("")).join("");
+/** a uniform value's GLSL type, as three's buffer layout sees it (the same is* flags) */
+const uboKind = (v: unknown): string => {
+  const o = (v ?? {}) as { isMatrix4?: boolean; isVector4?: boolean; isVector3?: boolean; isColor?: boolean; isVector2?: boolean };
+  return typeof v === "number" ? "float" : o.isMatrix4 ? "mat4" : o.isVector4 ? "vec4" : o.isVector3 || o.isColor ? "vec3" : o.isVector2 ? "vec2" : typeof v;
+};
+/** the buffer over the SAME shared uniform objects, so every existing writer reaches it; null (= loose uniforms) when a
+ *  value's type no longer matches its row */
+export function makeAtmosGroup(u: AtmosUniforms): THREE.UniformsGroup | null {
+  const g = new THREE.UniformsGroup().setName("KrAtmos").setUsage(THREE.DynamicDrawUsage);
+  for (const [t, ...ks] of ATMOS_UBO) {
+    const got = ks.map((k) => uboKind(u[k].value)).join(" ");
+    if (got !== t) { console.error(`[atmos] uniform buffer row ${ks.join(", ")} is ${got}, not ${t}: loose uniforms instead`); return null; }
+    for (const k of ks) g.add(u[k] as unknown as THREE.Uniform);
+  }
+  return g;
+}
+
+/** declarations: sky + haze + cloud-shadow uniforms and functions (fragment stage). Under KR_ATMOS_UBO (a patched
+ *  material) the non-sampler ones come from the KrAtmos block instead */
 export const ATMOS_PARS = /* glsl */ `
+#ifndef KR_ATMOS_UBO
 uniform vec3 uAtmSunDir;
 uniform vec3 uAtmSunColor;
+#endif
 uniform sampler2D uAtmSkyLUT;
+#ifndef KR_ATMOS_UBO
 uniform vec3 uAtmZenith, uAtmMid, uAtmLow, uAtmHorizon, uAtmGlowColor, uAtmSunHorizon;
 uniform float uAtmGlow, uAtmGlowSize, uAtmRays, uAtmSunHorizonAmt, uAtmGlowDesat;
 uniform vec3 uAtmGroundHorizon, uAtmGroundNadir;
@@ -192,13 +252,16 @@ uniform vec3 uAtmHazeColor;
 uniform float uAtmHazeDensity, uAtmHazeHeight, uAtmHazeSun;
 uniform vec3 uAtmFogColor;
 uniform float uAtmFogDensity, uAtmFogHeight;
+#endif
 uniform sampler2D uAtmCloudShadowMap;
+#ifndef KR_ATMOS_UBO
 uniform vec4 uAtmCloudShadowParams;
 uniform vec2 uAtmCloudDrift;
 uniform vec3 uAtmCamPos;
 uniform float uAtmRimLight;
 uniform vec4 uAtmVegGrade;
 uniform float uAtmWet;
+#endif
 
 // sun shafts: 3 soft, uneven, BROAD beams at fixed irregular angles around the sun (the beach target art's crepuscular
 // streaks) — no thin symmetric spokes (they read as a clip-art starburst / a lens streak at dawn)
@@ -317,12 +380,16 @@ float atmosCloudShadow(vec3 p) {
  *  one bilinear fetch for the cloud / sky terms. */
 export const ATMOS_AO_PARS = /* glsl */ `
 uniform highp sampler2D uAtmAO;
+#ifndef KR_ATMOS_UBO
 uniform mat4 uAtmAOVP;
 uniform vec4 uAtmAOSize;
 uniform vec4 uAtmAOParams;
+#endif
 uniform highp sampler2D uAtmGI;
+#ifndef KR_ATMOS_UBO
 uniform vec4 uAtmGIParams;
 uniform vec4 uAtmVMEnv;
+#endif
 vec3 atmSSv = vec3( -1.0 );
 // rgb = one-bounce GI irradiance, a = interior sky visibility (the AO pass's 2nd target, same texel as the AO)
 vec4 atmGIv = vec4( 0.0, 0.0, 0.0, 1.0 );
