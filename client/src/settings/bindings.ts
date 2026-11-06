@@ -22,7 +22,7 @@ export const DEFAULT_BINDS: Binds = {
 };
 
 export type BindAction = keyof Binds;
-export const BIND_LABELS: Record<BindAction, string> = { fwd:"Move forward",back:"Move back",left:"Move left",right:"Move right",jump:"Jump / exit plane",crouch:"Crouch",sprint:"Sprint / dive / hold breath",reload:"Reload",use:"Interact",fire:"Fire / use item",aim:"Aim down sights",nextSlot:"Next slot",prevSlot:"Previous slot",lastSlot:"Swap to last slot",map:"Map",inventory:"Inventory",glider:"Deploy glider",ping:"Ping / mark the spot you look at",slots:"Equipment slot",throw:"Throw banana bomb (hold to cook)",radio:"Tuk-tuk radio · next station",seats:"Tuk-tuk seat",rideView:"Tuk-tuk driver view",talk:"Push to talk (squad voice)" };
+export const BIND_LABELS: Record<BindAction, string> = { fwd:"Move forward",back:"Move back",left:"Move left",right:"Move right",jump:"Jump / exit plane",crouch:"Crouch",sprint:"Sprint / dive / hold breath",reload:"Reload",use:"Interact",fire:"Fire / use item",aim:"Aim down sights",nextSlot:"Next slot",prevSlot:"Previous slot",lastSlot:"Swap to last slot",map:"Map",inventory:"Inventory",glider:"Deploy glider",ping:"Ping / mark the spot you look at",slots:"Equipment slot",throw:"Throw banana bomb (hold to cook)",radio:"Tuk-tuk radio · next station",seats:"Tuk-tuk seat",rideView:"Camera view",talk:"Push to talk (squad voice)" };
 /** keys live only in a tuk-tuk seat (the warm-up coach's F1 skip only reads F1 on foot, while no on-foot action has it) */
 export const RIDE_BINDS: readonly BindAction[] = ["radio", "seats", "rideView"];
 /** how many keys an action holds: the slots and the seats are fixed rows (one key each), everything else primary + alternate */
