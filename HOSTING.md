@@ -61,14 +61,19 @@ The server reads these environment variables. Leave a variable unset to get its 
 | `KR_TRUST_PROXY` | off | Set `1` to read the player's real address from proxy headers. See below before you set it. |
 | `KR_PROXY_IPS` | empty | Comma list of extra proxy addresses to trust, besides this machine. Only used with `KR_TRUST_PROXY=1`. |
 | `KR_ORIGINS` | empty (any) | Comma list of page origins allowed to open a game WebSocket, such as `https://example.com`. |
-| `KR_MAX_CONNS` | `2000` | Most WebSockets the server holds at once. |
-| `KR_MAX_PER_IP` | `120` | Most WebSockets from one address. Each player uses two. |
+| `KR_MAX_CONNS` | `2000` | Most connections (WebSockets and WebTransport sessions) the server holds at once. |
+| `KR_MAX_PER_IP` | `120` | Most connections from one address. Each player uses two. |
 | `KR_HEARTBEAT_TIMEOUT_S` | `30` | Seconds of silence before the server drops a connection. |
 | `KR_RESERVED_NAMES` | empty | Comma list of extra names players can't take. |
 | `KR_MONGO_URI` | `mongodb://127.0.0.1:27017` | MongoDB for in-game bug reports. Optional: without it, reports wait in `.kongbot/spool/`. |
 | `KR_MONGO_DB` | `kong_royale` | Database name for bug reports. |
 | `KR_PERF_METRICS` | off | Set `1` to add tick times, event-loop delay and memory use to `/health`. |
 | `KR_WARMUP_S` | `25` | Length of the pre-match warm-up in seconds. For test servers. |
+| `KR_WT` | off | Set `1` to open the WebTransport endpoint (QUIC datagrams for inputs and snapshots). See "WebTransport" below. |
+| `KR_WT_PORT` | `KR_PORT` | UDP port of the WebTransport endpoint. |
+| `KR_WT_HOST` | `KR_HOST`, or `0.0.0.0` when `KR_TRUST_PROXY=1` and `KR_HOST` is loopback | Address the WebTransport endpoint listens on. Behind a proxy on loopback it listens on every address, because UDP comes straight from players. |
+| `KR_WT_CERT`, `KR_WT_KEY` | unset (self-signed) | PEM certificate and key for the WebTransport endpoint, valid for the page's host name. |
+| `KR_WT_URL` | `https://<page host>:<KR_WT_PORT>/wt` | The address players dial, if it differs. |
 | `KR_ANNOTATE` | off | Set `1` to accept developer notes from other machines. A local dev tool; leave it off on a public server. |
 
 These are read when you build or run the dev server, not by the game server:
@@ -95,8 +100,32 @@ KONGBOT is the in-game bug reporter (`/kongbot <message>` in the chat bar). With
 - **`KR_EVENT_MODE=0`** on a public server lets anyone create rooms (at most 4 per address and 400 in total).
 - **Raising `KR_MAX_CONNS` or `KR_MAX_PER_IP`** makes it easier for one address to exhaust the server.
 
+## WebTransport
+
+With `KR_WT=1` the server also listens for WebTransport (HTTP/3 over QUIC, so UDP) on `KR_WT_PORT`. Players who
+open the page with `?wt=1` get snapshots and pings as datagrams there, so one lost packet no longer stalls the ones
+behind it; inputs and the other frames ride the session's reliable stream. The WebSocket stays open as the control channel and is the fallback: a player whose network blocks UDP, or
+whose browser has no WebTransport, plays over WebSockets as before.
+
+- **UDP**: open `KR_WT_PORT` for UDP in the firewall. Nothing may sit in front of it: CDNs and the usual reverse proxies
+  don't forward WebTransport.
+- **Certificate**: either set `KR_WT_CERT` and `KR_WT_KEY` to a real certificate for the page's host name (the
+  same one the HTTPS proxy uses works), or leave them unset. The server then makes its own certificate, valid 13 days
+  and renewed in place, and tells each player its SHA-256 so the browser can check it (`serverCertificateHashes`).
+- **The QUIC module** (`@fails-components/webtransport-transport-http3-quiche`) is a native optional dependency with
+  ready builds for Linux and macOS (x64 and ARM) and Windows x64. Its install script downloads the build, so an install that
+  skips scripts (`npm ci --ignore-scripts`, or Bun, which runs no dependency scripts unless told to) leaves it out:
+  run `npm rebuild @fails-components/webtransport-transport-http3-quiche` afterwards. Where it doesn't install, the server logs why, says so
+  in `/health` (`transports.webtransport.off`) and runs WebSocket-only.
+- `/health` counts clients per transport (`transports.clients`), sessions opened and refused, by reason, and how links
+  settled (`transports.settled`: on `wt`, or on `ws` with why: `flag-off`, `server-off`, `unsupported`,
+  `connect-failed`, `timeout`, `auth`, `closed`, `no-datagrams`), as each player's browser reports it.
+
 ## Behind a reverse proxy
 
 Most public servers put a proxy in front for HTTPS. The proxy must forward WebSocket upgrades on `/ws` and
 `/admin/ws`. Then set `KR_TRUST_PROXY=1`, `KR_HOST=127.0.0.1` so only the proxy can reach the port, and `KR_ORIGINS`
 to your site's address.
+
+WebTransport (`KR_WT=1`) can't go through the proxy. It listens for UDP on `KR_WT_PORT` on every address
+(`KR_WT_HOST` defaults to `0.0.0.0` with `KR_TRUST_PROXY=1` and a loopback `KR_HOST`), so open that port to players in the firewall.

@@ -1,8 +1,16 @@
 // NETLAB — hit registration under latency, measured with the REAL code paths: the authoritative Match + MatchHost (the
 // same host loop the Node server runs) and two headless ClientMatch instances (the browser's prediction /
-// interpolation / lag-comp input code), connected by FIFO latency pipes with jitter. Simulated clock (deterministic).
+// interpolation / lag-comp input code), connected by FIFO latency pipes with jitter and TCP-like loss. Simulated clock
+// (deterministic: the same options give the same numbers on every machine).
 //
-//   npx tsx tools/netlab.mts [rtt ms list, default 20,80,160,250,320] [--jitter 20] [--secs 20] [--weapon ar] [--kill] [--check]
+//   npx tsx tools/netlab.mts [rtt ms list, default 20,80,160,250,320] [--jitter 20] [--loss 1] [--aux] [--secs 20] [--weapon ar] [--kill] [--check]
+//   --jitter: each message's one-way delay moves by a uniform amount in ±jitter/2 ms; messages never overtake each other
+//   --loss:   percent of messages lost per socket and direction. Each socket is TCP: a lost message is resent RESEND_MS(rtt)
+//             later and every later message on that socket waits behind it (head-of-line blocking), as tools/performance/
+//             netpath.py measured on Linux TCP
+//   --aux:    two sockets per client, like the game (client/src/game/net.ts opens a redundant aux socket; the server sends
+//             every frame on both and the client sends every input on both; the first copy wins). Off by default, so
+//             the numbers below and older results keep their meaning. tools/performance/net-tail.mts always sets it.
 //   --check: exit 1 when hit registration regresses. At every RTT up to CHECK_MAX_RTT_MS (250) the run must fire pellets and
 //            have predicted hits, confirm at least CHECK_MIN_CONFIRM_PCT (99) of them and show 0 ghost hits. Longer RTTs are only
 //            reported as KNOWN ISSUE lines, never failed: main shotgun at 320 ms RTT, 20 ms jitter confirms 89.7% with 3 ghost hits
@@ -18,6 +26,11 @@
 //   confirm = predicted hits the server confirmed (what the player feels: "my hit marker was real")
 //   ghost   = predicted hits the server rejected;  surprise = server hits the client predicted as misses
 //   clamped = shots older than the rewind cap (MAX_REWIND_TICKS)
+// and the transport tails of the window the shooter fires in, as the clients see them (first copy of each frame):
+//   rttMs      = ping → pong, both clients;  inputAckMs = each input sent → the first snapshot that acknowledges it (lastSeq),
+//   snapGapMs  = time between snapshots (30 Hz: 33 ms when nothing is late);  corrPct = prediction corrections per 100
+//   snapshots, both clients (the server replays late inputs 1:1, so a late input shows as a pause, not a correction);
+//   holdPct    = the shooter's frames that held the target in place because interpolation ran out of snapshots
 import { Terrain } from "../shared/world/terrain";
 import { decodeTerrainFile, generateTerrain } from "../shared/world/terrain-gen";
 import { buildStaticWorld } from "../shared/sim/static-world";
@@ -28,6 +41,8 @@ import { DT, MAX_REWIND_TICKS, WEAPON_DEFS } from "../shared/sim/const";
 import { B, PS, SK } from "../shared/sim/player";
 import { makeShotResult } from "../shared/sim/hitscan";
 import { POIS, WEAPONS, type WeaponId } from "../shared/world/map";
+import { M, Reader, readSnapHeader, type SnapHeader } from "../shared/net/proto";
+import { stats } from "./performance/common.mts";
 import { ClientMatch } from "../client/src/game/client";
 import type { Link } from "../client/src/game/net";
 
@@ -35,6 +50,11 @@ const argv = process.argv.slice(2);
 const opt = (k: string, d: string) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
 const rtts = (argv[0] && !argv[0].startsWith("--") ? argv[0] : "20,80,160,250,320").split(",").map(Number);
 const jitter = Number(opt("--jitter", "0")), secs = Number(opt("--secs", "20")), weapon = opt("--weapon", "ar") as WeaponId, killable = argv.includes("--kill"), check = argv.includes("--check");
+const loss = Number(opt("--loss", "0")) / 100, aux = argv.includes("--aux");
+/** how much later a lost TCP message arrives: the sender resends it once a later segment's SACK shows the gap (RACK-TLP).
+ *  netpath.py, 1% loss, 20 ms jitter, Linux cubic + SACK + RACK: stall peaks 68-100 ms at 50 ms RTT, 167-201 ms at 150 ms,
+ *  305-336 ms at 250 ms */
+const RESEND_MS = (rtt: number) => Math.max(1.25 * rtt, rtt + 35);
 
 // ---- simulated clock drives performance.now() everywhere
 let now = 0;
@@ -44,16 +64,23 @@ const td = (() => { try { const b = fsTd.readFileSync(new URL("../public/assets/
 const terrain = new Terrain(td.heights, td.biome);
 const { world } = await buildStaticWorld(terrain, td);
 
-interface Pipe { q: Array<{ at: number; u8: Uint8Array; json?: unknown }>; oneWay: number; rnd: () => number }
-function pipe(oneWay: number, seed: number): Pipe { let s = seed; return { q: [], oneWay, rnd: () => ((s = (Math.imul(s, 1664525) + 1013904223) | 0), ((s >>> 8) & 0xffff) / 65536) }; }
-const send = (p: Pipe, u8: Uint8Array | null, json?: unknown) => {
-  const j = jitter ? (p.rnd() - 0.5) * 2 * jitter / 2 : 0;
-  const at = Math.max(p.q.length ? p.q[p.q.length - 1].at : 0, now + p.oneWay + j);   // FIFO (TCP never reorders)
-  p.q.push({ at, u8: u8 ? u8.slice() : new Uint8Array(0), json });
+/** one TCP socket's direction: its own random stream, delivery in order */
+interface Sock { q: Array<{ at: number; u8: Uint8Array; json?: unknown }>; rnd: () => number }
+interface Pipe { socks: Sock[]; oneWay: number }
+const lcg = (seed: number) => { let s = seed; return () => ((s = (Math.imul(s, 1664525) + 1013904223) | 0), ((s >>> 8) & 0xffff) / 65536); };
+function pipe(oneWay: number, seed: number): Pipe { return { oneWay, socks: (aux ? [0, 1] : [0]).map((k) => ({ q: [], rnd: lcg(seed + k * 1000) })) }; }
+let lostMsgs = 0;
+const sendOn = (p: Pipe, s: Sock, u8: Uint8Array | null, json?: unknown) => {
+  let d = p.oneWay + (jitter ? (s.rnd() - 0.5) * 2 * jitter / 2 : 0);
+  if (loss && s.rnd() < loss) { d += RESEND_MS(p.oneWay * 2); lostMsgs++; }
+  const at = Math.max(s.q.length ? s.q[s.q.length - 1].at : 0, now + d);   // FIFO (TCP never reorders)
+  s.q.push({ at, u8: u8 ? u8.slice() : new Uint8Array(0), json });
 };
+/** a frame goes out on every socket (the match info only on the main one, like the server's JSON) */
+const send = (p: Pipe, u8: Uint8Array | null, json?: unknown) => { for (const s of json ? p.socks.slice(0, 1) : p.socks) sendOn(p, s, u8, json); };
 
 async function run(rtt: number) {
-  now = 0;
+  now = 0; lostMsgs = 0;
   const m = new Match({ seed: 7, mode: "solo", world, humans: [{ id: 0, name: "A", team: 0 }, { id: 1, name: "B", team: 1 }] });
   for (const p of m.players) if (p.bot) { m.brains[p.id] = null; p.x = 3000 + p.id * 10; p.z = 3000; p.st = PS.Dead; p.respawnAt = 1e9; }
   const host = new MatchHost(m);
@@ -69,10 +96,16 @@ async function run(rtt: number) {
   // kill races: B respawns ON its spot (inside the tick, before history is recorded — exactly like a real respawn)
   let deaths = 0;
   if (killable) { const orig = m.spawnWarmup.bind(m); m.spawnWarmup = (p) => { if (p.id !== 1) return orig(p); deaths++; Bp.x = islet.x + 11; Bp.z = islet.z + 2; Bp.y = Math.max(0, terrain.height(Bp.x, Bp.z)) + 0.05; Bp.st = PS.Ground; Bp.grounded = true; Bp.vx = Bp.vy = Bp.vz = 0; Bp.shield = 50; }; }
+  /** per client: when each input seq was sent, the newest snapshot tick and pong seen (the redundant copy is skipped) */
+  const tails = [0, 1].map(() => ({ sentAt: new Float64Array(4096), lastTick: -1, lastSnapAt: 0, lastPong: 0, acked: 0 }));
+  const rttMs: number[] = [], ackMs: number[] = [], gapMs: number[] = [], hdr = {} as SnapHeader;
+  let measuring = false, frames = 0; const base = { corr: [0, 0], snaps: [0, 0], hold: 0 };
   const clients: Array<{ cm: ClientMatch; up: Pipe; down: Pipe; peer: HostPeer; inp: { yaw: number; pitch: number; fire: boolean; mx: number; mz: number; buttons: number; dx: number; dy: number; poll: (o: { mx: number; mz: number; buttons: number; slot: number }, allowFire: boolean) => void } }> = [];
   for (let pid = 0; pid < 2; pid++) {
     const up = pipe(rtt / 2, 11 + pid), down = pipe(rtt / 2, 91 + pid);
-    const link: Link = { offline: false, onJSON: () => {}, onBinary: () => {}, onClose: () => {}, sendJSON: () => {}, sendBinary: (u8) => send(up, u8), close: () => {} };
+    const tl = tails[pid];
+    const sendBinary = (u8: Uint8Array) => { if (u8[0] === M.Input) tl.sentAt[new DataView(u8.buffer, u8.byteOffset).getUint32(1, true) % 4096] = now; send(up, u8); };
+    const link: Link = { offline: false, onJSON: () => {}, onBinary: () => {}, onClose: () => {}, sendJSON: () => {}, sendBinary, close: () => {} };
     const cm = new ClientMatch(world, link);
     const peer: HostPeer = { pid, invSeq: 0, send: (u8) => send(down, u8) };
     host.peers.push(peer);
@@ -92,11 +125,27 @@ async function run(rtt: number) {
   let lastSemi = 0;
   while (now < T + rtt + 500) {
     const step = Math.min(nextTick, nextFrame); now = step;
-    for (const c of clients) {
-      for (const pp of [c.up, c.down]) while (pp.q.length && pp.q[0].at <= now) {
-        const msg = pp.q.shift()!;
-        if (pp === c.up) host.receive(c.peer, msg.u8, (r) => send(c.down, r));
-        else if (msg.json) c.cm.onJSON(msg.json as Record<string, unknown>); else c.cm.onBinary(msg.u8);
+    for (let ci = 0; ci < clients.length; ci++) {
+      const c = clients[ci], tl = tails[ci];
+      for (let k = 0; k < c.up.socks.length; k++) {
+        const up = c.up.socks[k], down = c.down.socks[k];
+        while (up.q.length && up.q[0].at <= now) host.receive(c.peer, up.q.shift()!.u8, (r) => sendOn(c.down, down, r));
+        while (down.q.length && down.q[0].at <= now) {
+          const msg = down.q.shift()!;
+          if (msg.json) { c.cm.onJSON(msg.json as Record<string, unknown>); continue; }
+          const r = new Reader(msg.u8), kind = r.u8();
+          if (kind === M.Snapshot) {
+            readSnapHeader(r, hdr);
+            if (hdr.tick > tl.lastTick) {
+              if (measuring && tl.lastSnapAt) gapMs.push(now - tl.lastSnapAt);
+              // lastSeq is cumulative and inputs run at 60 Hz, snapshots at 30: sample every input it acknowledges for the first time
+              if (measuring) for (let s = Math.max(tl.acked + 1, hdr.lastSeq - 4095); s <= hdr.lastSeq; s++) if (tl.sentAt[s % 4096]) ackMs.push(now - tl.sentAt[s % 4096]);
+              if (hdr.lastSeq > tl.acked) tl.acked = hdr.lastSeq;
+              tl.lastTick = hdr.tick; tl.lastSnapAt = now;
+            }
+          } else if (kind === M.Pong) { const sent = r.f64(); if (sent > tl.lastPong) { tl.lastPong = sent; if (measuring) rttMs.push(now - sent); } }
+          c.cm.onBinary(msg.u8);
+        }
       }
     }
     if (now >= nextTick) {
@@ -113,7 +162,7 @@ async function run(rtt: number) {
       b.yaw = -Math.PI / 2;
       // shooter A: aim at the chest of what it draws for B (render interpolation) and fire
       const a = clients[0].inp, cm = clients[0].cm;
-      cm.interpolate();
+      cm.interpolate(); if (measuring) frames++;
       const r = cm.remotes[1];
       if (r.n > 0 && cm.started) {
         const ex = cm.pred.x, ez = cm.pred.z, ey = cm.pred.y + 1.65;
@@ -121,6 +170,12 @@ async function run(rtt: number) {
         a.yaw = Math.atan2(-dx, -dz); a.pitch = Math.atan2(dy, Math.hypot(dx, dz));
         if (t0 < 0) t0 = now;
         const firing = now - t0 > 1500 && now < T;
+        // the transport tails cover the firing window: counters read at its start, then replaced by their change at its end
+        if (firing !== measuring) {
+          measuring = firing;
+          for (let k = 0; k < 2; k++) { const ns = clients[k].cm.netStats; base.corr[k] = ns.moveCorrections - base.corr[k]; base.snaps[k] = ns.snapshots - base.snaps[k]; }
+          base.hold = clients[0].cm.netStats.holdFrames - base.hold;
+        }
         if (rateMs === 0) a.fire = firing; else if (firing && now - lastSemi > rateMs) { a.fire = !a.fire; lastSemi = now; } else if (!firing) a.fire = false;
       }
       for (const c of clients) { (c.inp as unknown as { yaw: number }).yaw = c.inp.yaw; c.cm.update(dt, c.inp as never, true); }
@@ -136,7 +191,9 @@ async function run(rtt: number) {
     if (s >= 0) { servHits++; if (p < 0) surprise++; }
   }
   const pc = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);
-  return { rtt, jitter, weapon, ...(killable ? { kills: deaths } : {}), pellets: n, predMissing: pred.length - serv.length, agreePct: pc(agree, n), predHits, confirmPct: pc(confirmed, predHits), ghost, surprise, servHits, clamped: clampedN, rewindCapMs: Math.round(MAX_REWIND_TICKS * DT * 1000), corrections: clients[0].cm.netStats.moveCorrections, corrMaxMm: Math.round(clients[0].cm.netStats.corrMax * 1000) };
+  const tail = (v: number[]) => { const s = stats(v), r1 = (x: number) => Math.round(x * 10) / 10; return { n: s.n, p50: r1(s.p50), p99: r1(s.p99), max: r1(s.max) }; };
+  const transport = { sockets: aux ? 2 : 1, lossPct: loss * 100, lostMsgs, rttMs: tail(rttMs), inputAckMs: tail(ackMs), snapGapMs: tail(gapMs), corrPct: pc(base.corr[0] + base.corr[1], base.snaps[0] + base.snaps[1]), corrPctShooter: pc(base.corr[0], base.snaps[0]), corrPctTarget: pc(base.corr[1], base.snaps[1]), holdPct: pc(base.hold, frames) };
+  return { rtt, jitter, weapon, ...(killable ? { kills: deaths } : {}), pellets: n, predMissing: pred.length - serv.length, agreePct: pc(agree, n), predHits, confirmPct: pc(confirmed, predHits), ghost, surprise, servHits, clamped: clampedN, rewindCapMs: Math.round(MAX_REWIND_TICKS * DT * 1000), corrections: clients[0].cm.netStats.moveCorrections, corrMaxMm: Math.round(clients[0].cm.netStats.corrMax * 1000), ...transport };
 }
 
 const CHECK_MAX_RTT_MS = 250, CHECK_MIN_CONFIRM_PCT = 99;

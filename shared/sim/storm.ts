@@ -19,6 +19,7 @@ import type { Terrain } from "../world/terrain";
 import type { StaticWorld } from "./world";
 import { POIS } from "../world/map";
 import { Rng } from "./rng";
+import * as dmath from "./dmath";
 
 export interface StormPlan {
   cx: number[]; cz: number[]; r: number[];
@@ -58,7 +59,7 @@ export const CLOCK_MAX = 880;
 /** share of a circle that is walkable land (not sea, not a > 45° cliff), sampled on a sunflower of 64 points */
 export function walkShare(terrain: Terrain, x: number, z: number, r: number): number {
   let ok = 0;
-  for (let k = 0; k < 64; k++) { const a = k * 2.39996, d = Math.sqrt((k + 0.5) / 64) * r; const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d; if (terrain.height(px, pz) >= 0.8 && terrain.normal(px, pz)[1] >= 0.707) ok++; }
+  for (let k = 0; k < 64; k++) { const a = k * 2.39996, d = Math.sqrt((k + 0.5) / 64) * r; const px = x + dmath.cos(a) * d, pz = z + dmath.sin(a) * d; if (terrain.height(px, pz) >= 0.8 && terrain.normal(px, pz)[1] >= 0.707) ok++; }
   return ok / 64;
 }
 /** the promise the planner keeps (the target is ≥ 15 %; the planner keeps 22 % so a finer check still passes) */
@@ -80,11 +81,11 @@ export function islandOf(terrain: Terrain): Island {
   const land: Array<[number, number]> = [];
   for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
     const x = -half + (i + 0.5) * step, z = -half + (j + 0.5) * step;
-    if (Math.hypot(x - lobby.x, z - lobby.z) < lobby.r + 60) continue;
+    if (dmath.hypot(x - lobby.x, z - lobby.z) < lobby.r + 60) continue;
     if (terrain.height(x, z) > 0.5) land.push([x, z]);
   }
   let cx = 0, cz = 0; for (const [x, z] of land) { cx += x; cz += z; } cx /= land.length; cz /= land.length;
-  let far = 0; for (const [x, z] of land) far = Math.max(far, Math.hypot(x - cx, z - cz));
+  let far = 0; for (const [x, z] of land) far = Math.max(far, dmath.hypot(x - cx, z - cz));
   const R0 = Math.round(far * 1.07);
   // regions: every named POI + wilderness cells (300 m) with enough land that no POI covers
   const regions: Island["regions"] = [];
@@ -92,12 +93,12 @@ export function islandOf(terrain: Terrain): Island {
   const C = 300;
   for (let gx = -half; gx < half; gx += C) for (let gz = -half; gz < half; gz += C) {
     const mx = gx + C / 2, mz = gz + C / 2;
-    let n = 0; for (const [x, z] of land) if (x >= gx && x < gx + C && z >= gz && z < gz + C && !POIS.some((p) => Math.hypot(p.x - x, p.z - z) < p.r)) n++;
+    let n = 0; for (const [x, z] of land) if (x >= gx && x < gx + C && z >= gz && z < gz + C && !POIS.some((p) => dmath.hypot(p.x - x, p.z - z) < p.r)) n++;
     if (n * step * step < 0.25 * C * C) continue;
     regions.push({ id: `wild:${Math.round(mx)},${Math.round(mz)}`, x: mx, z: mz, r: C * 0.5, w: 1 });
   }
   // fewer edge circles: regions whose centre is in the outer 25 % of the island count half
-  for (const g of regions) if (Math.hypot(g.x - cx, g.z - cz) > far * 0.75) g.w = 0.5;
+  for (const g of regions) if (dmath.hypot(g.x - cx, g.z - cz) > far * 0.75) g.w = 0.5;
   const isl = { cx, cz, far, R0, regions };
   ISLANDS.set(terrain, isl);
   return isl;
@@ -109,7 +110,7 @@ let STEP_M = 8;
 export const setRunStep = (m: number) => { STEP_M = m; };
 /** seconds to sprint (swim on water) from (x, z) in a straight line until inside the circle (tx, tz, tr) by 2 m */
 export function runTime(terrain: Terrain, x: number, z: number, tx: number, tz: number, tr: number): number {
-  const d = Math.hypot(tx - x, tz - z), need = d - Math.max(0, tr - 2);
+  const d = dmath.hypot(tx - x, tz - z), need = d - Math.max(0, tr - 2);
   if (need <= 0) return 0;
   const ux = (tx - x) / d, uz = (tz - z) / d;
   let t = 0, h0 = terrain.height(x, z);
@@ -131,12 +132,12 @@ export function runTime(terrain: Terrain, x: number, z: number, tx: number, tz: 
 export function worstRun(terrain: Terrain, cx: number, cz: number, r: number, tx: number, tz: number, tr: number, rings = 4, per = 24): number {
   let worst = 0;
   // the worst point is on the far rim in the direction away from the new centre — sample densely there, coarse elsewhere
-  const away = Math.atan2(cz - tz, cx - tx);
+  const away = dmath.atan2(cz - tz, cx - tx);
   for (let k = 1; k <= rings; k++) {
     const rr = r * k / rings, n = Math.max(6, Math.round(per * k / rings));
     for (let a = 0; a < n; a++) {
       const ang = k === rings ? away + ((a / n) - 0.5) * Math.PI * 1.6 : (a / n) * Math.PI * 2;
-      const x = cx + Math.cos(ang) * rr, z = cz + Math.sin(ang) * rr;
+      const x = cx + dmath.cos(ang) * rr, z = cz + dmath.sin(ang) * rr;
       if (terrain.height(x, z) <= 0.3) continue;              // nobody stands in the sea
       worst = Math.max(worst, runTime(terrain, x, z, tx, tz, tr));
     }
@@ -153,7 +154,7 @@ export function finalOk(terrain: Terrain, world: StaticWorld | null, x: number, 
   for (let k = 0; k < 16; k++) {
     const a = k / 16 * Math.PI * 2;
     for (const f of [0.5, 1]) {
-      const px = x + Math.cos(a) * r * f, pz = z + Math.sin(a) * r * f;
+      const px = x + dmath.cos(a) * r * f, pz = z + dmath.sin(a) * r * f;
       if (terrain.height(px, pz) < 0.8 || terrain.normal(px, pz)[1] < 0.707) bad++;       // sea or cliff (> 45°)
     }
   }
@@ -161,7 +162,7 @@ export function finalOk(terrain: Terrain, world: StaticWorld | null, x: number, 
   if (world) {
     world.velY = 0; world.headBump = false;
     world.resolveCapsule(x, y + 0.02, z, PLAYER_R, PLAYER_H, false);
-    if (Math.hypot(world.P[0] - x, world.P[2] - z) > 0.3 || world.P[1] - y > 1.5) return false;   // inside a box / on a rock stack
+    if (dmath.hypot(world.P[0] - x, world.P[2] - z) > 0.3 || world.P[1] - y > 1.5) return false;   // inside a box / on a rock stack
     if (!world.clear(x, world.P[1] + 1.6, z, x, world.P[1] + 40, z)) return false;              // under a roof / canopy
   }
   return true;
@@ -188,19 +189,19 @@ export function planStorm(seed: number, terrain: Terrain, world: StaticWorld | n
     let bx = NaN, bz = NaN, best = -1e9;
     for (let k = 0, K = last ? 48 : 28; k < K; k++) {
       const a = rng.next() * Math.PI * 2, d = k === 0 && last ? 0 : Math.sqrt(rng.next()) * span;
-      const x = cx[i + 1] + Math.cos(a) * d, z = cz[i + 1] + Math.sin(a) * d;
-      if (Math.hypot(x - c0[0], z - c0[1]) > F) continue;
+      const x = cx[i + 1] + dmath.cos(a) * d, z = cz[i + 1] + dmath.sin(a) * d;
+      if (dmath.hypot(x - c0[0], z - c0[1]) > F) continue;
       if (last && walkShare(terrain, x, z, r[i]) < 0.95) continue;
       // land share of the circle (centre + two rings)
       let land = terrain.height(x, z) > 0.8 ? 2 : 0;
-      for (let s2 = 0; s2 < 12; s2++) { const aa = s2 / 12 * Math.PI * 2; for (const f of [0.45, 0.85]) if (terrain.height(x + Math.cos(aa) * r[i] * f, z + Math.sin(aa) * r[i] * f) > 0.8) land++; }
+      for (let s2 = 0; s2 < 12; s2++) { const aa = s2 / 12 * Math.PI * 2; for (const f of [0.45, 0.85]) if (terrain.height(x + dmath.cos(aa) * r[i] * f, z + dmath.sin(aa) * r[i] * f) > 0.8) land++; }
       const share = land / 26;
       const score = (share >= 0.6 ? 1 : 0) + share + rng.next() * 0.35;
       if (score > best) { best = score; bx = x; bz = z; }
     }
     if (bx !== bx) {
       if (last) return false;
-      const dx = c0[0] - cx[i + 1], dz = c0[1] - cz[i + 1], dl = Math.hypot(dx, dz) || 1, st = Math.min(span, dl);   // step toward zone 0
+      const dx = c0[0] - cx[i + 1], dz = c0[1] - cz[i + 1], dl = dmath.hypot(dx, dz) || 1, st = Math.min(span, dl);   // step toward zone 0
       bx = cx[i + 1] + dx / dl * st; bz = cz[i + 1] + dz / dl * st;
     }
     cx[i] = bx; cz[i] = bz;
@@ -214,8 +215,8 @@ export function planStorm(seed: number, terrain: Terrain, world: StaticWorld | n
     for (const q of isl.regions) { pick -= q.w; if (pick <= 0) { g = q; break; } }
     for (let k = 0; k < 24 && !ok; k++) {
       const a = rng.next() * Math.PI * 2, d = Math.sqrt(rng.next()) * g.r * 0.85;
-      const x = g.x + Math.cos(a) * d, z = g.z + Math.sin(a) * d;
-      if (Math.hypot(x - c0[0], z - c0[1]) > feas(n)) continue;
+      const x = g.x + dmath.cos(a) * d, z = g.z + dmath.sin(a) * d;
+      if (dmath.hypot(x - c0[0], z - c0[1]) > feas(n)) continue;
       if (!finalOk(terrain, world, x, z, r[n - 1])) continue;
       cx[n] = x; cz[n] = z; region = g.id;
       ok = step(n - 1) && step(n - 2) && step(n - 3);
@@ -289,4 +290,4 @@ export function stageLength(plan: StormPlan, s: StormState): number {
   return s.shrinking ? plan.close[i] : plan.wait[i];
 }
 
-export const inStorm = (s: StormState, x: number, z: number) => Math.hypot(x - s.cx, z - s.cz) > s.r;
+export const inStorm = (s: StormState, x: number, z: number) => dmath.hypot(x - s.cx, z - s.cz) > s.r;

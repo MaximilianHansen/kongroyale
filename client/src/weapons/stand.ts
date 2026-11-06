@@ -183,6 +183,7 @@ function ridgeLeaf(L: number, Wd: number, lift: number, seed: number): THREE.Buf
 
 // ------------------------------------------------------------------------------------------------ the sign
 let signTex: THREE.CanvasTexture | null = null;
+let signMat: THREE.MeshStandardMaterial | null = null;
 const SIGN_FONT = "800 132px 'Barlow Condensed', 'Arial Narrow', Impact, sans-serif";
 function signTexture(): THREE.CanvasTexture {
   if (signTex) return signTex;
@@ -391,7 +392,7 @@ export function bananaStand(): Built {
   detail.name = "banana-stand-detail";
   { const fruit = fr.build({ name: "banana-stand-fruit", shadows: false }).root; fruit.traverse((c) => { if ((c as THREE.Mesh).isMesh) (c as THREE.Mesh).material = fruitMaterial(); }); detail.add(fruit); }
   // ---- the sign's painted faces (both sides)
-  const signMat = new THREE.MeshStandardMaterial({ map: signTexture(), roughness: 0.82, metalness: 0 }); signMat.name = "banana-stand-sign";
+  if (!signMat) { signMat = new THREE.MeshStandardMaterial({ map: signTexture(), roughness: 0.82, metalness: 0 }); signMat.name = "banana-stand-sign"; }
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.94, 0.49), signMat);
   sign.position.set(0, RIDGE + 0.6, 0.062); sign.name = "banana-stand-sign"; built.root.add(sign);
   const sign2 = sign.clone(); sign2.rotation.y = Math.PI; sign2.position.z = -0.002; built.root.add(sign2);

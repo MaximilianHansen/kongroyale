@@ -4,7 +4,9 @@
 // kong — the real game kong, idling — is drawn in front of it, big, right of centre, waist up.
 // While the title is up the engine's frame draw is replaced (engine.drawOverride): one plain render of the
 // main scene through a camera that sees ONLY the title layer (the hero, the kong batches, the lights), with the key art as
-// the scene background — no post chain, no sky, no terrain, no water, no shadows of the world. Everything else keeps
+// the scene background, into a half-float target like the post chain's (so the kong draws with the match's programs,
+// already compiled: a screen draw needed a second output variant of every kong material, ~27 programs compiled at
+// ready), then one quad to the screen — no post chain, no sky, no terrain, no water, no shadows of the world. Everything else keeps
 // running: the island still streams in and is integrated offscreen (main.ts), the match prewarm still runs, the main
 // camera keeps its beach position (streaming / LOD / prewarm see exactly what a match would). A match draws normally.
 // The menu's left-to-right navy fade is the lobby's CSS (ui/lobby-styles.ts .tn-play-shade) over the canvas.
@@ -13,6 +15,7 @@ import type { Engine } from "../engine/engine";
 import type { KongActor, KongPose } from "../actors/api";
 import type { GliderProps } from "../actors/glider";
 import type { PlaneProps } from "../actors/plane";
+import { resources } from "../engine/res/scope";
 
 export interface TitleScene { update(dt: number, t: number): void; setVisible(v: boolean): void; group: THREE.Group; /** prewarm owns the camera */ freeze: boolean }
 export interface TitleKits {
@@ -77,28 +80,39 @@ export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleK
     kongs?.traverse((o) => o.layers.enable(TITLE_LAYER));
     engine.scene.traverse((o) => { if ((o as THREE.Light).isLight) o.layers.enable(TITLE_LAYER); });
   }
+  // the title layer and the key art go into a half-float target, then to the screen as one textured quad: the game runs
+  // the renderer without tone mapping (the post chain's composite tone-maps), so the quad's sRGB encode is the whole
+  // output transform the screen draw applied (the half-float round trip moves a pixel by at most 1/255)
+  const scope = resources.root.child("title");
+  const kt = scope.target(new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }));
+  const quad = new THREE.Mesh(scope.geometry("geo.world", new THREE.PlaneGeometry(2, 2)), new THREE.MeshBasicMaterial({ map: kt.texture }));
+  const compScene = new THREE.Scene().add(quad);
+  const compCam = new THREE.Camera();
   const draw = () => {
     const r = engine.renderer, S = engine.scene, cam = engine.camera;
     syncLayers(); fit();
+    r.getDrawingBufferSize(size);
+    kt.setSize(size.x, size.y);
     // (no shadow pass: atmos's sun cascades re-plan against the camera they are handed — its layer mask included — so the
     // title never hands them its title-layer camera; the kong keeps the atlas the boot drew, and the frame skips the pass)
     const sm = r.shadowMap, smAuto = sm.autoUpdate, smNeeds = sm.needsUpdate;
     const bg = S.background, mask = cam.layers.mask, auto = r.autoClear;
     S.background = art ?? NAVY; cam.layers.set(TITLE_LAYER); r.autoClear = true; sm.autoUpdate = false; sm.needsUpdate = false;
-    try { r.setRenderTarget(null); r.render(S, cam); }
+    try { r.setRenderTarget(kt); r.render(S, cam); r.setRenderTarget(null); r.render(compScene, compCam); }
     finally { S.background = bg; cam.layers.mask = mask; r.autoClear = auto; sm.autoUpdate = smAuto; sm.needsUpdate = smNeeds; }
   };
   const gameReady = () => (globalThis as { __kr?: { ready?: boolean } }).__kr?.ready === true;
-  // the kong's programs for a plain screen draw (no post chain: another output variant) are compiled in parallel first,
-  // so the first key-art frame never compiles on the main thread; the post-chain title draws until then
+  // the title draw's programs (the match's kong programs, which the boot prewarm already compiled, and the screen quad) are
+  // compiled in parallel first, so the first key-art frame never compiles on the main thread; the post-chain title draws
+  // until then
   let warm: "no" | "busy" | "yes" = "no";
   function warmUp() {
     if (warm !== "no" || !hero) return;
     warm = "busy"; syncLayers();
     const r = engine.renderer, cam = engine.camera, mask = cam.layers.mask;
-    cam.layers.set(TITLE_LAYER); r.setRenderTarget(null);
+    cam.layers.set(TITLE_LAYER); r.setRenderTarget(kt);
     const done = () => { warm = "yes"; };
-    try { void r.compileAsync(group, cam, engine.scene).then(done, done); if (kongs) void r.compileAsync(kongs, cam, engine.scene).catch(() => {}); }
+    try { void Promise.all([r.compileAsync(group, cam, engine.scene), kongs && r.compileAsync(kongs, cam, engine.scene), (r.setRenderTarget(null), r.compileAsync(compScene, compCam))]).then(done, done); }
     catch { done(); } finally { cam.layers.mask = mask; }
   }
   function setDraw(on: boolean) {
@@ -109,12 +123,18 @@ export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleK
     if (!on && engine.camera.layers.mask === 1 << TITLE_LAYER) engine.camera.layers.mask = 1;
   }
 
-  let visible = true, t0 = 0;
+  let visible = true, t0 = 0, frozen = false;
   const CAM = new THREE.Vector3(), FWD = new THREE.Vector3(), RIGHT = new THREE.Vector3(), LOOK = new THREE.Vector3();
   const gy = (x: number, z: number) => Math.max(0, T.height(x, z));
   plane.object.visible = false;
   return {
-    group, freeze: false,
+    group,
+    // the hero leaves the kong manager while the prewarm owns the camera: an excursion (the post-title match warm-up)
+    // ticks LODs from far-off viewpoints, where the hero dropped to the min tier — and the next real frame crossfaded it
+    // back to hi through the screen door (no TAA on the title to hide it): a dithered, low-detail kong for as long as the
+    // warm-up ran. A kong that was not drawn comes back at its tier at once.
+    get freeze() { return frozen; },
+    set freeze(v: boolean) { frozen = v; hero?.setVisible(!v); },
     setVisible(v: boolean) { visible = v; group.visible = v; if (!v) { plane.object.visible = false; setDraw(false); } },
     update(dt: number) {
       if (!visible || this.freeze) { setDraw(false); return; }
