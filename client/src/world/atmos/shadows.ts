@@ -248,8 +248,9 @@ float atmPcf1( sampler2DShadow m, vec4 sc, float bias ) {
 // cascade 0 (the contact shadows). (A static camera's penumbra flickered up to 19.6/255 luma std
 // with a diagonal hatch — a per-pixel / per-frame ROTATED 1–2 tap kernel never converged under the TAA's
 // neighbourhood clip): a DETERMINISTIC tent filter, identical in every frame. 9 hardware-bilinear compares on a
-// 3x3 grid (tent weights 1-2-1) = a smooth ~5x5-texel tent (C1 penumbra, no stair steps, no noise). ?atmos=pcf4: the
-// cheaper 4-tap 3x3 tent. Double-sided foliage cards: one bilinear compare (several layers deep, alpha noise hides it).
+// 3x3 grid (tent weights 1-2-1) = a smooth ~5x5-texel tent (C1 penumbra, no stair steps, no noise). The Low tier and
+// ?atmos=pcf4: the cheaper 4-tap 3x3 tent (SunShadows.pcf4). Double-sided foliage cards: one bilinear compare (several
+// layers deep, alpha noise hides it).
 float atmPcf4( sampler2DShadow m, vec4 sc, float bias, vec2 o ) {
   vec3 c = sc.xyz / sc.w; c.z += bias;
   if ( any( lessThan( c, vec3( 0.0 ) ) ) || any( greaterThan( c, vec3( 1.0 ) ) ) ) return 1.0;
@@ -408,12 +409,16 @@ export class SunShadows {
   private patched = new WeakSet<THREE.Material>();
   /** the post runs the AO pass: lit materials take AO + cloud shadow from its screen-space texture (ATMOS_SSAO) */
   ssao = false;
+  /** cascade 0 filters with the 4-tap tent (ATMOS_PCF4, a program define: it follows the build tier, so a live preset
+   *  change applies on the next load): the Low tier, or ?atmos=pcf4 on any tier (?atmos=pcf9 keeps the 9 taps on Low) */
+  private readonly pcf4: boolean;
   private frame = 0;
   private sunDir = new THREE.Vector3(0, 1, 0);
   private land = new THREE.Box3(new THREE.Vector3(-1200, -10, -1200), new THREE.Vector3(1200, 400, 1200));
 
   constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, private u: AtmosUniforms, quality: Quality, terrain?: Terrain) {
     this.tier = TIER[quality];
+    this.pcf4 = atmosFlagsHas("pcf4") || (quality === "low" && !atmosFlagsHas("pcf9"));
     renderer.shadowMap.type = THREE.PCFShadowMap; // r186 removed PCFSoft (it warns + falls back every load)
     const sun = new SunLight(0xffffff, 3);
     sun.name = "atmos-sun";
@@ -796,7 +801,7 @@ export class SunShadows {
     // the per-preset vegetation grade (lit leaves / bark AND the far impostors, which are unlit quads)
     if (m.userData?.veg || (hadKey && /^veg-impostor/.test(String(prevKey.call(m))))) m.defines.ATMOS_VEGG = 1;
     if (lit && atmosFlagsHas("fardebug")) m.defines.ATMOS_FAR_DEBUG = 1;
-    if (lit && atmosFlagsHas("pcf4")) m.defines.ATMOS_PCF4 = 1;
+    if (lit && this.pcf4) m.defines.ATMOS_PCF4 = 1;
     // the crane cables (9–12 cm wire ropes, 0.3–0.6 px at 150–400 m) rasterise as dashes that
     // walk under a strafe, so wire materials keep a minimum screen width (the tube grows along its normal to ~1.2 px)
     if (lit && (m.userData?.thinWire || /^(cable|wire|wire-?rope|stay)s?$/i.test(m.name)) && !atmosFlagsHas("nothin")) m.defines.ATMOS_THIN = 1;

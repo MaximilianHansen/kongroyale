@@ -1071,7 +1071,7 @@ vec3 wtrReflSkyHi(vec3 d) {
 // SCREEN-SPACE REFLECTION: march the reflected ray through the opaque scene's depth copy (the huts, piles,
 // boats, treeline and cliffs mirrored in the water at grazing angles). 20 steps growing ×1.3 (≈ 0.3 m → 400 m) + a
 // 3-step binary refine; misses (sky, off-screen) keep the analytic sky reflection. rgb = scene radiance, a = weight
-// (the Medium / Low tier — WTR_LITE — marches 9 growing steps + 3 refines instead of 20 + 3)
+// (the Medium tier — WTR_LITE — marches 9 growing steps + 3 refines instead of 20 + 3; Low has no colour copy: no march)
 #ifdef WTR_LITE
 #define WTR_SSR_N 9
 #define WTR_SSR_G 1.65
@@ -2322,6 +2322,12 @@ export const FRAG_OPAQUE = /* glsl */ `
       scR = mix(scR, dot(scR, vec3(0.2126, 0.7152, 0.0722)) * vec3(0.88, 1.02, 1.12), coolK);
       gl_FragColor.rgb += scR * mulOut;
       mulOut = vec3(0.0);
+    } else if (wtrGrab.w < 0.5 && wtrGrab.z > 0.5 && wDist < 160.0 && wWet < 0.5) {
+      // no colour copy (the Low tier): the blend multiplies the floor straight behind, and a blend factor cannot pull a
+      // colour toward its own luminance — the same cooling as a per-channel factor, exact for the sunlit beach sand
+      // (linear 1.34 : 0.945 : 0.54 at luminance 1); not on objects standing in the water (they are not sand)
+      float coolK = wtrSandCool * smoothstep(0.02, 0.45, max(wScRay, wColThk)) * (1.0 - wMurk) * (1.0 - 0.8 * wLag) * (1.0 - wScObj);
+      mulOut *= mix(vec3(1.0), vec3(0.657, 1.079, 2.074), coolK);
     }
     #endif
     // (the exact waterline against objects: the last few cm of water fade out — no hard cut where a pile or hull enters)
