@@ -9,6 +9,7 @@ import { HELI, gunOf, stepGun, stepHeli } from "./heli";
 import { UPDRAFT, inUpdraft, updraftLift } from "./updraft";
 import { CLIMB } from "./climb";
 import { PS, B, seatAsked, ammoIndex, type Input, copyInput, SK, type Player, height, weaponDef, consumableDef, fallDamage, noteShot, coolHeat, BUSY_IN } from "./player";
+import * as dmath from "./dmath";
 
 /** red banana multipliers (shared/sim/const.ts CONSUMABLE_DEFS) */
 const RED_SPEED = CONSUMABLE_DEFS["red-banana"].speedMul ?? 1, RED_JUMP = CONSUMABLE_DEFS["red-banana"].jumpMul ?? 1;
@@ -77,10 +78,10 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   p.sprint = wantSprint && moving;
   // wish velocity in world space
   let wx = 0, wz = 0;
-  const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
+  const sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw);
   if (moving) {
     // an analog stick's partial push walks slower; anything longer than 1 (keyboard diagonals) is cut to full speed
-    const l = Math.max(1, Math.hypot(inp.mx, inp.mz));
+    const l = Math.max(1, dmath.hypot(inp.mx, inp.mz));
     const mx = inp.mx / l, mz = inp.mz / l;
     // forward = (-sin yaw, -cos yaw) (yaw 0 faces -Z), right = (cos yaw, -sin yaw)
     wx = mz * -sy + mx * cy;
@@ -110,7 +111,7 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   // SLIDE_V that decays linearly over ~1 s, gravity along the slope (downhill keeps it going), a slow steer, jump out
   // keeps the momentum. mvT = time into the slide, mvY = cooldown before the next burst.
   if (p.mvY > 0) p.mvY = Math.max(0, p.mvY - dt);
-  const hs = Math.hypot(p.vx, p.vz);
+  const hs = dmath.hypot(p.vx, p.vz);
   if (p.mvT > 0) {
     if (!p.crouch || p.swim || (p.grounded && hs < SLIDE_END_V)) p.mvT = 0;
     else p.mvT += dt;
@@ -129,24 +130,24 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
     // pressed drifts up; out of air the body is pushed up and down is locked. The water answers slower than the surface.
     let ux = 0, uy = 0, uz = 0;
     if (moving) {
-      const l = Math.max(1, Math.hypot(inp.mx, inp.mz)), mx = inp.mx / l, mz = inp.mz / l, cp = Math.cos(p.pitch);
-      ux = mz * -sy * cp + mx * cy; uy = mz * Math.sin(p.pitch); uz = mz * -cy * cp + mx * -sy;
+      const l = Math.max(1, dmath.hypot(inp.mx, inp.mz)), mx = inp.mx / l, mz = inp.mz / l, cp = dmath.cos(p.pitch);
+      ux = mz * -sy * cp + mx * cy; uy = mz * dmath.sin(p.pitch); uz = mz * -cy * cp + mx * -sy;
       const s = p.sprint ? UW_SPRINT : UW_SPEED; ux *= s; uy *= s; uz *= s;
     }
     const up = (inp.buttons & B.JUMP) !== 0, down = (inp.buttons & B.CROUCH) !== 0, out = p.breath <= 0;
     if (out) uy = Math.max(uy, 0) + UW_VERT * 1.3;
     else { if (up) uy += UW_VERT; if (down) uy -= UW_VERT; if (!moving && !up && !down) uy += UW_BUOY; }
-    const k = 1 - Math.exp(-dt * UW_RESP);
+    const k = 1 - dmath.exp(-dt * UW_RESP);
     p.vx += (ux - p.vx) * k; p.vz += (uz - p.vz) * k;
     // (the duck-dive's push decays on the same water drag)
     p.vy += (uy - p.vy) * k;
     p.fallV = 0; p.grounded = false;
   } else if (p.swim) {
-    const k = 1 - Math.exp(-dt * 6);
+    const k = 1 - dmath.exp(-dt * 6);
     p.vx += (wx - p.vx) * k; p.vz += (wz - p.vz) * k;
     // deep water catches a fall: the dive is braked hard (≈ 1 m under at 24 m/s) and never counts as a
     // landing (not 38 damage off the sea bed for a drop into the lagoon from a roof)
-    if (p.vy < 0) p.vy *= Math.exp(-dt * 20);
+    if (p.vy < 0) p.vy *= dmath.exp(-dt * 20);
     p.fallV = 0;
     // float to the surface
     p.vy += ((SWIM_FLOAT_Y - p.y) * 8 - p.vy) * Math.min(1, dt * 8);
@@ -154,13 +155,13 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
     p.grounded = false;
   } else if (p.grounded && p.mvT > 0) {
     // sliding: speed along the current direction, steered slowly toward the wish direction
-    let sp = Math.hypot(p.vx, p.vz);
+    let sp = dmath.hypot(p.vx, p.vz);
     let dx = sp > 1e-6 ? p.vx / sp : -sy, dz = sp > 1e-6 ? p.vz / sp : -cy;
     if (moving) {
-      const wl = Math.hypot(wx, wz), tx = wx / wl, tz = wz / wl;
-      const ang = Math.atan2(dx * tz - dz * tx, dx * tx + dz * tz);
+      const wl = dmath.hypot(wx, wz), tx = wx / wl, tz = wz / wl;
+      const ang = dmath.atan2(dx * tz - dz * tx, dx * tx + dz * tz);
       const turn = Math.max(-SLIDE_STEER * dt, Math.min(SLIDE_STEER * dt, ang));
-      const c = Math.cos(turn), s = Math.sin(turn);
+      const c = dmath.cos(turn), s = dmath.sin(turn);
       const ndx = dx * c - dz * s, ndz = dx * s + dz * c; dx = ndx; dz = ndz;
     }
     let along = 0;
@@ -174,7 +175,7 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
     // you slide down, you never crab-walk up a cliff face (world.slopeFeel)
     let slide = 0;
     if (p.surf === 255) {
-      const n = world.terrain.normal(p.x, p.z, NRM), hl = Math.hypot(n[0], n[2]);
+      const n = world.terrain.normal(p.x, p.z, NRM), hl = dmath.hypot(n[0], n[2]);
       if (n[1] < TERRAIN_FULL_NY && hl > 1e-6) {
         slopeFeel(n[1], SF); slide = SF[1];
         const ux = -n[0] / hl, uz = -n[2] / hl, up = wx * ux + wz * uz;
@@ -182,7 +183,7 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
       }
     }
     // on a slide slope the feet lose most of their grip: the slide builds to ~2.5 m/s instead of being walked off
-    const k = 1 - Math.exp(-dt * (moving ? ACCEL / 4 : FRICTION) * (1 - 0.7 * slide));
+    const k = 1 - dmath.exp(-dt * (moving ? ACCEL / 4 : FRICTION) * (1 - 0.7 * slide));
     p.vx += (wx - p.vx) * k; p.vz += (wz - p.vz) * k;
     p.coyote = COYOTE_S;
     if (slide > 0) { // slide down steep ground (the terrain normal here — world.G belongs to whoever the world solved last)
@@ -197,7 +198,7 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
       // over steep terrain close below (a hop up a 35–47° slope) the air steer obeys the same uphill limit as the feet:
       // tap-jumping must not out-run walking up a slope
       if (p.airT < 1 && p.y - gy < 2.5) {
-        const n = world.terrain.normal(p.x, p.z, NRM), hl = Math.hypot(n[0], n[2]);
+        const n = world.terrain.normal(p.x, p.z, NRM), hl = dmath.hypot(n[0], n[2]);
         if (n[1] < TERRAIN_FULL_NY && hl > 1e-6) {
           slopeFeel(n[1], SF);
           const ux = -n[0] / hl, uz = -n[2] / hl, up = wx * ux + wz * uz;
@@ -207,8 +208,8 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
           if (vu > cap) { p.vx -= ux * (vu - cap); p.vz -= uz * (vu - cap); }
         }
       }
-      const k = 1 - Math.exp(-dt * AIR_STEER);
-      const cur = Math.hypot(p.vx, p.vz);
+      const k = 1 - dmath.exp(-dt * AIR_STEER);
+      const cur = dmath.hypot(p.vx, p.vz);
       const m = cur > speed ? cur / speed : 1;
       p.vx += (wx * m - p.vx) * k; p.vz += (wz * m - p.vz) * k;
     }
@@ -242,7 +243,7 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   if (gs !== null && gs.count < gs.panes.n && (p.sprint || !p.grounded || p.mvT > 0)) glassBody(gs, p.x, p.y, p.z, h, p.vx, p.vz, dt, p.id);
   // integrate + collide (sub-step when fast)
   const wasGrounded = p.grounded, wasSlope = p.slope || (p.grounded && p.surf === 255 && slideNow(p, world));
-  const steps = Math.hypot(p.vx, p.vz, p.vy) * dt > PLAYER_R ? 3 : 1;
+  const steps = dmath.hypot3(p.vx, p.vz, p.vy) * dt > PLAYER_R ? 3 : 1;
   const sdt = dt / steps;
   for (let s = 0; s < steps; s++) {
     p.x += p.vx * sdt; p.y += p.vy * sdt; p.z += p.vz * sdt;
@@ -406,8 +407,8 @@ function canStand(p: Player, world: StaticWorld): boolean {
 // ---- mantle. Deterministic: every probe is a raycast / capsule test against the static world, so the server
 // and the client's prediction pick the same ledge. No allocations.
 const MH = makeHit(), NRM = [0, 1, 0], NRM2 = [0, 1, 0], SF = new Float64Array(2);
-const SLIDE_STICK_NY = Math.cos(72 * Math.PI / 180);
-const SLIDE_FROM_NY = Math.cos(43 * Math.PI / 180);
+const SLIDE_STICK_NY = dmath.cos(72 * Math.PI / 180);
+const SLIDE_FROM_NY = dmath.cos(43 * Math.PI / 180);
 /** is the terrain under the player steep enough to be in the slide blend (> 43°)? */
 function slideNow(p: Player, world: StaticWorld) { return world.terrain.normal(p.x, p.z, NRM2)[1] < SLIDE_FROM_NY; }
 /** water exit: wall probes at these heights above the surface (a deck edge stands ~2 m up, a hull side runs under it) */
@@ -462,7 +463,7 @@ function tryMantle(p: Player, world: StaticWorld, fx: number, fz: number, swim =
 function stepMantle(p: Player, world: StaticWorld, dt: number) {
   if (p.crouch) { stepVault(p, world, dt); return; }
   p.mvT += dt;
-  const sp = Math.hypot(p.vx, p.vz) || 1, dx = p.vx / sp, dz = p.vz / sp;
+  const sp = dmath.hypot(p.vx, p.vz) || 1, dx = p.vx / sp, dz = p.vz / sp;
   if (p.y < p.mvY - 1e-6) {
     p.y = Math.min(p.mvY, p.y + MANTLE_UP * dt); p.vy = MANTLE_UP;
   } else {
@@ -501,7 +502,7 @@ function stepVault(p: Player, world: StaticWorld, dt: number) {
   if (p.y < p.mvY) { p.y = Math.min(p.mvY, p.y + MANTLE_UP * dt); p.vy = MANTLE_UP; }
   else { p.y = Math.max(p.mvY, p.y - MANTLE_UP * dt); p.vy = 0; }
   if (p.mvY - p.y < 0.3) {
-    const sp = Math.hypot(p.vx, p.vz) || 1, dx = p.vx / sp, dz = p.vz / sp, step = Math.min(p.airT, MANTLE_FWD * dt);
+    const sp = dmath.hypot(p.vx, p.vz) || 1, dx = p.vx / sp, dz = p.vz / sp, step = Math.min(p.airT, MANTLE_FWD * dt);
     p.x += dx * step; p.z += dz * step; p.airT -= step;
     if (p.airT <= 1e-6 || p.mvT > 1.2) {
       // through: stand up if there is room, keep low if not (a porch roof outside the window)
@@ -517,7 +518,7 @@ function stepVault(p: Player, world: StaticWorld, dt: number) {
 // static world: the server and the prediction grab the same climb at the same tick. No allocations.
 /** grab a climb: walking into its foot / face (facing it, moving into it), or stepping back over its top */
 function tryClimb(p: Player, world: StaticWorld, mx: number, mz: number, sy: number, cy: number): boolean {
-  const l = Math.hypot(mx, mz); if (l < 0.3) return false;
+  const l = dmath.hypot(mx, mz); if (l < 0.3) return false;
   const ix = mx / l, iz = mz / l, wdx = iz * -sy + ix * cy, wdz = iz * -cy + ix * -sy, fx = -sy, fz = -cy;
   const free = p.grounded || p.swim || p.airT >= CLIMB.regrab;
   const L = world.climbs;
@@ -550,7 +551,7 @@ function stepClimb(p: Player, inp: Input, world: StaticWorld, dt: number, presse
   const c = world.climbs[p.mvY | 0];
   if (c === undefined) { leaveClimb(p); stepHandsBusy(p, inp, dt, pressed); return; }
   p.mvT += dt;
-  const hx = c.x + c.nx * c.off, hz = c.z + c.nz * c.off, dx = hx - p.x, dz = hz - p.z, d = Math.hypot(dx, dz), sn = CLIMB.snap * dt;
+  const hx = c.x + c.nx * c.off, hz = c.z + c.nz * c.off, dx = hx - p.x, dz = hz - p.z, d = dmath.hypot(dx, dz), sn = CLIMB.snap * dt;
   if (d > sn) { p.x += dx / d * sn; p.z += dz / d * sn; } else { p.x = hx; p.z = hz; }
   if (pressed & B.JUMP) {
     leaveClimb(p); p.vx = c.nx * CLIMB.kickOut; p.vz = c.nz * CLIMB.kickOut; p.vy = CLIMB.kickUp;
@@ -558,8 +559,8 @@ function stepClimb(p: Player, inp: Input, world: StaticWorld, dt: number, presse
   }
   // E lets go (like the zipline): drop straight down off the face
   if ((pressed & B.USE) && p.mvT > 0.2) { leaveClimb(p); p.vx = c.nx * 0.8; p.vz = c.nz * 0.8; stepHandsBusy(p, inp, dt, pressed); return; }
-  const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw), face = sy * c.nx + cy * c.nz;
-  const dir = Math.cos(p.pitch) * face + Math.sin(p.pitch) * 1.4 >= -0.1 ? 1 : -1;
+  const sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw), face = sy * c.nx + cy * c.nz;
+  const dir = dmath.cos(p.pitch) * face + dmath.sin(p.pitch) * 1.4 >= -0.1 ? 1 : -1;
   const v = Math.max(-1, Math.min(1, inp.mz)) * dir * ((inp.buttons & B.SPRINT) ? CLIMB.vFast : CLIMB.v);
   p.vx = 0; p.vz = 0; p.vy = v;
   const y = p.y + v * dt;
@@ -649,7 +650,7 @@ export function dropAgl(p: { x: number; y: number; z: number }, world: StaticWor
 }
 /** one critically damped spring step of a velocity toward `target` (state: v, a = dv/dt), exact for a constant target */
 function springStep(v: number, a: number, target: number, w: number, dt: number, out: Float64Array) {
-  const e = v - target, x = Math.exp(-w * dt), c = a + w * e;
+  const e = v - target, x = dmath.exp(-w * dt), c = a + w * e;
   out[0] = target + (e + c * dt) * x; out[1] = (a - w * c * dt) * x;
 }
 const SP = new Float64Array(2);
@@ -659,9 +660,9 @@ function leaveAir(p: Player) { p.fallV = 0; p.mvT = 0; p.mvY = 0; }
 
 function stepAir(p: Player, inp: Input, world: StaticWorld, dt: number, pressed: number) {
   const agl = dropAgl(p, world);
-  const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
+  const sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw);
   const fx = -sy, fz = -cy, rx = cy, rz = -sy;
-  const l = Math.max(1, Math.hypot(inp.mx, inp.mz));
+  const l = Math.max(1, dmath.hypot(inp.mx, inp.mz));
   const mx = inp.mx / l, mz = inp.mz / l;
   const key = (inp.buttons & B.DIVE) ? 1 : 0;
   let tx: number, tz: number, ty: number, wh: number, wv: number;
@@ -688,7 +689,7 @@ function stepAir(p: Player, inp: Input, world: StaticWorld, dt: number, pressed:
     const dive = Math.max(key, ramp(-p.pitch, GL_DIVE_P0, GL_DIVE_P1));
     ty = -(GL_DOWN + (GL_DIVE_DOWN - GL_DOWN) * dive);
     const fwd = GL_FWD * Math.min(1, GL_NEUTRAL + (1 - GL_NEUTRAL) * Math.max(0, mz, dive) - (GL_NEUTRAL - GL_BACK) * Math.max(0, -mz));
-    const n = fwd / Math.hypot(1, mx * 0.5);
+    const n = fwd / dmath.hypot(1, mx * 0.5);
     tx = (fx + rx * mx * 0.5) * n; tz = (fz + rz * mx * 0.5) * n;
     wh = GL_WH; wv = GL_WV;
   }

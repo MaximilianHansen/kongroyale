@@ -18,9 +18,13 @@ const tmp = (f) => path.join(os.tmpdir(), `kong-royale-${f}`);
 const checks = [
   { id: "types", name: "types", cmd: "npx", args: ["tsc", "--noEmit"] },
   { id: "lint", name: "lint", cmd: "npx", args: ["tsx", "tools/lint/check.mts"] },
+  { id: "bundles", name: "playtest bundles (hostile input, caps, rate limit)", cmd: "npx", args: ["tsx", "tools/playtest/bundles.test.mts"] },
+  { id: "triage", name: "playtest triage (fingerprints, clusters, ticker, no private text)", cmd: "npx", args: ["tsx", "tools/playtest/triage.test.mts"] },
   { id: "gate", name: "verifier flag and empty-input gates", cmd: "npx", args: ["tsx", "tools/gate.test.mts"] },
   { id: "size", name: "download size (against tools/size-budgets.json)", cmd: "npx", args: ["tsx", "tools/check-size.mts", "--budgets", "tools/size-budgets.json"] },
+  { id: "farbake", name: "far impostors match their POI sources", cmd: "npx", args: ["tsx", "tools/world/far-bake.test.mts"] },
   { id: "assets", name: "asset sources (against tools/verify-assets.baseline.json)", cmd: "npx", args: ["tsx", "tools/verify-assets.mts", "--baseline", "tools/verify-assets.baseline.json"] },
+  { id: "dmath", name: "deterministic math (shared/sim/dmath.ts)", cmd: "npx", args: ["tsx", "tools/dmath/test.mts"] },
   { id: "movement", name: "movement", cmd: "npx", args: ["tsx", "tools/gameplay/movetest.mts"] },
   { id: "swimming", name: "swimming", cmd: "npx", args: ["tsx", "tools/swim/simtest.mts"] },
   { id: "face", name: "kong face", cmd: "npx", args: ["tsx", "tools/actors/face-test.mts"] },
@@ -29,10 +33,13 @@ const checks = [
   { id: "flags", name: "feature flags", cmd: "npx", args: ["tsx", "tools/flags/test.mts"] },
   { id: "solver", name: "path solver", slow: true, cmd: "npx", args: ["tsx", "tools/play/solver-tests.mts", "--json", tmp("solver-tests.json")] },
   { id: "glass", name: "glass", slow: true, cmd: "npx", args: ["tsx", "tools/glass/test.mts"] },
+  { id: "planeview", name: "low-memory plane queues the POIs in view", slow: true, cmd: "npx", args: ["tsx", "tools/world/plane-view.test.mts"] },
   { id: "res", name: "resource scopes", cmd: "npx", args: ["tsx", "tools/res/test.mts"] },
   { id: "raycast", name: "raycast ties", cmd: "npx", args: ["tsx", "tools/world/raycast-test.mts"] },
   { id: "parity", name: "wire / matrix / geometry / http / splat parity", slow: true, cmd: "npm", args: ["run", "bench:verify"] },
   { id: "sim", name: "headless match (seed 42)", slow: true, cmd: "npx", args: ["tsx", "tools/sim-smoke.mts", "trios", "42", "--check"] },
+  { id: "replay", name: "replay round trip (raw and packed logs)", slow: true, cmd: "npx", args: ["tsx", "tools/replay/roundtrip.test.mts"] },
+  { id: "nettail", name: "network tails (against tools/performance/net-budgets.json)", slow: true, cmd: "npx", args: ["tsx", "tools/performance/net-tail.mts", "--check", "--out", tmp("net-tail.json")] },
   { id: "redteam", name: "admin lobby red team", slow: true, cmd: "node", args: ["tools/admin-lobby/redteam.mjs", "--md", tmp("redteam.md")] },
 ];
 

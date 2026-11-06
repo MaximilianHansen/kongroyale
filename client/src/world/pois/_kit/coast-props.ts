@@ -51,7 +51,7 @@ export function bananaHand(ripe = false) {
   const cc = new Float32Array(crown.attributes.position.count * 3).fill(0.35);
   crown.setAttribute("color", new THREE.Float32BufferAttribute(cc, 3));
   for (const q of parts) if (!q.index) q.setIndex([...Array(q.attributes.position.count).keys()]);
-  const merged = mergeGeometries([...parts, crown.toNonIndexed().index ? crown : crown], false)!;
+  const merged = mergeGeometries([...parts, crown], false)!;
   merged.computeVertexNormals();
   if (ripe) handGeoRipe = merged; else handGeo = merged;
   return merged;

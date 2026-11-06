@@ -1,5 +1,6 @@
 // Every tunable of the simulation in one place. Client prediction and the authoritative server import the SAME file.
 import type { ConsumableId, Rarity, WeaponId } from "../world/map";
+import * as dmath from "./dmath";
 
 export const TICK_HZ = 60;
 export const DT = 1 / TICK_HZ;
@@ -223,9 +224,9 @@ export const SCOPE_SWAY = { steady: 0.8, enter: 2.1, tau: 0.8,
    * effective sway stays put: breath is a skill, not a free buff. */
   breathMul: 0.4, breathS: 2.5, refillS: 4, outMul: 1.35 };
 export function scopeSway(t: number, since: number, out: number[]): number[] {
-  const S = SCOPE_SWAY, a = S.steady + S.enter * Math.exp(-Math.max(0, since) / S.tau);
-  out[0] = a * (0.75 * Math.sin(t * 2.17) + 0.25 * Math.sin(t * 4.9 + 1.3));
-  out[1] = a * 0.7 * (0.8 * Math.sin(t * 2.71 + 0.6) + 0.2 * Math.sin(t * 5.3 + 2.1));
+  const S = SCOPE_SWAY, a = S.steady + S.enter * dmath.exp(-Math.max(0, since) / S.tau);
+  out[0] = a * (0.75 * dmath.sin(t * 2.17) + 0.25 * dmath.sin(t * 4.9 + 1.3));
+  out[1] = a * 0.7 * (0.8 * dmath.sin(t * 2.71 + 0.6) + 0.2 * dmath.sin(t * 5.3 + 2.1));
   return out;
 }
 // a mythic hits like a legendary + ~12 % (1.35 / 1.21): the best gun on the island, not a different game —

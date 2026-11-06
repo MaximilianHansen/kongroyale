@@ -1,0 +1,77 @@
+{
+  "id": "KB-ERR1",
+  "message": "black screen after dropping",
+  "receivedAt": "2026-11-05T17:45:00.000Z",
+  "reporter": {
+    "name": "ERRORERIC"
+  },
+  "server": {
+    "sha": "b9840d6"
+  },
+  "ctx": {
+    "env": {
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "dpr": 1,
+      "memoryGB": 8,
+      "cores": 8
+    },
+    "gpu": {
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "level": "high"
+    },
+    "video": {
+      "preset": "auto"
+    },
+    "perf": {
+      "heapMB": {
+        "used": 300,
+        "total": 600,
+        "limit": 4096
+      }
+    },
+    "boot": {
+      "readyAtMs": 9000
+    },
+    "game": {
+      "match": {
+        "phase": "warmup",
+        "time": 3
+      },
+      "player": null
+    },
+    "diag": {
+      "v": 1,
+      "sid": "sid-err-1",
+      "longFrames": 0,
+      "events": [],
+      "path": {
+        "fields": ["t", "x", "y", "z", "yawDeg", "pitchDeg", "phase"],
+        "rows": []
+      },
+      "prev": null
+    }
+  },
+  "logs": [
+    {
+      "t": 1500,
+      "level": "error",
+      "text": "[uncaught] TypeError: Cannot read properties of undefined (reading 'x')\n    at tick (main-AbC123xy.js:99:12)",
+      "n": 1
+    },
+    {
+      "t": 900,
+      "level": "log",
+      "text": "hello",
+      "n": 1
+    }
+  ],
+  "trail": [],
+  "bundle": {
+    "mark": false,
+    "timeline": null,
+    "flags": {
+      "perfhud": ""
+    },
+    "replay": null
+  }
+}

@@ -6,8 +6,11 @@ import type { VegApi, PlantKind } from "../../veg/api";
 import { M, col, cylGeo, tubeGeo } from "./town-geo";
 import { leafGeo } from "./town-building";
 import type { TownBins } from "./town-materials";
+import type { Pace } from "./pace";
 
 export type TownPlant = PlantKind;
+
+const PLANT_BATCH = 16;
 
 export class TownVeg {
   private api: VegApi | undefined;
@@ -34,9 +37,11 @@ export class TownVeg {
     else if (kind === "grass" || kind === "flowers") fallbackBush(this.bins, m.clone().multiply(M(0, 0, 0, 0, 0, 0, 0.35)), this.rng, false);
     else fallbackBush(this.bins, m, this.rng, kind === "fern");
   }
-  flush() {
+  flush() { for (const _ of this.flushSteps()) void _; }
+  async flushAsync(pace: Pace) { for (const _ of this.flushSteps()) { void _; await pace.pause(); } }
+  private *flushSteps(): Generator<void> {
     if (!this.api) return;
-    for (const [k, ms] of this.queue) { try { this.api.plant(k, ms); } catch (e) { console.warn("town-veg: veg.plant failed", k, e); } }
+    for (const [k, ms] of this.queue) { try { for (let i = 0; i < ms.length; i += PLANT_BATCH) { this.api.plant(k, ms.slice(i, i + PLANT_BATCH)); yield; } } catch (e) { console.warn("town-veg: veg.plant failed", k, e); } }
     this.queue.clear();
   }
 }

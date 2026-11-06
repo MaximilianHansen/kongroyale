@@ -15,6 +15,7 @@ import type { Box, Surface } from "../world/colliders";
 import { poiById } from "../world/map";
 import { groundAt } from "./canopy-line-ground";
 import { interiorColliders, interiorLoot, type InteriorRoom, type RoomOpening, type InteriorStyle, type RoomRole } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 export { groundAt };
 
 const P = poiById("canopy-line");
@@ -107,9 +108,9 @@ export interface Prop {
 export interface Shelter { id: string; x: number; z: number; y: number; yaw: number; w: number; d: number; h: number; pitch: number }
 
 // ------------------------------------------------------------------------------------------------ helpers
-export const rad = (col: Column, a: number, r: number): V2 => [col.x + Math.cos(a) * r, col.z + Math.sin(a) * r];
+export const rad = (col: Column, a: number, r: number): V2 => [col.x + dmath.cos(a) * r, col.z + dmath.sin(a) * r];
 /** local (lx, lz) of a frame with sim yaw ψ → world offset */
-export const toW = (yaw: number, lx: number, lz: number): V2 => [lx * Math.cos(yaw) - lz * Math.sin(yaw), lx * Math.sin(yaw) + lz * Math.cos(yaw)];
+export const toW = (yaw: number, lx: number, lz: number): V2 => [lx * dmath.cos(yaw) - lz * dmath.sin(yaw), lx * dmath.sin(yaw) + lz * dmath.cos(yaw)];
 const wrap = (a: number) => { a %= TAU; return a < 0 ? a + TAU : a; };
 /** is angle a inside [a0, a1] (a0 → a1 counter-clockwise in angle terms, lengths < 2π) */
 export function inArc(a: number, arc: V2): boolean { const L = wrap(arc[1] - arc[0]); return wrap(a - arc[0]) <= L; }
@@ -126,9 +127,9 @@ export const sagY = (ya: number, yb: number, sag: number, t: number) => ya + (yb
 // The camera stands at the camera deck's SE rim where the rim's tangent runs NE: the deck + crates fill the
 // bottom-left, the view to the right drops straight into the valley, pitch −9°
 const CAM_BEARING = -50 * D2R;
-const HD: V2 = [Math.cos(CAM_BEARING), Math.sin(CAM_BEARING)];
+const HD: V2 = [dmath.cos(CAM_BEARING), dmath.sin(CAM_BEARING)];
 const RT: V2 = [-HD[1], HD[0]];
-const CAM0: V2 = [149.8 + Math.cos(44 * D2R) * 8.9, -229.0 + Math.sin(44 * D2R) * 8.9];
+const CAM0: V2 = [149.8 + dmath.cos(44 * D2R) * 8.9, -229.0 + dmath.sin(44 * D2R) * 8.9];
 /** view frame → world (f metres ahead, r metres to screen right) */
 export const W = (f: number, r: number): V2 => [CAM0[0] + HD[0] * f + RT[0] * r, CAM0[1] + HD[1] * f + RT[1] * r];
 /** launch tower: its top deck ~5 m over the camera, the whole tower + pennant inside the view's frame */
@@ -147,8 +148,8 @@ const CABIN = { door: { w: 1.6, h: 2.4 }, win: { w: 1.5, y: 1.0, h: 1.2 } };
 const TOWER_APO = 4.3;
 export const TOWER_BASE = (() => {
   let doorA = Math.PI, door = -Infinity, lo = Infinity;
-  for (let k = 0; k < 8; k++) { const a = k / 8 * TAU, g = groundAt(TOWER_XZ[0] + Math.cos(a) * (TOWER_APO + 0.7), TOWER_XZ[1] + Math.sin(a) * (TOWER_APO + 0.7)); if (g > door) { door = g; doorA = a; } }
-  for (let k = 0; k < 32; k++) { const a = k / 32 * TAU; for (const r of [0, 2, TOWER_APO, TOWER_APO / Math.cos(Math.PI / 8)]) lo = Math.min(lo, groundAt(TOWER_XZ[0] + Math.cos(a) * r, TOWER_XZ[1] + Math.sin(a) * r)); }
+  for (let k = 0; k < 8; k++) { const a = k / 8 * TAU, g = groundAt(TOWER_XZ[0] + dmath.cos(a) * (TOWER_APO + 0.7), TOWER_XZ[1] + dmath.sin(a) * (TOWER_APO + 0.7)); if (g > door) { door = g; doorA = a; } }
+  for (let k = 0; k < 32; k++) { const a = k / 32 * TAU; for (const r of [0, 2, TOWER_APO, TOWER_APO / dmath.cos(Math.PI / 8)]) lo = Math.min(lo, groundAt(TOWER_XZ[0] + dmath.cos(a) * r, TOWER_XZ[1] + dmath.sin(a) * r)); }
   return { doorA, floorY: door + 0.12, lo: lo - 0.6 };
 })();
 /** the plateau camp: flat plateau shelf west of the tower (ground 54.8 m, span ≤ 0.2 m over 10 m) */
@@ -271,7 +272,7 @@ function genLayout(): CanopyLayout {
       const lastA = hx.h.steps.filter((q) => q.y > top - 3.4).map((q) => q.a);
       const c0 = lastA[Math.floor(lastA.length / 2)] ?? 0, half = lastA.length ? Math.abs(lastA[lastA.length - 1] - lastA[0]) / 2 + 0.55 : 0;
       for (let k = 0; k < nL; k++) {
-        const a = c0 + half + (TAU - 2 * half) * (k + 0.5) / nL + (lr() - 0.5) * 0.2, ca = Math.cos(a), sa = Math.sin(a), up = 0.85 + lr() * 0.15;
+        const a = c0 + half + (TAU - 2 * half) * (k + 0.5) / nL + (lr() - 0.5) * 0.2, ca = dmath.cos(a), sa = dmath.sin(a), up = 0.85 + lr() * 0.15;
         const P = (d: number, y: number): V3 => [t.x + ca * d, top + y, t.z + sa * d];
         // every span ≤ ~45° (the collider slices are vertical: a steeper bough would need horizontal slabs, whose tops
         // leave un-collided pockets inside the drawn tube)
@@ -283,12 +284,12 @@ function genLayout(): CanopyLayout {
     const nF = 5 + Math.floor(rng() * 2), ph = rng() * TAU;
     for (let k = 0; k < nF * 3 && col.flanges.length < nF; k++) {
       const a = ph + (k / nF) * TAU * (k < nF ? 1 : 0.37) + (rng() - 0.5) * 0.5;
-      const clash = low.some((s) => Math.abs(Math.atan2(Math.sin(s.a - a), Math.cos(s.a - a))) < s.dA * 0.5 + 0.34);
+      const clash = low.some((s) => Math.abs(dmath.atan2(dmath.sin(s.a - a), dmath.cos(s.a - a))) < s.dA * 0.5 + 0.34);
       if (clash) continue;
-      if (col.flanges.some((f) => Math.abs(Math.atan2(Math.sin(f.a - a), Math.cos(f.a - a))) < 0.7)) continue;
+      if (col.flanges.some((f) => Math.abs(dmath.atan2(dmath.sin(f.a - a), dmath.cos(f.a - a))) < 0.7)) continue;
       // never across a steep side-slope: the blade walls off a strip of 45° ground under the decks (a covered
       // jump-only pocket under the Lodge Tree)
-      { const [mx, mz] = rad(col, a, t.r + 1.4), px = -Math.sin(a), pz = Math.cos(a); if (Math.abs(groundAt(mx + px * 1.2, mz + pz * 1.2) - groundAt(mx - px * 1.2, mz - pz * 1.2)) / 2.4 > 0.7) continue; }
+      { const [mx, mz] = rad(col, a, t.r + 1.4), px = -dmath.sin(a), pz = dmath.cos(a); if (Math.abs(groundAt(mx + px * 1.2, mz + pz * 1.2) - groundAt(mx - px * 1.2, mz - pz * 1.2)) / 2.4 > 0.7) continue; }
       col.flanges.push({ a, len: 2.2 + rng() * 1.6, h: 2.2 + rng() * 1.2, th: 0.55 + rng() * 0.2 });
     }
   });
@@ -311,11 +312,11 @@ function genLayout(): CanopyLayout {
   const bridgeW = 1.5;
   const addBridge = (id: string, da: string, db: string, sag: number) => {
     const A = R(da), B = R(db), ca = columns[A.col], cb = columns[B.col];
-    const aa = Math.atan2(cb.z - ca.z, cb.x - ca.x), ab0 = Math.atan2(ca.z - cb.z, ca.x - cb.x);
+    const aa = dmath.atan2(cb.z - ca.z, cb.x - ca.x), ab0 = dmath.atan2(ca.z - cb.z, ca.x - cb.x);
     // on the tower the bridge lands square on an octagon face (the T1 cabin's door is centred on it)
     const ab = B.kind === "tower" ? Math.round(ab0 / (TAU / 8)) * (TAU / 8) : ab0;
     // ends 0.25 m inside each outer edge (the plank sits on the deck rim)
-    const edgeR = (g: Ring) => g.kind === "tower" ? g.r1 / Math.cos(Math.PI / g.n) * 0 + g.r1 : g.r1;
+    const edgeR = (g: Ring) => g.kind === "tower" ? g.r1 / dmath.cos(Math.PI / g.n) * 0 + g.r1 : g.r1;
     const pa = rad(ca, aa, edgeR(A) - 0.25), pb = rad(cb, ab, edgeR(B) - 0.25);
     bridges.push({ id, a: [pa[0], A.y, pa[1]], b: [pb[0], B.y, pb[1]], w: bridgeW, sag });
     const ga = (bridgeW / 2 + 0.2) / A.r1, gb = (bridgeW / 2 + 0.2) / B.r1;
@@ -334,7 +335,7 @@ function genLayout(): CanopyLayout {
   // ---------------------------------------------------------------- ziplines
   const addZip = (id: string, da: string, db: string, sag: number, offA = 0, offB = 0) => {
     const A = R(da), B = R(db), ca = columns[A.col], cb = columns[B.col];
-    const aa = Math.atan2(cb.z - ca.z, cb.x - ca.x) + offA, ab = Math.atan2(ca.z - cb.z, ca.x - cb.x) + offB;
+    const aa = dmath.atan2(cb.z - ca.z, cb.x - ca.x) + offA, ab = dmath.atan2(ca.z - cb.z, ca.x - cb.x) + offB;
     const pr = (g: Ring) => g.kind === "tower" ? g.r1 - 0.7 : g.r1 - 1.0;
     const pa = rad(ca, aa, pr(A)), pb = rad(cb, ab, pr(B));
     zips.push({ id, a: [pa[0], A.y + ZIP_POLE, pa[1]], b: [pb[0], B.y + ZIP_POLE, pb[1]], sag, ya: A.y, yb: B.y });
@@ -364,18 +365,18 @@ function genLayout(): CanopyLayout {
   const hutArcs = (g: Ring, col: Column, h: Hut): V2[] | null => {
     const pts: V2[] = [];
     for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 1]] as V2[]) { const [ox, oz] = toW(h.yaw, u * (h.w / 2 + h.over), v * (h.d / 2 + (v > 0 ? h.over : 0.15))); pts.push([h.x + ox, h.z + oz]); }
-    const rs = pts.map(([x, z]) => Math.hypot(x - col.x, z - col.z));
+    const rs = pts.map(([x, z]) => dmath.hypot(x - col.x, z - col.z));
     const walls: V2[] = [];
     for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as V2[]) { const [ox, oz] = toW(h.yaw, u * h.w / 2, v * h.d / 2); walls.push([h.x + ox, h.z + oz]); }
-    if (Math.max(...walls.map(([x, z]) => Math.hypot(x - col.x, z - col.z))) > g.r1 - 1.35) return null;
+    if (Math.max(...walls.map(([x, z]) => dmath.hypot(x - col.x, z - col.z))) > g.r1 - 1.35) return null;
     void rs;
     const arcs: V2[] = [];
-    const span = (ps: V2[]): V2 => { const as = ps.map(([x, z]) => Math.atan2(z - col.z, x - col.x)); const c = Math.atan2(h.z - col.z, h.x - col.x); const d = as.map((q) => Math.atan2(Math.sin(q - c), Math.cos(q - c))); return [wrap(c + Math.min(...d)), wrap(c + Math.max(...d))]; };
+    const span = (ps: V2[]): V2 => { const as = ps.map(([x, z]) => dmath.atan2(z - col.z, x - col.x)); const c = dmath.atan2(h.z - col.z, h.x - col.x); const d = as.map((q) => dmath.atan2(dmath.sin(q - c), dmath.cos(q - c))); return [wrap(c + Math.min(...d)), wrap(c + Math.max(...d))]; };
     arcs.push(span(pts));
     // the landing outside every door (1.9 m) must be free deck too
     for (const o of h.openings) if (o.kind === "door") {
       const sf = sideFrame(h, o.side), lx = sf.cx + sf.dir[0] * o.u + sf.n[0] * 1.9, lz = sf.cz + sf.dir[1] * o.u + sf.n[1] * 1.9;
-      const [ox, oz] = toW(h.yaw, lx, lz), q: V2 = [h.x + ox, h.z + oz], r = Math.hypot(q[0] - col.x, q[1] - col.z);
+      const [ox, oz] = toW(h.yaw, lx, lz), q: V2 = [h.x + ox, h.z + oz], r = dmath.hypot(q[0] - col.x, q[1] - col.z);
       if (r < g.rh + 0.5 || r > g.r1 - 0.6) return null;
       arcs.push(span([q, [h.x + ox * 0.9, h.z + oz * 0.9]]));
     }
@@ -433,14 +434,14 @@ function genLayout(): CanopyLayout {
   // stair → hut roofs: no rope rail where a tread runs level with (up to 1.6 m over) a deck hut's back eave (the lodge,
   // the pods under the upper decks): step off the flight onto the thatch
   for (const h of huts) {
-    const g = rings.find((q) => Math.abs(q.y - h.y) < 0.05 && Math.hypot(h.x - columns[q.col].x, h.z - columns[q.col].z) < q.r1);
+    const g = rings.find((q) => Math.abs(q.y - h.y) < 0.05 && dmath.hypot(h.x - columns[q.col].x, h.z - columns[q.col].z) < q.r1);
     if (!g) continue;
     const hx = helices.find((q) => q.col === g.col)!, col = columns[hx.col];
     const eaveTop = h.y + h.floors * h.floorH + 0.2 + 0.3, [x0, x1] = hutRoofRect(h);
     for (const st of hx.steps) {
       if (st.y < eaveTop - 0.3 || st.y > eaveTop + 1.6) continue;
       const [px, pz] = rad(col, st.a, st.r1 + 0.45), dx = px - h.x, dz = pz - h.z;
-      const lx = dx * Math.cos(h.yaw) + dz * Math.sin(h.yaw), lz = -dx * Math.sin(h.yaw) + dz * Math.cos(h.yaw);
+      const lx = dx * dmath.cos(h.yaw) + dz * dmath.sin(h.yaw), lz = -dx * dmath.sin(h.yaw) + dz * dmath.cos(h.yaw);
       // (a wide opening onto the thatch)
       if (lx > x0 + 0.2 && lx < x1 - 0.2 && lz > -h.d / 2 - 1.0 && lz < -h.d / 2 + 1.0) st.rail = false;
     }
@@ -491,7 +492,7 @@ function genLayout(): CanopyLayout {
   const onRing = (ringId: string, pref: number, r: number, kind: Prop["kind"], yawOff = 0, s = 1) => {
     const g = R(ringId), col = columns[g.col];
     const probe = prop(kind, 0, 0, 0, 0, s); props.pop();
-    const ext = Math.hypot(probe.hx, probe.hz);
+    const ext = dmath.hypot(probe.hx, probe.hz);
     r = Math.min(g.r1 - ext - 0.35, Math.max(g.rh + ext + 0.15, r));
     const half = (ext + 0.3) / r;
     for (let k = 0; k < 120; k++) {
@@ -508,23 +509,23 @@ function genLayout(): CanopyLayout {
   {
     const col = colOf("A");
     const put = (f: number, r: number, kind: Prop["kind"], yaw: number, s = 1) => { const [x, z] = W(f, r); const g = R("A1"); void col; return prop(kind, x, g.y, z, yaw, s); };
-    const fy = Math.atan2(HD[1], HD[0]);
+    const fy = dmath.atan2(HD[1], HD[0]);
     put(2.5, -0.8, "crate-banana", fy + 0.3, 0.95);
     put(4.0, -2.5, "crate-banana", fy - 0.15, 0.95);
     put(1.4, -1.3, "barrel", 0, 1);
-    { const g = R("A1"); for (const p of props.slice(-3)) { const a = Math.atan2(p.z - col.z, p.x - col.x), r = Math.hypot(p.x - col.x, p.z - col.z), h = (Math.hypot(p.hx, p.hz) + 0.2) / r; occ(g).push([wrap(a - h), wrap(a + h)]); } }
+    { const g = R("A1"); for (const p of props.slice(-3)) { const a = dmath.atan2(p.z - col.z, p.x - col.x), r = dmath.hypot(p.x - col.x, p.z - col.z), h = (dmath.hypot(p.hx, p.hz) + 0.2) / r; occ(g).push([wrap(a - h), wrap(a + h)]); } }
     onRing("A1", -16 * D2R, 6.6, "winch", Math.PI / 2, 1);
   }
   // the foreground in the view (no empty deck in a third of the frame): rope coils,
   // a lantern post, tied sacks, a second barrel — placed in the VIEW frame (f ahead, r right), pulled onto the deck
   {
-    const g = R("A1"), col = colOf("A"), vb = -42 * D2R, vp: V2 = [149.8 + Math.cos(55 * D2R) * 8.9, -229.0 + Math.sin(55 * D2R) * 8.9];
-    const F = (f: number, r: number): V2 => { let x = vp[0] + Math.cos(vb) * f - Math.sin(vb) * r, z = vp[1] + Math.sin(vb) * f + Math.cos(vb) * r; const d = Math.hypot(x - col.x, z - col.z), lim = g.r1 - 1.2; if (d > lim) { x = col.x + (x - col.x) * lim / d; z = col.z + (z - col.z) * lim / d; } return [x, z]; };
+    const g = R("A1"), col = colOf("A"), vb = -42 * D2R, vp: V2 = [149.8 + dmath.cos(55 * D2R) * 8.9, -229.0 + dmath.sin(55 * D2R) * 8.9];
+    const F = (f: number, r: number): V2 => { let x = vp[0] + dmath.cos(vb) * f - dmath.sin(vb) * r, z = vp[1] + dmath.sin(vb) * f + dmath.cos(vb) * r; const d = dmath.hypot(x - col.x, z - col.z), lim = g.r1 - 1.2; if (d > lim) { x = col.x + (x - col.x) * lim / d; z = col.z + (z - col.z) * lim / d; } return [x, z]; };
     for (const [f, r, kind, yaw, sc] of [[3.4, -3.0, "sacks", 1.1, 1], [4.0, -4.0, "rope-coil", 0.3, 1], [5.0, -5.0, "lantern-post", 0.8, 1], [1.8, -2.6, "rope-coil", 1.4, 0.8], [5.6, -3.3, "crate", 0.5, 0.8], [6.4, -4.6, "barrel", 0, 1]] as Array<[number, number, Prop["kind"], number, number]>) {
-      const [x, z] = F(f, r), a = Math.atan2(z - col.z, x - col.x), rr = Math.hypot(x - col.x, z - col.z);
-      const pr = prop(kind, x, g.y, z, yaw, sc), ext = Math.hypot(pr.hx, pr.hz);
+      const [x, z] = F(f, r), a = dmath.atan2(z - col.z, x - col.x), rr = dmath.hypot(x - col.x, z - col.z);
+      const pr = prop(kind, x, g.y, z, yaw, sc), ext = dmath.hypot(pr.hx, pr.hz);
       const half = (ext + 0.25) / rr, arc: V2 = [wrap(a - half), wrap(a + half)];
-      const clash = (rr + ext > g.r1 - 2.6 && !free(g, [arc])) || rr - ext < g.rh + 0.3 || rr + ext > g.r1 - 0.4 || props.some((q) => q !== pr && Math.abs(q.y - g.y) < 0.1 && Math.hypot(q.x - x, q.z - z) < ext + Math.hypot(q.hx, q.hz) + 0.35);
+      const clash = (rr + ext > g.r1 - 2.6 && !free(g, [arc])) || rr - ext < g.rh + 0.3 || rr + ext > g.r1 - 0.4 || props.some((q) => q !== pr && Math.abs(q.y - g.y) < 0.1 && dmath.hypot(q.x - x, q.z - z) < ext + dmath.hypot(q.hx, q.hz) + 0.35);
       if (clash) { props.pop(); continue; }
       occ(g).push(arc);
     }
@@ -568,7 +569,7 @@ function genLayout(): CanopyLayout {
   onRing("T2", 100 * D2R, 3.3, "crate", 0.3);
   // cover on the tower's open base deck (the plinth), clear of the mast stair's band
   for (const [da, kind] of [[1.25, "crate"], [-1.2, "barrel"]] as Array<[number, Prop["kind"]]>) {
-    const a = TOWER_BASE.doorA + da, x = TOWER_XZ[0] + Math.cos(a) * 3.2, z = TOWER_XZ[1] + Math.sin(a) * 3.2;
+    const a = TOWER_BASE.doorA + da, x = TOWER_XZ[0] + dmath.cos(a) * 3.2, z = TOWER_XZ[1] + dmath.sin(a) * 3.2;
     prop(kind, x, TOWER_BASE.floorY, z, a + Math.PI / 2);
   }
   onRing("G1", 300 * D2R, 7.2, "crate-stack", Math.PI / 2);
@@ -584,7 +585,7 @@ function genLayout(): CanopyLayout {
   // mantle onto the thatch (the roofs are fightable high ground, reached without the glider)
   for (const h of huts) {
     if (h.floors !== 1 || h.id === "depot") continue;
-    const g = rings.find((q) => Math.abs(q.y - h.y) < 0.05 && Math.hypot(h.x - columns[q.col].x, h.z - columns[q.col].z) < q.r1);
+    const g = rings.find((q) => Math.abs(q.y - h.y) < 0.05 && dmath.hypot(h.x - columns[q.col].x, h.z - columns[q.col].z) < q.r1);
     if (!g) continue;
     const col = columns[g.col];
     const doorSides = new Set(h.openings.filter((o) => o.kind === "door").map((o) => o.side));
@@ -595,12 +596,12 @@ function genLayout(): CanopyLayout {
     if (!doorSides.has(0)) for (const lx of [0, 1.2, -1.2]) cands.push([lx, h.d / 2 + gap + 0.55, 0]);
     for (const [lx, lz, yo] of cands) {
       const [ox, oz] = toW(h.yaw, lx, lz), x = h.x + ox, z = h.z + oz;
-      const r = Math.hypot(x - col.x, z - col.z), a = Math.atan2(z - col.z, x - col.x);
+      const r = dmath.hypot(x - col.x, z - col.z), a = dmath.atan2(z - col.z, x - col.x);
       if (r + 1.1 > g.r1 - 0.35 || r - 1.1 < g.rh + 0.1) continue;
       const half = 1.2 / r, arc: V2 = [wrap(a - half), wrap(a + half)];
       if (g.gaps.some((o) => inArc(arc[0], o) || inArc(arc[1], o) || inArc(o[0], arc) || inArc(o[1], arc))) continue;
-      if (props.some((p) => Math.abs(p.y - g.y) < 0.1 && Math.hypot(p.x - x, p.z - z) < 1.1 + Math.hypot(p.hx, p.hz) + 0.5)) continue;
-      if (huts.some((o) => o !== h && Math.abs(o.y - g.y) < 0.1 && Math.hypot(o.x - x, o.z - z) < Math.hypot(o.w, o.d) / 2 + o.over + 1.6)) continue;
+      if (props.some((p) => Math.abs(p.y - g.y) < 0.1 && dmath.hypot(p.x - x, p.z - z) < 1.1 + dmath.hypot(p.hx, p.hz) + 0.5)) continue;
+      if (huts.some((o) => o !== h && Math.abs(o.y - g.y) < 0.1 && dmath.hypot(o.x - x, o.z - z) < dmath.hypot(o.w, o.d) / 2 + o.over + 1.6)) continue;
       prop("crate-stack", x, g.y, z, h.yaw + yo);
       occ(g).push(arc);
       break;
@@ -616,8 +617,8 @@ function genLayout(): CanopyLayout {
     const put = (kind: Prop["kind"], lx: number, lz: number, yaw: number, s = 1, sink = 0) => { const x = kx + lx, z = kz + lz; const p = prop(kind, x, 0, z, yaw, s); p.y = flat(x, z, p.hx, p.hz, yaw) - sink; return p; };
     put("firepit", 0, 0, 0, 1, 0.04);
     // tents face the fire (their door end = local +x … the ridge runs along local x)
-    put("tent", -4.6, -2.2, Math.atan2(2.2, 4.6), 1, 0.02);
-    put("tent", 1.4, -5.2, Math.atan2(5.2, -1.4), 1, 0.02);
+    put("tent", -4.6, -2.2, dmath.atan2(2.2, 4.6), 1, 0.02);
+    put("tent", 1.4, -5.2, dmath.atan2(5.2, -1.4), 1, 0.02);
     put("log", 2.6, 1.6, 0.5, 0.55, 0.1);
     put("log", -1.9, 2.5, -0.4, 0.55, 0.1);
     put("crate-stack", 5.2, -2.6, 1.2);
@@ -635,10 +636,10 @@ function genLayout(): CanopyLayout {
   {
     const rng = mulberry(4242);
     const blocked = (x: number, z: number, pad: number) => {
-      if (Math.hypot(x - CAMP[0], z - CAMP[1]) < 8.5 + pad) return true;
-      for (const c of columns) { const rr = c.kind === "tree" ? c.r + 4.2 : 5.0; if (Math.hypot(x - c.x, z - c.z) < rr + pad) return true; }
-      for (const h of huts) if (Math.hypot(x - h.x, z - h.z) < Math.max(h.w, h.d) / 2 + 1.6 + pad) return true;
-      for (const p of props) if (Math.hypot(x - p.x, z - p.z) < 3.2 + pad) return true;
+      if (dmath.hypot(x - CAMP[0], z - CAMP[1]) < 8.5 + pad) return true;
+      for (const c of columns) { const rr = c.kind === "tree" ? c.r + 4.2 : 5.0; if (dmath.hypot(x - c.x, z - c.z) < rr + pad) return true; }
+      for (const h of huts) if (dmath.hypot(x - h.x, z - h.z) < Math.max(h.w, h.d) / 2 + 1.6 + pad) return true;
+      for (const p of props) if (dmath.hypot(x - p.x, z - p.z) < 3.2 + pad) return true;
       return false;
     };
     const kinds: Prop["kind"][] = ["log", "rock", "crate-stack", "rock", "log", "barrel", "crate", "rock"];
@@ -646,7 +647,7 @@ function genLayout(): CanopyLayout {
     const cell = 9;
     for (let gz = -RADIUS; gz <= RADIUS; gz += cell) for (let gx = -RADIUS; gx <= RADIUS; gx += cell) {
       const x = CX + gx + (rng() - 0.5) * cell * 0.7, z = CZ + gz + (rng() - 0.5) * cell * 0.7;
-      if (Math.hypot(x - CX, z - CZ) > RADIUS - 2) continue;
+      if (dmath.hypot(x - CX, z - CZ) > RADIUS - 2) continue;
       const gy = groundAt(x, z);
       if (gy < 0.8) continue; // lagoon
       const sl = Math.max(Math.abs(groundAt(x + 1.5, z) - groundAt(x - 1.5, z)), Math.abs(groundAt(x, z + 1.5) - groundAt(x, z - 1.5))) / 3;
@@ -654,7 +655,7 @@ function genLayout(): CanopyLayout {
       if (blocked(x, z, 0)) continue;
       const k0 = kinds[Math.floor(rng() * kinds.length)];
       // under a deck a boulder's broad top is a covered floor only a jump reaches: a fallen log there instead
-      const k: Prop["kind"] = k0 === "rock" && rings.some((g) => Math.hypot(x - columns[g.col].x, z - columns[g.col].z) < g.r1 + 2.5) ? "log" : k0;
+      const k: Prop["kind"] = k0 === "rock" && rings.some((g) => dmath.hypot(x - columns[g.col].x, z - columns[g.col].z) < g.r1 + 2.5) ? "log" : k0;
       const yaw = rng() * TAU;
       // sit on the lowest corner so nothing floats; rocks and logs sink a little into the slope
       const s = k === "rock" ? 0.8 + rng() * 0.6 : 1;
@@ -673,16 +674,16 @@ function genLayout(): CanopyLayout {
     const hard = () => props.filter((p) => p.hy * 2 >= 0.9 && p.kind !== "tent");
     for (let gz = -RADIUS; gz <= RADIUS; gz += 4) for (let gx = -RADIUS; gx <= RADIUS; gx += 4) {
       const x = CX + gx, z = CZ + gz;
-      if (Math.hypot(gx, gz) > RADIUS - 1) continue;
+      if (dmath.hypot(gx, gz) > RADIUS - 1) continue;
       const gy = groundAt(x, z); if (gy < 0.8) continue;
-      const near = (px: number, pz: number, r: number) => Math.hypot(px - x, pz - z) - r < 7;
+      const near = (px: number, pz: number, r: number) => dmath.hypot(px - x, pz - z) - r < 7;
       // (cover only counts at about the same elevation — on the escarpment a rock 7 m away can be 5 m below)
       if (hard().some((p) => Math.abs(p.y + 0.3 - gy) < 1.6 && near(p.x, p.z, Math.max(p.hx, p.hz)))) continue;
       if (columns.some((c) => near(c.x, c.z, c.kind === "tree" ? c.r : 4.4))) continue;
       if (huts.some((h) => near(h.x, h.z, Math.min(h.w, h.d) / 2))) continue;
       if (blocked(x, z, -1.5)) continue;
       // never under a deck (a covered pocket between boulders there read as a jump-only floor to the reachability scan)
-      if (rings.some((g) => Math.hypot(x - columns[g.col].x, z - columns[g.col].z) < g.r1 + 2.5)) continue;
+      if (rings.some((g) => dmath.hypot(x - columns[g.col].x, z - columns[g.col].z) < g.r1 + 2.5)) continue;
       const yaw = rng() * TAU, k: Prop["kind"] = rng() < 0.7 ? "rock" : "log";
       const sz = k === "rock" ? 0.9 + rng() * 0.5 : 1;
       const hx = k === "log" ? 2.6 : 1.3 * sz, hz = k === "log" ? 0.55 : 1.1 * sz;
@@ -715,11 +716,11 @@ export const TRUNK_GROOVE = 0.975;
  *  clockwise; y absolute) — a door on the AT bridge's face, a window in every other face. Faces run 0.1 m past their
  *  corners (the walls meet behind the corner legs). */
 export function towerCabin(): Array<{ a: number; u0: number; u1: number; y0: number; y1: number; door: boolean }> {
-  const L = LAYOUT, c = TOWER.col, g = L.rings[L.deck.T1], A = TOWER.apothem, half = A * Math.tan(Math.PI / 8) + 0.1, H = TOWER.cabinTop - g.y;
-  const br = L.bridges.find((b) => b.id === "AT")!, bAng = Math.atan2(br.b[2] - c.z, br.b[0] - c.x);
+  const L = LAYOUT, c = TOWER.col, g = L.rings[L.deck.T1], A = TOWER.apothem, half = A * dmath.tan(Math.PI / 8) + 0.1, H = TOWER.cabinTop - g.y;
+  const br = L.bridges.find((b) => b.id === "AT")!, bAng = dmath.atan2(br.b[2] - c.z, br.b[0] - c.x);
   const out: Array<{ a: number; u0: number; u1: number; y0: number; y1: number; door: boolean }> = [];
   for (let k = 0; k < 8; k++) {
-    const a = k / 8 * TAU, door = Math.abs(Math.atan2(Math.sin(bAng - a), Math.cos(bAng - a))) < Math.PI / 8;
+    const a = k / 8 * TAU, door = Math.abs(dmath.atan2(dmath.sin(bAng - a), dmath.cos(bAng - a))) < Math.PI / 8;
     const op: Opening = door ? { side: 0, u: 0, w: CABIN.door.w, y: 0, h: CABIN.door.h, kind: "door" } : { side: 0, u: 0, w: CABIN.win.w, y: CABIN.win.y, h: CABIN.win.h, kind: "window" };
     for (const p of wallPieces(half * 2, H, [op])) out.push({ a, u0: p.u0, u1: p.u1, y0: g.y + p.v0, y1: g.y + p.v1, door });
   }
@@ -735,7 +736,7 @@ export const TOWER = (() => {
 // Every rope rail = a run of posts. The client draws posts + a peeled timber handrail + hanging ropes between them, and
 // genColliders puts ONE box per post-to-post chord (the 0.26 × 0.16 m handrail plank) — colliders ≡ visuals, no rope-top
 // ledge a kong can stand on without a drawn surface under its feet.
-const ringOuterR = (g: Ring, t: number) => g.kind === "tower" ? g.r1 / Math.cos(t - Math.round(t / (TAU / g.n)) * (TAU / g.n)) : g.r1;
+const ringOuterR = (g: Ring, t: number) => g.kind === "tower" ? g.r1 / dmath.cos(t - Math.round(t / (TAU / g.n)) * (TAU / g.n)) : g.r1;
 /** the deck's outer rail: posts every ~1.7 m 0.1 m inside the rim (tower: at the octagon corners), broken at every gap */
 export function ringRailRuns(g: Ring, c: Column): V3[][] {
   if (g.cabin) return [];
@@ -762,7 +763,7 @@ export function holeRailRuns(g: Ring, c: Column): V3[][] {
     let pts: V3[] = [];
     for (let k = 0; k <= m; k++) {
       const t = h[0] + k / m * L0;
-      if (Number.isFinite(g.exitA) && Math.abs(Math.atan2(Math.sin(t - g.exitA), Math.cos(t - g.exitA))) < 1.2 / g.rh) { if (pts.length > 1) runs.push(pts); pts = []; continue; }
+      if (Number.isFinite(g.exitA) && Math.abs(dmath.atan2(dmath.sin(t - g.exitA), dmath.cos(t - g.exitA))) < 1.2 / g.rh) { if (pts.length > 1) runs.push(pts); pts = []; continue; }
       const [x, z] = rad(c, t, g.rh); pts.push([x, g.y, z]);
     }
     if (pts.length > 1) runs.push(pts);
@@ -784,19 +785,19 @@ export function railBoxes(run: V3[], postEvery = 1): Box[] {
   // the posts (0.075 m logs, floor → 1.17 m; the client draws one on every `postEvery`-th point and the last)
   for (let i = 0; i < run.length; i++) if (i % postEvery === 0 || i === run.length - 1) { const q = run[i]; out.push({ c: [q[0], q[1] + 0.585, q[2]], h: [0.06, 0.585, 0.06], yaw: 0, surf: "wood", noShoot: true }); }
   for (let i = 0; i + 1 < run.length; i++) {
-    const a = run[i], b = run[i + 1], dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz);
+    const a = run[i], b = run[i + 1], dx = b[0] - a[0], dz = b[2] - a[2], L = dmath.hypot(dx, dz);
     if (L < 0.05) continue;
     // the HANDRAIL only (0.26 m plank at 0.84–1.1 m): a kong's capsule can't pass under it, and nothing un-drawn hangs
     // between it and the floor (the ropes below are dressing)
     const mid = (a[1] + b[1]) / 2, y0 = mid + RAIL_H - 0.21, y1 = mid + RAIL_H + 0.05;
-    out.push({ c: [(a[0] + b[0]) / 2, (y0 + y1) / 2, (a[2] + b[2]) / 2], h: [L / 2 + 0.05, (y1 - y0) / 2, 0.07], yaw: Math.atan2(dz, dx), surf: "wood", noShoot: true });
+    out.push({ c: [(a[0] + b[0]) / 2, (y0 + y1) / 2, (a[2] + b[2]) / 2], h: [L / 2 + 0.05, (y1 - y0) / 2, 0.07], yaw: dmath.atan2(dz, dx), surf: "wood", noShoot: true });
   }
   return out;
 }
 
 /** a bridge's walk surface: plank segments (centre t, length) — the collider and the visual deck share them */
 export function bridgeSegs(b: Bridge): Array<{ t0: number; t1: number; y: number }> {
-  const L = Math.hypot(b.b[0] - b.a[0], b.b[2] - b.a[2]);
+  const L = dmath.hypot(b.b[0] - b.a[0], b.b[2] - b.a[2]);
   const n = Math.max(2, Math.ceil(L / 0.6));
   const out: Array<{ t0: number; t1: number; y: number }> = [];
   for (let i = 0; i < n; i++) { const t0 = i / n, t1 = (i + 1) / n; out.push({ t0, t1, y: sagY(b.a[1], b.b[1], b.sag, (t0 + t1) / 2) }); }
@@ -809,7 +810,7 @@ export const zipY = (z: Zip, t: number) => sagY(z.a[1], z.b[1], z.sag, t);
  *  straight onto the deck past it (a pole dead ahead, on the line, blocks the way). The cable ends (a / b) — the ride — are unchanged. */
 export const ZIP_POLE_OFF = 0.75;
 export function zipPole(z: Zip, end: 0 | 1): [number, number] {
-  const dx = z.b[0] - z.a[0], dz = z.b[2] - z.a[2], l = Math.hypot(dx, dz), p = end ? z.b : z.a;
+  const dx = z.b[0] - z.a[0], dz = z.b[2] - z.a[2], l = dmath.hypot(dx, dz), p = end ? z.b : z.a;
   return [p[0] - (dz / l) * ZIP_POLE_OFF, p[2] + (dx / l) * ZIP_POLE_OFF];
 }
 
@@ -829,16 +830,16 @@ function genColliders(L: CanopyLayout): Box[] {
   // crown fork: stacked sections leave invisible ledges at every seam (the solver steps onto any top within 0.6 m)
   for (const c of L.columns) {
     // from under the LOWEST ground round the trunk (the escarpment trunks: the downhill side is up to 4 m below gy)
-    let gMin = c.gy; for (let k = 0; k < 24; k++) { const a = k / 24 * TAU; gMin = Math.min(gMin, groundAt(c.x + Math.cos(a) * c.r * 1.05, c.z + Math.sin(a) * c.r * 1.05)); }
+    let gMin = c.gy; for (let k = 0; k < 24; k++) { const a = k / 24 * TAU; gMin = Math.min(gMin, groundAt(c.x + dmath.cos(a) * c.r * 1.05, c.z + dmath.sin(a) * c.r * 1.05)); }
     const y0 = Math.min(c.gy - 3, gMin - 1.2), y1 = c.top;
     if (c.kind === "tree") {
       // (parity) 8 bands 22.5° apart: a 32-gon whose edge stays within [0.975 r, 0.994 r] = the drawn trunk's groove
       // floor (TRUNK_GROOVE); the strangler strands stand ≤ 0.02 r proud of it (client trees.ts addTrunk) — no grazing band
-      const R0 = trunkR(c, c.gy + 5) * TRUNK_GROOVE / Math.cos(Math.PI / 16);
-      for (let k = 0; k < 8; k++) B(c.x, (y0 + y1) / 2, c.z, R0 * Math.cos(Math.PI / 16), (y1 - y0) / 2, R0 * Math.sin(Math.PI / 16), k * Math.PI / 8, "wood");
+      const R0 = trunkR(c, c.gy + 5) * TRUNK_GROOVE / dmath.cos(Math.PI / 16);
+      for (let k = 0; k < 8; k++) B(c.x, (y0 + y1) / 2, c.z, R0 * dmath.cos(Math.PI / 16), (y1 - y0) / 2, R0 * dmath.sin(Math.PI / 16), k * Math.PI / 8, "wood");
     } else {
       const R0 = trunkR(c, c.gy + 5) / 0.962;
-      for (let k = 0; k < 4; k++) B(c.x, (y0 + y1) / 2, c.z, R0 * Math.cos(Math.PI / 8), (y1 - y0) / 2, R0 * Math.sin(Math.PI / 8), k * Math.PI / 4, "wood");
+      for (let k = 0; k < 4; k++) B(c.x, (y0 + y1) / 2, c.z, R0 * dmath.cos(Math.PI / 8), (y1 - y0) / 2, R0 * dmath.sin(Math.PI / 8), k * Math.PI / 4, "wood");
     }
     // crown limbs: stepped boxes along the lofted centre line (limbSamples), each as tall as the drawn tube over its span
     for (const l of c.limbs) for (const q of limbSamples(l)) B(q.x, q.y, q.z, q.hl, q.hy, q.hw, q.yaw, "wood");
@@ -866,7 +867,7 @@ function genColliders(L: CanopyLayout): Box[] {
       const nr = 3, y0 = Number.isFinite(s.solid) ? s.solid : s.y - STAIR.thick;
       for (let i = 0; i < nr; i++) {
         const ra = s.r0 + (s.r1 - s.r0) * i / nr, rb = s.r0 + (s.r1 - s.r0) * (i + 1) / nr;
-        RB(c, s.a, ra, rb, ra * Math.tan(s.dA / 2), y0, s.y, "wood");
+        RB(c, s.a, ra, rb, ra * dmath.tan(s.dA / 2), y0, s.y, "wood");
       }
     }
   }
@@ -876,7 +877,7 @@ function genColliders(L: CanopyLayout): Box[] {
     const n = g.n;
     for (let k = 0; k < n; k++) {
       const a = (g.kind === "tower" ? k : k + 0.5) / n * TAU;
-      const ht = g.r1 * Math.tan(Math.PI / n) + 0.02;
+      const ht = g.r1 * dmath.tan(Math.PI / n) + 0.02;
       RB(c, a, g.rh, g.r1, ht, g.y - DECK_T, g.y, "wood");
     }
     for (const run of ringRailRuns(g, c)) out.push(...railBoxes(run));
@@ -885,7 +886,7 @@ function genColliders(L: CanopyLayout): Box[] {
       const a = (k + 0.5) / ni * TAU;
       const inHole = g.holes.some((hl) => inArc(a, hl) || inArc(a - Math.PI / ni, hl) || inArc(a + Math.PI / ni, hl));
       if (inHole) continue;
-      RB(c, a, g.r0, g.rh + 0.02, g.rh * Math.tan(Math.PI / ni) + 0.02, g.y - DECK_T, g.y, "wood");
+      RB(c, a, g.r0, g.rh + 0.02, g.rh * dmath.tan(Math.PI / ni) + 0.02, g.y - DECK_T, g.y, "wood");
     }
     // hole rail along the band edge (not at the exit, where the stair steps out)
     for (const run of holeRailRuns(g, c)) out.push(...railBoxes(run));
@@ -894,19 +895,19 @@ function genColliders(L: CanopyLayout): Box[] {
   {
     const T = TOWER, c = T.col;
     for (let k = 0; k < 8; k++) {
-      const a = (k + 0.5) / 8 * TAU, rr = T.apothem / Math.cos(Math.PI / 8) - 0.2, [x, z] = rad(c, a, rr);
+      const a = (k + 0.5) / 8 * TAU, rr = T.apothem / dmath.cos(Math.PI / 8) - 0.2, [x, z] = rad(c, a, rr);
       // (parity) the chunky log leg + its splayed foot block (0.9 × 0.5 m)
       B(x, (c.gy - 1 + T.roofY) / 2, z, T.legR * 0.82, (T.roofY - c.gy + 1) / 2, T.legR * 0.82, a, "wood");   // (r 0.44 → 0.38 logs)
       const g = groundAt(x, z); B(x, g + 0.1, z, 0.45, 0.25, 0.45, a, "wood");
     }
     // the stone plinth (8 radial boxes = the octagon) up to the open base deck
-    for (let k = 0; k < 8; k++) RB(c, k / 8 * TAU, 0, T.apothem, T.apothem * Math.tan(Math.PI / 8) + 0.02, T.plinthLo, T.floorY, "stone");
+    for (let k = 0; k < 8; k++) RB(c, k / 8 * TAU, 0, T.apothem, T.apothem * dmath.tan(Math.PI / 8) + 0.02, T.plinthLo, T.floorY, "stone");
     // (3.2 m skirt walls' tops would be an unreachable floor — the base is an open plank deck on the plinth,
     // the legs + a crate stack are its cover)
     // the BANANA CO. board on the top deck's rail (structures.ts addTower: 2.4 × 0.9 m, bottom 1.1 m over the deck)
     { const a = 1.93, [x, z] = rad(c, a, T.apothem - 0.02); B(x, T.top + 1.55, z, 0.06, 0.45, 1.2, a, "wood"); }
     // the T1 cabin walls (towerCabin: the same pieces the client planks)
-    for (const w of towerCabin()) { const [x, z] = rad(c, w.a, T.apothem - 0.11), tx = -Math.sin(w.a), tz = Math.cos(w.a), um = (w.u0 + w.u1) / 2; B(x + tx * um, (w.y0 + w.y1) / 2, z + tz * um, 0.11, (w.y1 - w.y0) / 2, (w.u1 - w.u0) / 2, w.a, "wood"); }
+    for (const w of towerCabin()) { const [x, z] = rad(c, w.a, T.apothem - 0.11), tx = -dmath.sin(w.a), tz = dmath.cos(w.a), um = (w.u0 + w.u1) / 2; B(x + tx * um, (w.y0 + w.y1) / 2, z + tz * um, 0.11, (w.y1 - w.y0) / 2, (w.u1 - w.u0) / 2, w.a, "wood"); }
     // roof: an 8-sided thatch cap from the eave (R0) up to the crow's nest rim (nestR) — stepped ANNULAR layers (8 radial
     // boxes each, the mast stair passes through the middle); the thatch surface stays within ±0.15 m of the steps
     const eave = T.roofY, peak = T.peak, R0 = T.capR, Ri = T.nestR - 0.05, dy = 0.3;
@@ -914,12 +915,12 @@ function genColliders(L: CanopyLayout): Box[] {
     for (let i = 0; i < n; i++) {
       const y0 = eave + (peak - eave) * i / n, y1 = eave + (peak - eave) * (i + 1) / n;
       const r = R0 - (R0 - T.nestR) * (i + 0.5) / n;
-      for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; RB(c, a, Ri, r, r * Math.tan(Math.PI / 8) + 0.02, y0, y1, "fabric"); }
+      for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; RB(c, a, Ri, r, r * dmath.tan(Math.PI / 8) + 0.02, y0, y1, "fabric"); }
     }
   }
   // bridges: plank segments + rope rails both sides (noShoot)
   for (const b of L.bridges) {
-    const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], Lh = Math.hypot(dx, dz), yaw = Math.atan2(dz, dx);
+    const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], Lh = dmath.hypot(dx, dz), yaw = dmath.atan2(dz, dx);
     for (const s of bridgeSegs(b)) {
       const tm = (s.t0 + s.t1) / 2, x = b.a[0] + dx * tm, z = b.a[2] + dz * tm, hl = (s.t1 - s.t0) * Lh / 2 + 0.01;
       B(x, s.y - 0.09, z, hl, 0.09, b.w / 2, yaw, "wood");
@@ -1003,11 +1004,11 @@ function crPoint(pts: V3[], u: number): V3 {
   return out;
 }
 /** limb radius at u (0 base → 1 tip) */
-export const limbR = (l: { r0: number; r1: number }, u: number) => l.r0 + (l.r1 - l.r0) * Math.pow(u, 0.75);
+export const limbR = (l: { r0: number; r1: number }, u: number) => l.r0 + (l.r1 - l.r0) * dmath.pow(u, 0.75);
 /** the limb's centre line resampled every ~0.3 m (u, point) — the client lofts THIS polyline, the colliders box it */
 export function limbLine(l: { pts: V3[] }): Array<{ u: number; p: V3 }> {
   const dense: V3[] = []; for (let i = 0; i <= 200; i++) dense.push(crPoint(l.pts, i / 200));
-  let L = 0; const acc = [0]; for (let i = 1; i < dense.length; i++) { L += Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1], dense[i][2] - dense[i - 1][2]); acc.push(L); }
+  let L = 0; const acc = [0]; for (let i = 1; i < dense.length; i++) { L += dmath.hypot3(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1], dense[i][2] - dense[i - 1][2]); acc.push(L); }
   const n = Math.max(4, Math.ceil(L / 0.3)), out: Array<{ u: number; p: V3 }> = [];   // 0.3 m: the stepped boxes' exposed ledges stay ≤ 0.25 m off the drawn tube
   for (let k = 0, j = 0; k <= n; k++) { const s = L * k / n; while (j < acc.length - 2 && acc[j + 1] < s) j++; const t = (s - acc[j]) / Math.max(1e-9, acc[j + 1] - acc[j]); const a = dense[j], b = dense[j + 1]; out.push({ u: k / n, p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t] }); }
   return out;
@@ -1018,17 +1019,17 @@ export function limbSamples(l: { pts: V3[]; r0: number; r1: number }): Array<{ x
   const line = limbLine(l), out: Array<{ x: number; y: number; z: number; hl: number; hy: number; hw: number; yaw: number }> = [];
   for (let i = 0; i + 1 < line.length; i++) {
     if (line[i + 1].u > 0.94) break;   // the capped tip (deep in the foliage): a slab would hang past the drawn end
-    const a = line[i].p, b = line[i + 1].p, dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], h = Math.hypot(dx, dz), L = Math.hypot(h, dy);
+    const a = line[i].p, b = line[i + 1].p, dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], h = dmath.hypot(dx, dz), L = dmath.hypot(h, dy);
     const r = limbR(l, (line[i].u + line[i + 1].u) / 2) * 0.96, cosT = h / Math.max(1e-6, L), sinT = Math.abs(dy) / Math.max(1e-6, L);
     // shallow span: a vertical slice (the tube's top / bottom sit r / cos θ off the axis); steep span: a horizontal slice
     // (the tube's sides sit r / sin θ off the axis along the span's heading)
     // the tube's cross-section in the slice plane is an ellipse (lateral r × r / cos θ vertical, or r / sin θ along the
     // heading for a steep slab): three boxes (a cross + its core) whose corners all sit on / inside it — no box corner
     // hangs past the round limb (parity), no part of the limb stands > 0.1 r out of the boxes
-    const steep = sinT > cosT, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2, yaw = Math.atan2(dz, dx);
+    const steep = sinT > cosT, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2, yaw = dmath.atan2(dz, dx);
     // a steep slab's uphill half is normally under the next slab; where the next span is NOT a steep slab (the bend into
     // the shallow run, or the tip) it stops at the span's top end — the drawn bough rises above anything further uphill
-    const nb = line[i + 2]?.p, nextSteep = !!nb && line[i + 2].u <= 0.94 && Math.abs(nb[1] - b[1]) > Math.hypot(nb[0] - b[0], nb[2] - b[2]);
+    const nb = line[i + 2]?.p, nextSteep = !!nb && line[i + 2].u <= 0.94 && Math.abs(nb[1] - b[1]) > dmath.hypot(nb[0] - b[0], nb[2] - b[2]);
     const ux = h > 1e-6 ? dx / h : 0, uz = h > 1e-6 ? dz / h : 0;
     for (const [kw, ke] of [[0.7, 0.7], [0.92, 0.38], [0.38, 0.92]]) {
       if (steep) {
@@ -1090,7 +1091,7 @@ export function octRoof(h: Hut, y: number): Box[] {
     if (o.c < 0.12) continue;
     for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as V2[]) {
       const lx = o.cx + sx * ((2 * o.a - o.c) / 2 - o.c / 4), lz = o.cz + sz * ((2 * o.b - o.c) / 2 - o.c / 4), [x, z] = Lw(lx, lz);
-      out.push({ c: [x, yc, z], h: [o.c * Math.SQRT2 / 2, dy / 2, o.c * Math.SQRT2 / 4], yaw: h.yaw + Math.atan2(-sz, sx), surf: "fabric" });
+      out.push({ c: [x, yc, z], h: [o.c * Math.SQRT2 / 2, dy / 2, o.c * Math.SQRT2 / 4], yaw: h.yaw + dmath.atan2(-sz, sx), surf: "fabric" });
     }
   }
   return out;
@@ -1256,9 +1257,9 @@ export const clearings: Array<{ x: number; z: number; r: number } | { x: number;
   }
   for (const h of LAYOUT.huts) if (h.id === "depot") out.push({ x: h.x, z: h.z, hx: h.w / 2 + 2.5, hz: h.d / 2 + 2.5, yaw: -h.yaw });
   for (const b of LAYOUT.bridges) {
-    const x = (b.a[0] + b.b[0]) / 2, z = (b.a[2] + b.b[2]) / 2, L = Math.hypot(b.b[0] - b.a[0], b.b[2] - b.a[2]);
+    const x = (b.a[0] + b.b[0]) / 2, z = (b.a[2] + b.b[2]) / 2, L = dmath.hypot(b.b[0] - b.a[0], b.b[2] - b.a[2]);
     // only where the bridge is low over the ground (tall trees under a high bridge would poke through the planks)
-    out.push({ x, z, hx: L / 2 + 1, hz: 3.5, yaw: -Math.atan2(b.b[2] - b.a[2], b.b[0] - b.a[0]) });
+    out.push({ x, z, hx: L / 2 + 1, hz: 3.5, yaw: -dmath.atan2(b.b[2] - b.a[2], b.b[0] - b.a[0]) });
   }
   out.push({ x: CAMP[0], z: CAMP[1], r: 10 }); // plateau camp
   // (a clump of thin veg stems penned a 1 m pocket at (161.97, 51.74, −181.43) on
@@ -1274,7 +1275,7 @@ export const LOOT_SPOTS: { chests: [number, number, number, number][]; floor: [n
   const chests: [number, number, number, number][] = [], floor: [number, number, number][] = [];
   // every spot is nudged (spiral, ≤ 2.5 m) to the nearest point that is clear of every collider (a 0.5 m disc, 1 m tall)
   // and has a floor right under it (a box top or the ground within 6 cm) — loot never sits inside a crate or a bunk
-  const inBox = (b: Box, x: number, z: number, r: number) => { const dx = x - b.c[0], dz = z - b.c[2], c = Math.cos(b.yaw ?? 0), s = Math.sin(b.yaw ?? 0), lx = dx * c + dz * s, lz = -dx * s + dz * c; const qx = Math.max(-b.h[0], Math.min(b.h[0], lx)), qz = Math.max(-b.h[2], Math.min(b.h[2], lz)); return Math.hypot(lx - qx, lz - qz) < r; };
+  const inBox = (b: Box, x: number, z: number, r: number) => { const dx = x - b.c[0], dz = z - b.c[2], c = dmath.cos(b.yaw ?? 0), s = dmath.sin(b.yaw ?? 0), lx = dx * c + dz * s, lz = -dx * s + dz * c; const qx = Math.max(-b.h[0], Math.min(b.h[0], lx)), qz = Math.max(-b.h[2], Math.min(b.h[2], lz)); return dmath.hypot(lx - qx, lz - qz) < r; };
   const ok = (x: number, y: number, z: number) => {
     let floorHit = Math.abs(groundAt(x, z) - y) < 0.06;
     for (const b of colliders) {
@@ -1285,7 +1286,7 @@ export const LOOT_SPOTS: { chests: [number, number, number, number][]; floor: [n
     return floorHit;
   };
   const settle = <T extends number[]>(q: T): T => {
-    for (let k = 0; k < 200; k++) { const r = Math.sqrt(k) * 0.18, a = k * 2.39996; const x = q[0] + Math.cos(a) * r, z = q[2] + Math.sin(a) * r; if (ok(x, q[1], z)) { q[0] = x; q[2] = z; return q; } }
+    for (let k = 0; k < 200; k++) { const r = Math.sqrt(k) * 0.18, a = k * 2.39996; const x = q[0] + dmath.cos(a) * r, z = q[2] + dmath.sin(a) * r; if (ok(x, q[1], z)) { q[0] = x; q[2] = z; return q; } }
     return q;
   };
   // every furnished room: its first chest slot + up to 2 floor slots from the interiors kit (the match generator reads
@@ -1315,6 +1316,6 @@ export const VIEW = (() => {
   // (tower + winch shelter left, the Lodge Tree + lodge + the AB bridge centre-right, the valley decks and the sea
   // below), 70° — the props placed in the W() frame (crates, barrel, greens) stay in the bottom-left foreground
   const g = LAYOUT.rings[LAYOUT.deck.A1], b = -42 * D2R;
-  const p: V2 = [149.8 + Math.cos(55 * D2R) * 8.9, -229.0 + Math.sin(55 * D2R) * 8.9];
-  return { pos: [p[0], g.y + 4.3, p[1]] as V3, target: [p[0] + Math.cos(b) * 100, g.y + 4.3 - 16.5, p[1] + Math.sin(b) * 100] as V3, fov: 70 };
+  const p: V2 = [149.8 + dmath.cos(55 * D2R) * 8.9, -229.0 + dmath.sin(55 * D2R) * 8.9];
+  return { pos: [p[0], g.y + 4.3, p[1]] as V3, target: [p[0] + dmath.cos(b) * 100, g.y + 4.3 - 16.5, p[1] + dmath.sin(b) * 100] as V3, fov: 70 };
 })();

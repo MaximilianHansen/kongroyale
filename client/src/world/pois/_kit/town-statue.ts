@@ -15,6 +15,7 @@ import type { LabEnv } from "./town-lab";
 import { MeshoptSimplifier } from "three/addons/libs/meshopt_simplifier.module.js";
 import { M, col, cylGeo, latheGeo, chamferBoxGeo } from "./town-geo";
 import { shadowOnlyMaterial } from "./town-materials";
+import { ctxPace, type Pace } from "./pace";
 import { flag } from "../../../flags";
 
 interface Simplifier {
@@ -723,11 +724,11 @@ function statueMats() {
 /** procedural bronze gorilla statue holding a golden banana bunch aloft. Origin = centre of the feet on the
  *  statue's own base plate (the plate's underside, so it sits flush on a pedestal); faces +z; `height` = top of the
  *  raised bunch in metres. */
-export async function buildGorillaStatue(ctx: WorldCtx, height = 3.4): Promise<THREE.Group> {
+export async function buildGorillaStatue(ctx: WorldCtx, height = 3.4, pace: Pace = ctxPace(ctx)): Promise<THREE.Group> {
   // baked geometry (public/assets/pois/town/statue.bin, ~0.5 MB) saves the ~1 s sculpt
   // on load; the live sculpt is the fallback (and what the bake runs)
   cache ??= loadBakedStatue().then((g) => g ?? buildStatueGeo());
-  const g = await cache;
+  const g = await pace.wait(cache);
   const m = statueMats();
   const group = new THREE.Group();
   group.name = "gorilla-statue";
@@ -735,9 +736,10 @@ export async function buildGorillaStatue(ctx: WorldCtx, height = 3.4): Promise<T
   body.name = "gorilla-statue:bronze"; bunch.name = "gorilla-statue:gold";
   for (const o of [body, bunch]) { o.castShadow = true; o.receiveShadow = true; group.add(o); }
   // perf: the body's ~26 k tris never cast — a ~2.5 k-tri decimated twin casts instead (invisible in the main pass)
-  await ctx.yield();
+  await pace.pause();
+  await pace.wait(SIMP.ready);
   const caster = await statueCaster(g);
-  await ctx.yield();
+  await pace.pause();
   if (caster) {
     body.castShadow = false; body.userData.castShadow = false;
     const cm = new THREE.Mesh(caster, shadowOnlyMaterial());

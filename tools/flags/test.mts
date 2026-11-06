@@ -19,6 +19,7 @@ async function load(env: Env): Promise<typeof Flags> {
   assert.equal(flag("vegsyncscatter"), false);
   assert.equal(flag("vegpre"), false);
   assert.equal(flag("lootlater"), true);
+  assert.equal(flag("readyest"), true);
   assert.equal(flag("spldens"), 0.3);
   assert.equal(flag("view"), null);
   assert.deepEqual(flag("vegdbg"), []);
@@ -26,7 +27,7 @@ async function load(env: Env): Promise<typeof Flags> {
 }
 
 {
-  const { flag } = await load({ search: "?vegsplat=0&vegsyncscatter=0&spldens=0.5&vegdbg=noimp,,nolod0&vegpre=1&view=a&view=b&impgrade=1,2,x,4&vegsplatsmall=&impcull=false&lootlater=0" });
+  const { flag } = await load({ search: "?vegsplat=0&vegsyncscatter=0&spldens=0.5&vegdbg=noimp,,nolod0&vegpre=1&view=a&view=b&impgrade=1,2,x,4&vegsplatsmall=&impcull=false&lootlater=0&readyest=0" });
   assert.equal(flag("vegsplat"), false);
   assert.equal(flag("vegsplatsmall"), true);
   assert.equal(flag("impcull"), true);
@@ -35,6 +36,7 @@ async function load(env: Env): Promise<typeof Flags> {
   assert.deepEqual(flag("vegdbg"), ["noimp", "nolod0"]);
   assert.equal(flag("vegpre"), true);
   assert.equal(flag("lootlater"), false);
+  assert.equal(flag("readyest"), false);
   assert.equal(flag("view"), "a");
   assert.deepEqual(flag("impgrade"), [1, 2, NaN, 4]);
 }
