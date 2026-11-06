@@ -6,8 +6,9 @@
 // tile, `weather()` injects a world-space shader layer: macro tone variation (kills visible tiling), grime that
 // accumulates toward the ground plane, and roughness response — the atmos area's CSM/aerial patch chains after it.
 import * as THREE from "three";
-import { canvas, edgeShade, hazardStripes, noiseTile, normalFromHeight, paintNoise, rng, scratches, splotches, streaks, tex, type TexOpts } from "./harbor-paint";
+import { canvas, edgeShade, hazardStripes, noiseTile, normalFromHeight, paintNoise, rng, scratches, splotches, streaks, tex, type TexOpts, cappedBitmap } from "./harbor-paint";
 import { workerPool } from "../../../engine/worker-pool";
+import { capped } from "../../../engine/tex-cap";
 import { presetImageMean, setPaletteMaterial } from "./harbor-geo";
 
 export interface HarborMats {
@@ -561,7 +562,7 @@ function T(name: string, o: TexOpts = {}): THREE.Texture {
     t.anisotropy = o.aniso ?? 8; t.flipY = false; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.needsUpdate = true;
     return t;
   }
-  if (!LIVE.has(name)) for (const [k, c] of Object.entries(TEX_GROUPS[groupOf(name)]())) LIVE.set(k, c);
+  if (!LIVE.has(name)) for (const [k, c] of Object.entries(TEX_GROUPS[groupOf(name)]())) LIVE.set(k, capped(c));
   return tex(LIVE.get(name)!, o);
 }
 /** paint the harbor's textures in worker threads, then build the materials (≈ 1 s of main-thread painting
@@ -579,7 +580,8 @@ export function harborMatsAsync(): Promise<HarborMats> {
         order.forEach((g, i) => chunks[i % 4].push(g));
         const res = await Promise.all(chunks.map((c) => pool.run<{ bm: Record<string, ImageBitmap>; means: Record<string, [number, number, number]> }>("paintMeans", c)));
         pool.close();
-        for (const r of res) for (const [k, v] of Object.entries(r.bm)) { PRE.set(k, v); const mn = r.means[k]; if (mn) presetImageMean(v, mn); }
+        const done = await Promise.all(res.flatMap((r) => Object.entries(r.bm).map(async ([k, raw]) => [k, await cappedBitmap(raw), r.means[k]] as const)));
+        for (const [k, v, mn] of done) { PRE.set(k, v); if (mn) presetImageMean(v, mn); }
       } catch (e) { console.warn("[harbor] texture worker failed — painting on the main thread", e); }
     }
     return harborMats();

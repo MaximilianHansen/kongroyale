@@ -10,6 +10,7 @@ import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import type { WorldCtx } from "../../../engine/engine";
 import { detail, noise3 } from "./town-geo";
 import type { TownBins } from "./town-materials";
+import type { Pace } from "./pace";
 
 const TAU = Math.PI * 2;
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -168,7 +169,9 @@ export class FruitBatch {
     if (![e[12], e[13], e[14]].every(Number.isFinite)) return;
     this.list.push({ kind, v, m: m.clone(), c, x: e[12], y: e[13], z: e[14] });
   }
-  build(ctx: WorldCtx, group: THREE.Group): THREE.Group | null {
+  build(ctx: WorldCtx, group: THREE.Group): THREE.Group | null { const it = this.steps(ctx, group); let s = it.next(); while (!s.done) s = it.next(); return s.value; }
+  async buildAsync(ctx: WorldCtx, group: THREE.Group, pace: Pace): Promise<THREE.Group | null> { const it = this.steps(ctx, group); let s = it.next(); while (!s.done) { await pace.pause(); s = it.next(); } return s.value; }
+  private *steps(ctx: WorldCtx, group: THREE.Group): Generator<void, THREE.Group | null, void> {
     if (!this.list.length) return null;
     const g = new THREE.Group(); g.name = this.o.name ?? "town:fruit";
     // hi 16×12 (smooth), lo 8×6, min 6×4; hands 8×7 / 4×4 / 2×3 per finger
@@ -187,8 +190,8 @@ export class FruitBatch {
       g.add(im); this.all.push(im);
       return im;
     };
-    for (let v = 0; v < MANGO_V; v++) { if (!cap.mango[v]) { this.meshes.mango.push([]); continue; } const r = (v + 0.5) / MANGO_V; this.meshes.mango.push([mk("mango", v, 0, mangoGeo(16, 12, r, v)), mk("mango", v, 1, mangoGeo(8, 6, r, v)), mk("mango", v, 2, mangoGeo(6, 4, r, v))]); }
-    for (let v = 0; v < HAND_V; v++) { if (!cap.hand[v]) { this.meshes.hand.push([]); continue; } this.meshes.hand.push([mk("hand", v, 0, handGeo(5 + v, 12, 9, v)), mk("hand", v, 1, handGeo(5 + v, 4, 4, v)), mk("hand", v, 2, handGeo(5 + v, 2, 3, v))]); }
+    for (let v = 0; v < MANGO_V; v++) { if (!cap.mango[v]) { this.meshes.mango.push([]); continue; } const r = (v + 0.5) / MANGO_V; this.meshes.mango.push([mk("mango", v, 0, mangoGeo(16, 12, r, v)), mk("mango", v, 1, mangoGeo(8, 6, r, v)), mk("mango", v, 2, mangoGeo(6, 4, r, v))]); yield; }
+    for (let v = 0; v < HAND_V; v++) { if (!cap.hand[v]) { this.meshes.hand.push([]); continue; } this.meshes.hand.push([mk("hand", v, 0, handGeo(5 + v, 12, 9, v)), mk("hand", v, 1, handGeo(5 + v, 4, 4, v)), mk("hand", v, 2, handGeo(5 + v, 2, 3, v))]); yield; }
     // 16 m cells
     const map = new Map<string, FruitCell>();
     for (const it of this.list) {
@@ -196,12 +199,14 @@ export class FruitBatch {
       let c = map.get(k); if (!c) map.set(k, (c = { cx: 0, cz: 0, cy: 0, r: 0, items: [] }));
       c.items.push(it);
     }
+    yield;
     for (const c of map.values()) {
       let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y0 = Infinity, y1 = -Infinity;
       for (const it of c.items) { x0 = Math.min(x0, it.x); x1 = Math.max(x1, it.x); z0 = Math.min(z0, it.z); z1 = Math.max(z1, it.z); y0 = Math.min(y0, it.y); y1 = Math.max(y1, it.y); }
       c.cx = (x0 + x1) / 2; c.cz = (z0 + z1) / 2; c.cy = (y0 + y1) / 2; c.r = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + 0.5;
       this.cells.push(c);
     }
+    yield;
     group.add(g);
     this.cam = ctx.camera;
     this.update(ctx.camera.position, true);

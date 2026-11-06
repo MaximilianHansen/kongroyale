@@ -1,0 +1,758 @@
+{
+  "title": "Kong Royale: performance and progress",
+  "baseTag": "v0.2.0",
+  "tagPrefix": "kong-v",
+  "hide": "security|advisor|ghsa",
+  "areas": [
+    {
+      "id": "gameplay",
+      "name": "Gameplay and simulation",
+      "blurb": "The rules of the game that run on both the server and your browser: movement, bots, loot and hits."
+    },
+    {
+      "id": "loading",
+      "name": "Loading",
+      "blurb": "Everything between opening the page and seeing the title screen."
+    },
+    {
+      "id": "graphics",
+      "name": "Graphics and smoothness",
+      "blurb": "How the island is drawn, and how smooth the game feels once it starts."
+    },
+    {
+      "id": "networking",
+      "name": "Networking and server",
+      "blurb": "The server that runs every match and the messages it sends to players."
+    },
+    {
+      "id": "tooling",
+      "name": "Tooling and testing",
+      "blurb": "Automatic checks that catch mistakes before a change ships, and the tools that measure the game."
+    },
+    {
+      "id": "docs",
+      "name": "Docs and process",
+      "blurb": "How the project is written down: guides, release steps and rules for contributors."
+    }
+  ],
+  "areaRules": [
+    {
+      "area": "docs",
+      "match": "^(docs|AGENTS\\.md|\\.agents)|Document|RELEASING"
+    },
+    {
+      "area": "networking",
+      "match": "shared/net|server|socket|online match"
+    },
+    {
+      "area": "gameplay",
+      "match": "^shared/sim"
+    },
+    {
+      "area": "loading",
+      "match": "boot|load|import-time|map render|main\\.ts"
+    },
+    {
+      "area": "graphics",
+      "match": "water|render|materials|programs|shader|^world:"
+    }
+  ],
+  "prs": {
+    "24": {
+      "area": "tooling",
+      "plain": "The full test suite now runs on Windows PCs."
+    },
+    "26": {
+      "area": "networking",
+      "plain": "Shot and sight checks skip walls they can't touch, so the server does less work."
+    },
+    "27": {
+      "area": "networking",
+      "plain": "Player movement checks skip walls they can't touch, so the server does less work."
+    },
+    "30": {
+      "area": "graphics",
+      "plain": "Water reflections cost about a quarter less to draw, with no visible change."
+    },
+    "32": {
+      "area": "graphics",
+      "plain": "The game prepares its effects before you drop in, so the first frame of a match is about 6 times quicker."
+    },
+    "34": {
+      "area": "loading",
+      "plain": "Slow computers no longer fail to load because of a cosmetic far-tree effect."
+    },
+    "35": {
+      "area": "loading",
+      "plain": "The game's start-up script runs about a second faster on a Windows PC."
+    },
+    "39": {
+      "area": "loading",
+      "plain": "The game skips painting a character model it isn't going to use."
+    },
+    "40": {
+      "area": "graphics",
+      "plain": "Two big locations build in small steps, so the match warm-up hitches less."
+    },
+    "41": {
+      "area": "loading",
+      "plain": "The island map is painted in the background, so the page doesn't freeze while it loads."
+    },
+    "43": {
+      "area": "loading",
+      "plain": "Sharing a link to the game now shows a proper preview card."
+    },
+    "47": {
+      "area": "gameplay",
+      "plain": "Picking up items stopped creating throwaway memory: 55% less memory churn per tick."
+    },
+    "48": {
+      "area": "gameplay",
+      "plain": "Loot is placed using each match's own cover walls."
+    },
+    "57": {
+      "area": "networking",
+      "plain": "Rocket and bomb messages are always read in full, so the message after them isn't misread."
+    },
+    "61": {
+      "area": "loading",
+      "plain": "The game stops preparing graphics it throws away, so the title shows up 4 seconds sooner on a Windows PC."
+    },
+    "86": {
+      "area": "tooling",
+      "plain": "Testers can save debug settings in the browser."
+    }
+  },
+  "perf": [
+    {
+      "id": "ready-depth-warm",
+      "area": "loading",
+      "name": "Title screen ready, Windows Chrome (first visit)",
+      "plain": "The title screen now shows up 4 seconds sooner on a first visit, because the game stops preparing graphics it throws away.",
+      "unit": "s",
+      "before": 30,
+      "after": 26,
+      "digits": 1,
+      "metric": "__kr.readyAt, cold, median of 5 interleaved runs per side, [28.4-31.6] to [24.3-27.5]; settle warm-up 3908 ms to 501 ms; first match frame unchanged within noise. Metal is unmeasured",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T18:44:21Z",
+      "prs": [
+        61
+      ],
+      "source": "Before/after A/B recorded in #61"
+    },
+    {
+      "id": "server-tick",
+      "area": "networking",
+      "name": "Server work per tick",
+      "plain": "The server does a third less work to run each moment of a match, so one machine can host more games.",
+      "unit": "ms",
+      "before": 1,
+      "after": 0.65,
+      "metric": "Real-play host tick p50 on a seeded match; results are replay-identical",
+      "machine": "Cloud CPU",
+      "date": "2026-11-04T03:29:14Z",
+      "prs": [
+        26,
+        27
+      ],
+      "source": "bench:host real-play scenario, before/after the three collision changes (#26, #27 and the cell-skipping ray walk that arrived with #118)",
+      "digits": 2
+    },
+    {
+      "id": "alloc",
+      "area": "gameplay",
+      "name": "Memory churn per tick",
+      "plain": "The game creates far less throwaway memory, so the computer pauses less often to clean up.",
+      "unit": "KB",
+      "before": 419,
+      "after": 188,
+      "metric": "allocBytesPerTick on real-play; garbage collections 183 to 82, GC time 178 ms to 87 ms",
+      "machine": "Cloud CPU",
+      "date": "2026-11-04T07:41:54Z",
+      "prs": [
+        47
+      ],
+      "source": "tools/performance/alloc.mts, before/after #47"
+    },
+    {
+      "id": "first-frame-cpu",
+      "area": "graphics",
+      "name": "First frame of a match (processor)",
+      "plain": "The first moment after you drop in no longer freezes: it's about 6 times quicker.",
+      "unit": "ms",
+      "before": 919,
+      "after": 153,
+      "metric": "First match frame, CPU step, median [851-1461] to [146-160]",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T04:33:01Z",
+      "prs": [
+        32
+      ],
+      "source": "Before/after A/B recorded in #32"
+    },
+    {
+      "id": "first-frame-gpu",
+      "area": "graphics",
+      "name": "First frame of a match (graphics card)",
+      "plain": "The graphics card's share of that first frame went from almost half a second to a blink.",
+      "unit": "ms",
+      "before": 470,
+      "after": 41,
+      "metric": "First match frame, GPU time, median [442-1051] to [23-47]",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T04:33:01Z",
+      "prs": [
+        32
+      ],
+      "source": "Before/after A/B recorded in #32"
+    },
+    {
+      "id": "warmup-worst",
+      "area": "graphics",
+      "name": "Worst hitch during match warm-up",
+      "plain": "The biggest stutter while the island streams in is a third shorter.",
+      "unit": "ms",
+      "before": 641,
+      "after": 410,
+      "metric": "Worst frame interval in the first 15 s, median [525-819] to [402-640]",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T08:27:33Z",
+      "prs": [],
+      "source": "Before/after A/B of the change that holds a streamed location's build gate until its first draw (arrived with #118)"
+    },
+    {
+      "id": "warmup-p99",
+      "area": "graphics",
+      "name": "Slowest 1% of warm-up frames",
+      "plain": "Even the slow frames during warm-up are almost twice as fast.",
+      "unit": "ms",
+      "before": 305,
+      "after": 173,
+      "metric": "Frame interval p99 in the first 15 s",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T08:27:33Z",
+      "prs": [],
+      "source": "Before/after A/B of the change that holds a streamed location's build gate until its first draw (arrived with #118)"
+    },
+    {
+      "id": "main-script-d3d",
+      "area": "loading",
+      "name": "Start-up script, Windows Chrome (first visit)",
+      "plain": "The code that runs first when you open the game finishes a full second sooner.",
+      "unit": "ms",
+      "before": 2736,
+      "after": 1744,
+      "metric": "phase.mainScriptMs, median of 5 interleaved runs; #35 accounts for the change",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T05:24:49Z",
+      "prs": [
+        35
+      ],
+      "source": "Interleaved load A/B across the first batch of loading fixes"
+    },
+    {
+      "id": "main-script-swiftshader",
+      "area": "loading",
+      "name": "Start-up script, computer without a graphics card",
+      "plain": "On a slow, software-only computer the start-up script takes about half as long.",
+      "unit": "ms",
+      "before": 5375,
+      "after": 2900,
+      "approxAfter": true,
+      "metric": "phase.mainScriptMs median 5375 (4533-6134) to about 2.9 s (2794-3033)",
+      "machine": "Cloud, SwiftShader (software graphics)",
+      "date": "2026-11-04T05:24:49Z",
+      "prs": [
+        35
+      ],
+      "source": "Before/after A/B of #35 without a graphics card"
+    },
+    {
+      "id": "ready-chrome",
+      "area": "loading",
+      "name": "Title screen ready, Windows Chrome (first visit, overnight fixes)",
+      "plain": "The title screen shows up about 2 seconds sooner on a first visit in Chrome.",
+      "unit": "s",
+      "before": 32.3,
+      "after": 30.4,
+      "metric": "readyMs, Chrome cold, median of 5 interleaved runs, before and after the first batch of loading fixes",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T09:00:00Z",
+      "prs": [
+        34,
+        35,
+        41
+      ],
+      "source": "Interleaved load A/B across the first batch of loading fixes (#34, #35, #41 and the off-screen Safari fix that arrived with #118)"
+    },
+    {
+      "id": "ready-edge",
+      "area": "loading",
+      "name": "Title screen ready, Windows Edge (first visit, overnight fixes)",
+      "plain": "The title screen shows up about 2 seconds sooner on a first visit in Edge.",
+      "unit": "s",
+      "before": 31.8,
+      "after": 29.6,
+      "metric": "readyMs, Edge cold, median of 5 interleaved runs, before and after the first batch of loading fixes",
+      "machine": "Windows PC, Edge, D3D11",
+      "date": "2026-11-04T09:00:00Z",
+      "prs": [
+        34,
+        35,
+        41
+      ],
+      "source": "Interleaved load A/B across the first batch of loading fixes (#34, #35, #41 and the off-screen Safari fix that arrived with #118)"
+    },
+    {
+      "id": "match-p99",
+      "area": "graphics",
+      "name": "Slowest 1% of match frames",
+      "plain": "The worst frames in a match are about 40% quicker, so play feels steadier.",
+      "unit": "ms",
+      "before": 356,
+      "after": 214,
+      "metric": "match.p99FrameMs, Chrome cold, median of 5; Edge cold 358 to 229",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T09:00:00Z",
+      "prs": [
+        32,
+        40
+      ],
+      "source": "Interleaved load A/B across the first batch of loading and warm-up fixes"
+    },
+    {
+      "id": "water",
+      "area": "graphics",
+      "name": "Drawing the water (harbor view)",
+      "plain": "Water reflections cost about a quarter less to draw, and look the same.",
+      "unit": "ms",
+      "before": 2.116,
+      "after": 1.604,
+      "metric": "Water pass p50, High preset, 1920x1080; -18.5% to -25.0% across five water views",
+      "machine": "Windows PC, Chrome, D3D11",
+      "date": "2026-11-04T03:21:42Z",
+      "prs": [
+        30
+      ],
+      "source": "Before/after A/B recorded in #30, five water views"
+    },
+    {
+      "id": "slow-boots",
+      "area": "loading",
+      "name": "Slow computers that finish loading",
+      "plain": "A slow, software-only computer used to fail every load; now every one reaches the title.",
+      "unit": "of 3",
+      "before": 0,
+      "after": 3,
+      "higherIsBetter": true,
+      "metric": "SwiftShader 1600x900 boots that reached ready",
+      "machine": "Cloud, SwiftShader (software graphics)",
+      "date": "2026-11-04T05:04:11Z",
+      "prs": [
+        34
+      ],
+      "source": "Before/after boots recorded in #34"
+    },
+    {
+      "id": "main-script-mac",
+      "area": "loading",
+      "name": "Start-up script, Mac (Chrome)",
+      "plain": "On a Mac the code that runs first finishes more than a third sooner.",
+      "unit": "ms",
+      "before": 1913,
+      "after": 1188,
+      "metric": "phase.mainScriptMs, median of 5 a side, [1898-1944] to [1183-1192]; title time is unchanged at the default because the saved time builds one more location",
+      "machine": "Mac mini M4 16 GB, Chrome 154, Metal",
+      "date": "2026-11-05T00:00:00Z",
+      "prs": [
+        35
+      ],
+      "source": "Interleaved ABBA load A/B, 5 cold loads a side"
+    },
+    {
+      "id": "prewarm-mac",
+      "area": "loading",
+      "name": "Graphics warm-up while loading, Mac (Chrome)",
+      "plain": "Painting the island map in the background makes the loading warm-up a fifth shorter on a Mac.",
+      "unit": "ms",
+      "before": 3010,
+      "after": 2405,
+      "metric": "prewarmMs, median of 5 a side, [2981-3050] to [2362-2432]",
+      "machine": "Mac mini M4 16 GB, Chrome 154, Metal",
+      "date": "2026-11-05T00:00:00Z",
+      "prs": [
+        41
+      ],
+      "source": "Interleaved ABBA load A/B, 5 cold loads a side"
+    },
+    {
+      "id": "settle-mac",
+      "area": "loading",
+      "name": "Final settle before the title, Mac (Chrome)",
+      "plain": "Not waiting for a cosmetic tree effect makes the last loading step 28% shorter on a Mac.",
+      "unit": "ms",
+      "before": 3214,
+      "after": 2314,
+      "metric": "settleMs, median of 5 a side, [3027-3383] to [2156-2474]",
+      "machine": "Mac mini M4 16 GB, Chrome 154, Metal",
+      "date": "2026-11-05T00:00:00Z",
+      "prs": [
+        34
+      ],
+      "source": "Interleaved ABBA load A/B, 5 cold loads a side"
+    }
+  ],
+  "play": {
+    "categories": [
+      {
+        "id": "load",
+        "name": "Opening the game",
+        "blurb": "From clicking the link to a title screen you can use."
+      },
+      {
+        "id": "enter",
+        "name": "Getting into a match",
+        "blurb": "From pressing Play to running around the island."
+      },
+      {
+        "id": "match",
+        "name": "Playing a match",
+        "blurb": "How smooth the game feels once you're in."
+      },
+      {
+        "id": "server",
+        "name": "The server",
+        "blurb": "The machine that runs every match for everyone."
+      }
+    ],
+    "items": [
+      {
+        "category": "load",
+        "name": "First visit to title screen, Windows PC (Chrome)",
+        "value": null,
+        "baseline": 31.7,
+        "unit": "s",
+        "target": 25,
+        "status": "not measured yet",
+        "detail": "v0.2.0 took 31.7 s: readyMs, cold, median of 3 loads [31.6-33.1]. Not yet measured on main with the same method.",
+        "source": "Cold-load runs of v0.2.0 on a Windows PC, Chrome, D3D11"
+      },
+      {
+        "category": "load",
+        "name": "Slow computers that reach the title",
+        "value": 3,
+        "unit": "of 3",
+        "target": 3,
+        "status": "done",
+        "detail": "Software-only graphics at 1600x900: 0 of 3 before #34, 3 of 3 after.",
+        "source": "#34"
+      },
+      {
+        "category": "load",
+        "name": "Safari loads that stall when the window is covered",
+        "value": null,
+        "baseline": 5,
+        "unit": "of 5",
+        "target": 0,
+        "status": "not measured yet",
+        "detail": "5 of 5 stalled before the off-screen fix. The fix is on main; Safari hasn't been re-measured. In a visible Chrome window on a Mac the fix is neutral, as expected.",
+        "source": "Safari runs on a Mac before the fix"
+      },
+      {
+        "category": "load",
+        "name": "Whole-browser memory at the title screen, Windows PC",
+        "value": null,
+        "baseline": 8409,
+        "unit": "MB",
+        "target": null,
+        "status": "not measured yet",
+        "detail": "v0.2.0 held 8,409 MB: whole browser (browser, renderer and GPU processes), median of 3 runs, tools/performance/memory.mts reading the page over CDP. On Auto, v0.2.0 boots at ultra quality on this machine. Not yet measured on main with the same script.",
+        "source": "tools/performance/memory.mts runs of v0.2.0, Windows PC, Chrome, D3D11"
+      },
+      {
+        "category": "enter",
+        "name": "Press Play to in the match",
+        "value": null,
+        "baseline": 8.3,
+        "unit": "s",
+        "target": null,
+        "status": "not measured yet",
+        "detail": "v0.2.0 took 8.3 s [6.0-8.8], click to in the match, median of 3 first-visit runs on a Windows PC. Not yet measured on main.",
+        "source": "Cold-load runs of v0.2.0 on a Windows PC, Chrome, D3D11"
+      },
+      {
+        "category": "enter",
+        "name": "First frame of the match, Windows PC",
+        "value": 153,
+        "unit": "ms",
+        "target": null,
+        "status": "improved",
+        "detail": "Processor time of the first match frame, measured when #32 landed; the graphics card's part is 41 ms. They were 919 ms and 470 ms.",
+        "source": "#32"
+      },
+      {
+        "category": "match",
+        "name": "Worst hitch in the first 15 s, Windows PC",
+        "value": 410,
+        "unit": "ms",
+        "target": null,
+        "status": "improved",
+        "detail": "It was 641 ms. Median of 5 runs, measured when streamed locations started holding their build gate until their first draw.",
+        "source": "Before/after A/B of that change (arrived with #118)"
+      },
+      {
+        "category": "match",
+        "name": "Stutters over 100 ms in the first 15 s, Windows PC",
+        "value": 9,
+        "unit": "frames",
+        "target": 2,
+        "status": "improving",
+        "detail": "Median of 5 runs after the same change (12 before). The count is noisy: one run had 18.",
+        "source": "Before/after A/B of that change (arrived with #118)"
+      },
+      {
+        "category": "match",
+        "name": "Stutters over 100 ms in the first 15 s, Mac (Chrome)",
+        "value": null,
+        "baseline": 5,
+        "unit": "frames",
+        "target": 2,
+        "status": "not measured yet",
+        "detail": "5 was measured before the warm-up fixes; not re-measured on a Mac.",
+        "source": "Chrome runs on a Mac before the warm-up fixes"
+      },
+      {
+        "category": "match",
+        "name": "Slowest 1% of match frames, Windows PC",
+        "value": 214,
+        "unit": "ms",
+        "target": null,
+        "status": "improved",
+        "detail": "Chrome first visit, median of 5. It was 356 ms.",
+        "source": "Interleaved load A/B across the first batch of loading and warm-up fixes"
+      },
+      {
+        "category": "match",
+        "name": "Hits landing at high ping",
+        "value": null,
+        "unit": "",
+        "target": null,
+        "status": "not measured yet",
+        "detail": "To check: shotgun and SMG hits at a 320 ms round trip, for example with npm run netlab.",
+        "source": "not measured"
+      },
+      {
+        "category": "match",
+        "name": "Whole-browser memory 30 s into a match, Windows PC",
+        "value": null,
+        "baseline": 14426,
+        "unit": "MB",
+        "target": null,
+        "status": "not measured yet",
+        "detail": "v0.2.0 held 14,426 MB: whole browser 30 s into a match, median of 3 runs, tools/performance/memory.mts reading the page over CDP, booting at ultra quality on Auto. Not yet measured on main with the same script.",
+        "source": "tools/performance/memory.mts runs of v0.2.0, Windows PC, Chrome, D3D11"
+      },
+      {
+        "category": "server",
+        "name": "Server work per tick",
+        "value": 0.65,
+        "unit": "ms",
+        "target": 0.65,
+        "status": "done",
+        "detail": "Median tick on a seeded real-play match (npm run bench:host). It was 1.00 ms. Results are replay-identical.",
+        "source": "bench:host real-play scenario"
+      },
+      {
+        "category": "server",
+        "name": "Memory churn per tick",
+        "value": 188,
+        "unit": "KB",
+        "target": null,
+        "status": "improved",
+        "detail": "It was 419 KB. A budget in the test suite now stops it growing back.",
+        "source": "tools/performance/alloc.mts, before/after #47"
+      }
+    ]
+  },
+  "roadmap": {
+    "snapshotAt": "2026-11-06T08:00:00Z",
+    "phases": [
+      {
+        "name": "Safety checks for every change",
+        "plain": "Automatic tests that prove the game still works, on Mac, Windows and in the cloud.",
+        "source": "tools/ and npm test on main; open pull requests",
+        "issues": [
+          [
+            "Online match test over real WebSockets",
+            "Done"
+          ],
+          [
+            "Pass/fail thresholds for the bot match and lag lab",
+            "Done"
+          ],
+          [
+            "Boot check without a graphics card",
+            "Done"
+          ],
+          [
+            "Asset licence check",
+            "Done"
+          ],
+          [
+            "Formal models of vehicle seats and match phases",
+            "Done"
+          ],
+          [
+            "Lint rules for determinism, hot paths and URL flags",
+            "Done"
+          ],
+          [
+            "Deterministic math on every platform",
+            "In review"
+          ],
+          [
+            "Network tail gate in npm test",
+            "In review"
+          ],
+          [
+            "Hits at high ping",
+            "Backlog"
+          ]
+        ]
+      },
+      {
+        "name": "Performance",
+        "plain": "Measure first, then make the game and server faster, keeping only changes the numbers prove.",
+        "source": "tools/performance on main; open pull requests",
+        "issues": [
+          [
+            "Measurement foundation (bench:host, alloc, compare, budgets)",
+            "Done"
+          ],
+          [
+            "Cheaper water reflections",
+            "Done"
+          ],
+          [
+            "Warm-up stalls",
+            "Done"
+          ],
+          [
+            "Server collision work per tick",
+            "Done"
+          ],
+          [
+            "Whole-browser memory measurement",
+            "Done"
+          ],
+          [
+            "Memory at the title on a budget",
+            "Done"
+          ],
+          [
+            "Fewer draws for distant vehicles",
+            "In review"
+          ],
+          [
+            "Character animation budget",
+            "In review"
+          ],
+          [
+            "Nightly regression check",
+            "Backlog"
+          ]
+        ]
+      },
+      {
+        "name": "Faster loading",
+        "plain": "Cutting the time from opening the page to the title screen.",
+        "source": "main; open pull requests",
+        "issues": [
+          [
+            "Off-thread map paint",
+            "Done"
+          ],
+          [
+            "Warm only the shaders we need",
+            "Done"
+          ],
+          [
+            "Defer far loot detail until after the title",
+            "Done"
+          ],
+          [
+            "Safari covered-window stall",
+            "Done"
+          ],
+          [
+            "Load the helicopter model after the title",
+            "In review"
+          ],
+          [
+            "Compile the storm and weapon effects after the title",
+            "In review"
+          ],
+          [
+            "Plan the pre-title stream by default from each device's measured time",
+            "In review"
+          ]
+        ]
+      },
+      {
+        "name": "Memory",
+        "plain": "Letting 16 GB computers, and Safari in particular, play a whole match.",
+        "source": "main; open pull requests",
+        "issues": [
+          [
+            "Resource scopes and a byte ledger",
+            "Done"
+          ],
+          [
+            "Low-memory streaming of nearby locations",
+            "Done"
+          ],
+          [
+            "Release textures' CPU copies after upload",
+            "Done"
+          ],
+          [
+            "Evict far locations once the match is in play",
+            "In review"
+          ],
+          [
+            "Texture size cap on by default",
+            "In review"
+          ],
+          [
+            "Restore the WebGL context in place",
+            "In review"
+          ]
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "wins": [
+      "first-frame-cpu",
+      "server-tick",
+      "slow-boots",
+      "warmup-worst",
+      "alloc",
+      "water"
+    ],
+    "plain": "Since v0.2.0 the game loads on slow computers, starts each match more smoothly and costs the server less, with every change measured before and after."
+  },
+  "inProgress": [
+    {
+      "name": "Cut memory so 16 GB Macs can play a whole match in Safari",
+      "estimate": "proposed in open pull requests (evicting far locations, a texture size cap); not measured on main yet",
+      "source": "open pull requests"
+    },
+    {
+      "name": "A faster title screen",
+      "estimate": "proposed in open pull requests (later helicopter load, effects compiled after the title); not measured on main yet",
+      "source": "open pull requests"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import { lootSpots, SpotKind } from "./loot-spots";
 import { AMMO_TYPES, PS, SK, alive, giveAmmo, weaponDef, type Player } from "./player";
 import { makeHit, surfaceIndex, type StaticWorld } from "./world";
 import { IK } from "./loot";
+import * as dmath from "./dmath";
 
 /** the buy menu (index = the offer id on the wire) */
 export const enum Offer { BuyBack = 0, Bounty = 1, Smoothies = 2, Leaves = 3, Bombs = 4, Wall = 5, Ammo = 6 }
@@ -39,14 +40,14 @@ export function bananaStands(world: StaticWorld): Stand[] {
   const set = lootSpots(world), list: Stand[] = [];
   for (let pi = 0; pi < POIS.length; pi++) {
     const P = POIS[pi]; if (P.id === "lobby-islet") continue;
-    const cands = set.spots.filter((s) => s.poi === pi && s.kind === SpotKind.Floor && s.room < 0 && s.bld < 0).sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z));
+    const cands = set.spots.filter((s) => s.poi === pi && s.kind === SpotKind.Floor && s.room < 0 && s.bld < 0).sort((a, b) => dmath.hypot(a.x - P.x, a.z - P.z) - dmath.hypot(b.x - P.x, b.z - P.z));
     for (const c of cands) {
       // stand 2.2 m off the floor spot (its item stays clear of the counter), toward the POI centre
-      const d = Math.hypot(P.x - c.x, P.z - c.z) || 1, ux = (P.x - c.x) / d, uz = (P.z - c.z) / d;
+      const d = dmath.hypot(P.x - c.x, P.z - c.z) || 1, ux = (P.x - c.x) / d, uz = (P.z - c.z) / d;
       for (let k = 0; k < 24; k++) {
         // toward the centre first, then round the spot, 3 / 4.5 / 6 m out
-        const off = [3, 4.5, 6][Math.floor(k / 8)], a = Math.atan2(uz, ux) + (k % 8) * Math.PI / 4;
-        const x = c.x + Math.cos(a) * off, z = c.z + Math.sin(a) * off, yaw = Math.atan2(P.x - x, P.z - z);
+        const off = [3, 4.5, 6][Math.floor(k / 8)], a = dmath.atan2(uz, ux) + (k % 8) * Math.PI / 4;
+        const x = c.x + dmath.cos(a) * off, z = c.z + dmath.sin(a) * off, yaw = dmath.atan2(P.x - x, P.z - z);
         const y = standFits(world, x, c.y, z, yaw); if (y !== y) continue;
         // never on top of a loot spot (the loot generator's coverage stays exactly what it was)
         if (set.spots.some((q) => Math.abs(q.x - x) < 2.8 && Math.abs(q.z - z) < 2.8 && Math.abs(q.y - y) < 3)) continue;
@@ -74,14 +75,14 @@ function flagsOf(world: StaticWorld) {
 function standFits(world: StaticWorld, x: number, y: number, z: number, yaw: number): number {
   world.raycast(x, y + 1.5, z, 0, -1, 0, 3, SH, false);
   if (!SH.hit || SH.ny < 0.9 || SH.y < 0.6) return NaN;
-  const fy = SH.y, c = Math.cos(yaw), s = Math.sin(yaw);
+  const fy = SH.y, c = dmath.cos(yaw), s = dmath.sin(yaw);
   for (const lx of [-1.5, 0, 1.5]) for (const lz of [-1.2, 0, 1.2]) {
     const wx = x + lx * c + lz * s, wz = z - lx * s + lz * c;
     world.raycast(wx, fy + 1.0, wz, 0, -1, 0, 1.6, SH, false);
     if (!SH.hit || Math.abs(SH.y - fy) > 0.3) return NaN;
     world.raycast(wx, fy + 0.3, wz, 0, 1, 0, 3.2, SH, false); if (SH.hit) return NaN;
   }
-  for (const h of [0.5, 1.6]) for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; world.raycast(x, fy + h, z, Math.cos(a), 0, Math.sin(a), 2.2 + PLAYER_R, SH, false); if (SH.hit) return NaN; }
+  for (const h of [0.5, 1.6]) for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; world.raycast(x, fy + h, z, dmath.cos(a), 0, dmath.sin(a), 2.2 + PLAYER_R, SH, false); if (SH.hit) return NaN; }
   // nothing (a street lamp, a parked pickup) may
   // stand inside the kiosk or its awning: the rays above start INSIDE a box they should see (and miss it), so every
   // static box overlapping the footprint + 0.45 m, from just above the floor to the sign (3.4 m), rules the spot out
@@ -125,7 +126,7 @@ export class Economy {
   /** a purchase request from kong `p` at stand `si` (validated here: the client's menu is a convenience) */
   buy(p: Player, si: number, offer: number): boolean {
     const st = this.stands[si];
-    if (!st || !alive(p) || p.st !== PS.Ground || Math.hypot(p.x - st.x, p.z - st.z) > ECON.standReach + STAND_SIZE[2] / 2 || Math.abs(p.y - st.y) > 2.5) return false;
+    if (!st || !alive(p) || p.st !== PS.Ground || dmath.hypot(p.x - st.x, p.z - st.z) > ECON.standReach + STAND_SIZE[2] / 2 || Math.abs(p.y - st.y) > 2.5) return false;
     const def = OFFERS[offer]; if (!def) return false;
     const price = offer === Offer.BuyBack && this.h.mode === "solo" ? SOLO_LIFE.price : def.price;
     if (p.cash < price) return false;
@@ -154,7 +155,7 @@ export class Economy {
         if (this.contracts.has(p.team)) return false;
         const t = this.pickTarget(p); if (t < 0) return false;
         const a = this.h.rng.next() * Math.PI * 2, r = this.h.rng.next() * ECON.bounty.circleR * 0.6;
-        this.contracts.set(p.team, { target: t, until: this.h.time + ECON.bounty.s, ox: Math.cos(a) * r, oz: Math.sin(a) * r, cx: 0, cz: 0, next: 0 });
+        this.contracts.set(p.team, { target: t, until: this.h.time + ECON.bounty.s, ox: dmath.cos(a) * r, oz: dmath.sin(a) * r, cx: 0, cz: 0, next: 0 });
         this.refresh(p.team);
         this.h.announce(ANN_ECON.Bounty, p.team & 0xff, t & 0xff);
         return true;
@@ -172,7 +173,7 @@ export class Economy {
     const near: number[] = []; let best = -1, bd = Infinity;
     for (const q of this.h.players) {
       if (q.team === p.team || !alive(q) || q.st === PS.Plane) continue;
-      const d = Math.hypot(q.x - p.x, q.z - p.z);
+      const d = dmath.hypot(q.x - p.x, q.z - p.z);
       if (d < ECON.bounty.range && !near.includes(q.team)) near.push(q.team);
       if (d < bd) { bd = d; best = q.team; }
     }

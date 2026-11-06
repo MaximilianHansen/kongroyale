@@ -13,6 +13,8 @@ import { installShaderRecorder } from "./shader-src";
 import { installDitherChunks } from "./dither";
 import { afterPaint } from "./frame";
 import { flag } from "../flags";
+import { contextEpoch, watchContext } from "./res/restore";
+
 const STREAM_SLICE_MS: readonly number[] = flag("streamslice") ?? [];
 
 // engine fades dissolve instead of scaling — three's shared chunks are patched before the first compile
@@ -41,6 +43,7 @@ export interface WorldCtx {
   shared: Map<string, unknown>;
   /** per-frame hook; dt seconds, t = animation time seconds */
   onUpdate(fn: (dt: number, t: number) => void): void;
+  readonly rebuilding: boolean;
   /** replace the final render (post-processing). Default: renderer.render(scene, camera). */
   setPost(p: PostPipeline): void;
   /** Current main-view height for screen-size selection; independent of active offscreen passes. */
@@ -84,7 +87,7 @@ export class Engine implements WorldCtx {
   /** animation time; frozen in shot mode unless ?t is advanced by the caller */
   time = 0;
   timeScale = 1;
-  private updates: Array<(dt: number, t: number) => void> = [];
+  readonly updates: Array<(dt: number, t: number) => void> = [];
   private failed = new Set<number>();
   private post: PostPipeline | null = null;
   private holds = new Map<number, string>();
@@ -126,6 +129,7 @@ export class Engine implements WorldCtx {
     this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    watchContext(this.canvas, this);
     // ?dpr=N overrides the device pixel ratio (A/B of the fill-rate share). The canvas backing store is the
     // screen's NATIVE pixels (devicePixelRatio, e.g. 1.5 on a 150 %-scaled 4K monitor, 2 on a Retina MacBook; capped at
     // 2 for phones); the "3D resolution" setting scales the scene inside the post chain (TAAU), never the canvas
@@ -145,7 +149,6 @@ export class Engine implements WorldCtx {
     this.occlusion = new PoiOcclusion(!flag("noocc") && !opts.shotMode, this.scene, () => this.terrain);
     onStructure((parent) => { this.structGen++; this.cull.touched(parent); });
     if (this.far.enabled) installShaderRecorder(this.renderer.getContext() as WebGL2RenderingContext);
-    if (flag("texprof")) this.installTexProf();
     // point lights that join the live scene (a streamed POI's braziers) are reported before the next frame renders, so
     // the game's light balancer keeps the light count — part of every lit program's key — constant (no recompiles)
     onStructure((parent, child, added) => {
@@ -195,30 +198,6 @@ export class Engine implements WorldCtx {
   /** ?texprof: every texture upload call (tex(Sub)Image2D/3D, texStorage) with its
    *  size, ms, the boot / stream stage and — for calls over 8 ms — the JS call site. tools: __kr.engine.texProf */
   texProf: Array<{ fn: string; w: number; h: number; d: number; ms: number; stage: string; at: number; site?: string; kind?: string; src?: string }> = [];
-  private installTexProf() {
-    const gl = this.renderer.getContext() as unknown as Record<string, (...a: unknown[]) => unknown>;
-    for (const fn of ["texImage2D", "texSubImage2D", "texImage3D", "texSubImage3D", "texStorage2D", "texStorage3D", "compressedTexImage2D", "compressedTexSubImage2D", "generateMipmap"]) {
-      const f = gl[fn]; if (typeof f !== "function") continue;
-      gl[fn] = (...a: unknown[]) => {
-        const t0 = performance.now();
-        try { return f.apply(gl, a); } finally {
-          const ms = performance.now() - t0;
-          if (ms > 0.5) {
-            const src = a.find((x) => x && typeof x === "object" && "width" in (x as object)) as { width?: number; height?: number } | undefined;
-            const nums = a.filter((x) => typeof x === "number") as number[];
-            const w = src?.width ?? nums[3] ?? 0, h = src?.height ?? nums[4] ?? 0;
-            const kr = (globalThis as { __kr?: { stage?: string; streamStage?: string } }).__kr;
-            const row: (typeof this.texProf)[number] = { fn, w, h, d: fn.includes("3D") ? nums[5] ?? 0 : 1, ms: +ms.toFixed(1), stage: String(kr?.streamStage && kr.streamStage !== "done" ? kr.streamStage : kr?.stage ?? ""), at: Math.round(t0) };
-            // the source kind (image / canvas / bitmap / typed array) and an image's file — which loader to fix
-            const so = a.find((x) => x && typeof x === "object") as { constructor?: { name?: string }; src?: string } | undefined;
-            if (so) { row.kind = so.constructor?.name ?? "?"; if (typeof so.src === "string") row.src = so.src.replace(/^.*\/assets\//, "").slice(0, 80); }
-            if (ms > 8) row.site = (new Error().stack ?? "").split("\n").slice(2, 9).map((l) => l.trim().replace(/^at /, "").replace(/https?:\/\/[^/]+\//, "").replace(/\?[^:]*:/, ":")).join(" < ");
-            this.texProf.push(row); if (this.texProf.length > 4000) this.texProf.shift();
-          }
-        }
-      };
-    }
-  }
   /** the canvas pixel ratio before the 3D-resolution setting (display.ts) */
   dprBase = 1;
   resize() {
@@ -235,13 +214,15 @@ export class Engine implements WorldCtx {
     this.post?.setSize(w, h);
   }
 
+  rebuilding = false;
   onUpdate(fn: (dt: number, t: number) => void) {
     this.updates.push(fn);
     // (hitch attribution: the stage that registered the hook — main.ts sets __kr.stage / streamStage per module build)
     const kr = (globalThis as { __kr?: { stage?: string; streamStage?: string } }).__kr;
     this.updLabels.push(String(kr?.streamStage || kr?.stage || "?"));
   }
-  private updLabels: string[] = [];
+  readonly updLabels: string[] = [];
+
   /** tools set `engine.hitchLog = []` → every frame whose step takes > 30 ms,
    *  or whose interval is > 50 ms, is logged with the costliest update hooks (by registering stage), idle work, render */
   hitchLog: Array<Record<string, unknown>> | null = null;
@@ -315,8 +296,8 @@ export class Engine implements WorldCtx {
   /** idle: link status of every program whose (parallel) compile has finished, a few per frame; never returns true
    *  (programs keep appearing). A failed program is reported through `report` with its info log. */
   auditShaders(report: (where: string, e: unknown) => void, busy?: () => boolean): boolean {
-    if (busy?.()) return false;
     const gl = this.renderer.getContext();
+    if (busy?.() || gl.isContextLost()) return false;
     let n = 0;
     for (const p of (this.renderer.info.programs ?? []) as unknown as Array<{ name?: string; program: WebGLProgram; isReady?: () => boolean }>) {
       if (this.audited.has(p)) continue;
@@ -516,6 +497,7 @@ export class Engine implements WorldCtx {
    * loading screen.
    */
   excursion(setup: (cam: THREE.PerspectiveCamera) => void, dt = 0) {
+    if (this.contextLost) return;
     const cam = this.camera;
     const pos = cam.position.clone(), quat = cam.quaternion.clone(), fov = cam.fov, near = cam.near, far = cam.far;
     try {
@@ -602,6 +584,8 @@ export class Engine implements WorldCtx {
    * the island stream) so the main thread goes to the stream, not to frames nobody sees.
    */
   suspended = false;
+  contextLost = false;
+  restores = 0;
   start() {
     if (this.started) return;
     this.started = true;
@@ -612,7 +596,7 @@ export class Engine implements WorldCtx {
       // window moved to another monitor), used as the default frame cap / dynamic-resolution target
       if (prevRaf) this.sampleRefresh(now - prevRaf);
       prevRaf = now;
-      if (this.suspended) { this.last = now; requestAnimationFrame(loop); return; }
+      if (this.suspended || this.contextLost) { this.last = now; requestAnimationFrame(loop); return; }
       requestAnimationFrame(loop);
       // frame limiter (display settings): draw only when the cap's interval has elapsed (a 0.6 ms slack absorbs vsync
       // jitter; the cadence advances by whole intervals so 144 on a 240 Hz screen alternates 1-2 vsyncs evenly)
@@ -727,15 +711,16 @@ export class Engine implements WorldCtx {
   private emaDt = 0; private emaCpu = 0; private dynHold = 0;
   // GPU time per frame (EXT_disjoint_timer_query_webgl2 when the browser exposes it): the controller then knows the
   // GPU's share instead of inferring it from dt vs CPU
-  private tq: { ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }; free: WebGLQuery[]; pending: WebGLQuery[] } | null | undefined;
+  private tq: { ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }; free: WebGLQuery[]; pending: WebGLQuery[]; epoch: number } | null | undefined;
   /** smoothed GPU ms per frame (0 = unknown) */
   gpuMs = 0;
   private gpuBegin(): WebGLQuery | null {
+    if (this.tq && this.tq.epoch !== contextEpoch()) this.tq = undefined;
     if (this.tq === undefined) {
       const gl = this.renderer.getContext() as WebGL2RenderingContext;
       // (never in view-camera captures; never while a dev tool times its own pass — nested TIME_ELAPSED queries are an error)
       const ext = (this.dynOn || this.dynPin) && !this.shotMode ? gl.getExtension("EXT_disjoint_timer_query_webgl2") : null;
-      this.tq = ext ? { ext, free: [], pending: [] } : null;
+      this.tq = ext ? { ext, free: [], pending: [], epoch: contextEpoch() } : null;
     }
     const t = this.tq; if (!t || (globalThis as { __stormTimer?: unknown }).__stormTimer) return null;
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
@@ -785,29 +770,6 @@ export class Engine implements WorldCtx {
       post.setRenderScale(this.renderScale);
       this.dynHold = 20;   // let the EMA see the new scale before the next step
     }
-  }
-
-  /** synchronous GPU-bound bench: render n frames, forcing completion each frame. Returns ms per frame. */
-  bench(n = 60): { avgMs: number; p95Ms: number; fps: number; calls: number; tris: number } {
-    const gl = this.renderer.getContext();
-    const px = new Uint8Array(4);
-    const times: number[] = [];
-    const info = this.renderer.info;
-    const auto = info.autoReset;
-    info.autoReset = false;
-    let calls = 0, tris = 0;
-    for (let i = 0; i < n; i++) {
-      info.reset();
-      const t0 = performance.now();
-      this.step(1 / 120);
-      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-      times.push(performance.now() - t0);
-      calls += info.render.calls; tris += info.render.triangles;
-    }
-    info.autoReset = auto;
-    times.sort((a, b) => a - b);
-    const avg = times.reduce((a, b) => a + b, 0) / n;
-    return { avgMs: +avg.toFixed(2), p95Ms: +times[Math.floor(n * 0.95)].toFixed(2), fps: Math.round(1000 / avg), calls: Math.round(calls / n), tris: Math.round(tris / n) };
   }
 
   liveFps() {

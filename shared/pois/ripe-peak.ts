@@ -5,6 +5,7 @@
 import type { Box } from "../world/colliders";
 import baked from "./jungle-baked.json";
 import { peakColliders, peakClearings, PEAK, PEAK_C, type Clearing, type JungleBaked } from "./jungle-layout";
+import * as dmath from "../sim/dmath";
 
 export const layout = (baked as unknown as JungleBaked).peak;
 export const colliders: Box[] = peakColliders(layout);
@@ -20,7 +21,7 @@ export const LOOT_SPOTS: { chests: Array<[number, number, number, number]>; floo
   // totems — where the zig-zag climb arrives) is the peak's payoff chest — always on, a Rare Chest (shared/sim/loot-spots.ts
   // LOOT_SPOTS.hero).
   let top = -1, best = Infinity;
-  L.chests.forEach((c, i) => { const dx = c[0] - PEAK_C.x, dz = c[2] - PEAK_C.z, r = Math.hypot(dx, dz); if (r < 50 || r > 80) return;
-    const d = Math.abs(Math.atan2(Math.sin(Math.atan2(dz, dx) - PEAK.fan.c), Math.cos(Math.atan2(dz, dx) - PEAK.fan.c))); if (d < best) { best = d; top = i; } });
+  L.chests.forEach((c, i) => { const dx = c[0] - PEAK_C.x, dz = c[2] - PEAK_C.z, r = dmath.hypot(dx, dz); if (r < 50 || r > 80) return;
+    const d = Math.abs(dmath.atan2(dmath.sin(dmath.atan2(dz, dx) - PEAK.fan.c), dmath.cos(dmath.atan2(dz, dx) - PEAK.fan.c))); if (d < best) { best = d; top = i; } });
   return { ...L, hero: top >= 0 ? [top] : [] };
 })();

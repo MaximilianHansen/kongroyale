@@ -116,7 +116,7 @@ async function makeMats(): Promise<LabMats> {
     return w === false ? m : weather(m, { grime: 0, vary: 0.06, ...(w ?? {}) });
   };
   /** a textured set as material params (+ its tile) */
-  const S = (n: string, ns = 0.5) => { const t = X[n]; return { p: { map: t.map, normalMap: t.normalMap, emissiveMap: t.emissiveMap, normalScale: new THREE.Vector2(ns, ns) } as THREE.MeshStandardMaterialParameters, tile: t.metres }; };
+  const S = (n: string, ns = 0.5) => { const t = X[n]; return { p: { map: t.map, normalScale: new THREE.Vector2(ns, ns), ...(t.normalMap && { normalMap: t.normalMap }), ...(t.emissiveMap && { emissiveMap: t.emissiveMap }) } as THREE.MeshStandardMaterialParameters, tile: t.metres }; };
   const withS = (name: string, set: string, ns: number, p: THREE.MeshStandardMaterialParameters, w?: Parameters<typeof weather>[1] | false) => { const s0 = S(set, ns); return std(name, { ...s0.p, ...p }, s0.tile, w); };
   const dn = X.steel.normalMap;
   const uv01 = <T extends THREE.Material>(m: T): T => { (m.userData as { uv01?: boolean }).uv01 = true; return m; };
