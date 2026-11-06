@@ -445,7 +445,7 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
   const pop = (el: HTMLElement) => { el.classList.remove("tn-play-popin"); void el.offsetWidth; el.classList.add("tn-play-popin"); };
 
   setCsError(null);
-  btnGuide.querySelector("span")!.textContent = guide.firstSession() ? "Learn controls" : "Replay controls";
+  btnGuide.querySelector("span")!.textContent = "Learn controls";
   setTab("play", true);
   server.start();
 
@@ -457,7 +457,7 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
       root.classList.toggle("kr-hide", !v);
       if (v) {
         if (!was) { setTab("play", true); swap(main); }
-        btnGuide.querySelector("span")!.textContent = guide.firstSession() ? "Learn controls" : "Replay controls";
+        btnGuide.querySelector("span")!.textContent = "Learn controls";
         server.start();
       } else { closePops(); server.stop(); }
     },
