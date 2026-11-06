@@ -1,6 +1,7 @@
 import { BULLET_RANGE, HITBOX, PLAYER_H, WATER_LEVEL } from "./const";
 import { makeHit, surfaceIndex, type StaticWorld } from "./world";
 import { TARGET_STRIDE, type ShotResult } from "./hitscan";
+import * as dmath from "./dmath";
 
 const HIT = makeHit();
 const WATER_SURF = surfaceIndex("water");
@@ -46,7 +47,7 @@ export function rayCapsule(ox: number, oy: number, oz: number, dx: number, dy: n
     if (px * px + pz * pz > 1.21) return -1;
   }
   // into the target's frame: rotate by -yaw (forward (-sin yaw, -cos yaw) → -z)
-  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const c = dmath.cos(yaw), s = dmath.sin(yaw);
   const lx = wx * c - wz * s, lz = wx * s + wz * c, ldx = dx * c - dz * s, ldz = dx * s + dz * c, ly = oy - cy;
   const B = HITBOX, cr = h < PLAYER_H - 0.01;
   const hd = B.head;

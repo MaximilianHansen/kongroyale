@@ -19,6 +19,7 @@
 import { GRAVITY, HISTORY_TICKS, PLAYER_H, PLAYER_R, SPRINT, WATER_LEVEL, qpos } from "./const";
 import { Biome } from "../world/map";
 import { makeHit, type StaticWorld } from "./world";
+import * as dmath from "./dmath";
 
 /** what kind of machine a vehicle slot holds: BANANA CO.'s tuk-tuk, or KONG AIR's helicopter (shared/sim/heli.ts) */
 export const enum VKind { Tuk = 0, Heli = 1 }
@@ -268,7 +269,7 @@ export class VehicleSet {
 // ------------------------------------------------------------------------------------------------ pose
 /** body frame → world rotation of pose (yaw, pitch, roll) into M (row-major 3 × 3: world = M · body) */
 export function vehBasis(yaw: number, pitch: number, roll: number, M: Float64Array): Float64Array {
-  const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch), sr = Math.sin(roll), cr = Math.cos(roll);
+  const sy = dmath.sin(yaw), cy = dmath.cos(yaw), sp = dmath.sin(pitch), cp = dmath.cos(pitch), sr = dmath.sin(roll), cr = dmath.cos(roll);
   M[0] = cy * cr + sy * sp * sr; M[1] = -cy * sr + sy * sp * cr; M[2] = sy * cp;
   M[3] = cp * sr; M[4] = cp * cr; M[5] = -sp;
   M[6] = -sy * cr + cy * sp * sr; M[7] = sy * sr + cy * sp * cr; M[8] = cy * cp;
@@ -279,7 +280,7 @@ const SECTION: ReadonlyArray<readonly [number, number]> = [[-TUK.HW - 0.14, 0], 
 /** how far the origin rises so a body leaning `tip` rad rests ON the ground (its lowest corner at road level) */
 export function tipLift(tip: number): number {
   if (tip === 0) return 0;
-  const s = Math.sin(tip), c = Math.cos(tip);
+  const s = dmath.sin(tip), c = dmath.cos(tip);
   let lo = 0;
   for (const [x, y] of SECTION) { const h = x * s + y * c; if (h < lo) lo = h; }
   return -lo;
@@ -288,7 +289,7 @@ export function tipLift(tip: number): number {
 export function vehPose(v: Vehicle, out: Float64Array | number[]): Float64Array | number[] {
   if (v.kind === VKind.Heli) { out[0] = v.x; out[1] = v.y; out[2] = v.z; out[3] = v.yaw; out[4] = v.gPitch; out[5] = wrapPi(v.gRoll); return out; }
   let lift = tipLift(v.tip);
-  if (v.st === VS.Righting) lift += Math.sin(Math.PI * Math.min(1, v.rightT / TUK.RIGHT_S)) * 0.4;   // the heave
+  if (v.st === VS.Righting) lift += dmath.sin(Math.PI * Math.min(1, v.rightT / TUK.RIGHT_S)) * 0.4;   // the heave
   out[0] = v.x; out[1] = v.y + lift; out[2] = v.z; out[3] = v.yaw; out[4] = v.gPitch; out[5] = wrapPi(v.gRoll + v.tip);
   return out;
 }
@@ -366,8 +367,8 @@ function under(world: StaticWorld, x: number, y: number, z: number): number {
 }
 /** the three contacts under the wheels of v as it stands (yaw, y) → WH */
 function wheels(v: Vehicle, world: StaticWorld) {
-  const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), fx = -sy, fz = -cy, rx = cy, rz = -sy;
-  const dyF = Math.sin(v.gPitch) * TUK.FRONT, dyR = -Math.sin(v.gPitch) * TUK.REAR, dyS = Math.sin(v.gRoll) * TUK.HW;
+  const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), fx = -sy, fz = -cy, rx = cy, rz = -sy;
+  const dyF = dmath.sin(v.gPitch) * TUK.FRONT, dyR = -dmath.sin(v.gPitch) * TUK.REAR, dyS = dmath.sin(v.gRoll) * TUK.HW;
   const hF = under(world, v.x + fx * TUK.FRONT, v.y + dyF, v.z + fz * TUK.FRONT); const surf = USURF;
   const hL = under(world, v.x - fx * TUK.REAR - rx * TUK.HW, v.y + dyR - dyS, v.z - fz * TUK.REAR - rz * TUK.HW);
   const hR = under(world, v.x - fx * TUK.REAR + rx * TUK.HW, v.y + dyR + dyS, v.z - fz * TUK.REAR + rz * TUK.HW);
@@ -377,8 +378,8 @@ function wheels(v: Vehicle, world: StaticWorld) {
   const hr = (l + r) * 0.5;
   WH[0] = f; WH[1] = l; WH[2] = r;
   WH[3] = top < -1e8 ? -1e9 : hr + (f - hr) * (TUK.REAR / TUK.WHEELBASE);
-  WH[4] = Math.max(-1.1, Math.min(1.1, Math.atan2(f - hr, TUK.WHEELBASE)));
-  WH[5] = Math.max(-1.1, Math.min(1.1, Math.atan2(r - l, 2 * TUK.HW)));
+  WH[4] = Math.max(-1.1, Math.min(1.1, dmath.atan2(f - hr, TUK.WHEELBASE)));
+  WH[5] = Math.max(-1.1, Math.min(1.1, dmath.atan2(r - l, 2 * TUK.HW)));
   WH[6] = surf; WH[7] = Math.min(f, l, r);
 }
 /** grip × / rolling resistance × / top speed × by terrain biome (shared/world/map.ts Biome); boxes are road */
@@ -399,7 +400,7 @@ export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: nu
   if (v.st === VS.Righting) { stepRighting(v, world, dt); return; }
   if (v.st === VS.Tipped) { stepTumble(v, world, dt); return; }
 
-  let sy = Math.sin(v.yaw), cy = Math.cos(v.yaw);
+  let sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw);
   let vf = -v.vx * sy - v.vz * cy;
   const spd = Math.abs(vf);
   // ---- steering: the lock narrows with speed; the bars follow the stick (and centre a little faster than they turn)
@@ -408,15 +409,15 @@ export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: nu
   v.steer += ds > maxS ? maxS : ds < -maxS ? -maxS : ds;
   const grounded = !v.air;
   if (grounded) {
-    let w = (vf * Math.tan(v.steer)) / TUK.WHEELBASE;
+    let w = (vf * dmath.tan(v.steer)) / TUK.WHEELBASE;
     if (hb && spd > 3) w *= 1.3;                                                  // handbrake: the tail steps out
     if (v.tip !== 0) w *= 1 - 0.5 * Math.min(1, Math.abs(v.tip) / 0.6);          // on two wheels the front bites less
     v.yaw = wrapPi(v.yaw + w * dt);
-    sy = Math.sin(v.yaw); cy = Math.cos(v.yaw);
+    sy = dmath.sin(v.yaw); cy = dmath.cos(v.yaw);
   } else if (str !== 0) {
     // in the air the bars swing the body round its own speed (a hop is a chance to set it down crooked)
     v.yaw = wrapPi(v.yaw - str * TUK.AIR_YAW * dt);
-    sy = Math.sin(v.yaw); cy = Math.cos(v.yaw);
+    sy = dmath.sin(v.yaw); cy = dmath.cos(v.yaw);
   }
   // the hop: the driver throws its weight up — all three wheels off the road
   if (v.hopT > 0) v.hopT = Math.max(0, v.hopT - dt);
@@ -448,7 +449,7 @@ export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: nu
       if (vf > 0.3) { a = TUK.BRAKE * thr; v.flags |= VF.BRAKE; }
       else { a = TUK.REV_ACC * thr * Math.max(0, 1 + vf / (TUK.REV_MAX * wade)); v.flags |= VF.REV; }
     }
-    a -= TUK.G_SLOPE * Math.sin(v.gPitch);
+    a -= TUK.G_SLOPE * dmath.sin(v.gPitch);
     vf += a * dt;
     // resistances stop it, they never push it backwards (a parked tuk-tuk holds on a hill)
     // (under power the engine's own curve is the whole story: it reaches its top speed; faster than that — downhill,
@@ -462,14 +463,14 @@ export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: nu
   }
   // ---- roll-over: the tyres push at the road, the weight rides H_CG above it; a side slope leans on it too
   if (grounded) {
-    const drive = (lat + TUK.G_ROLL * Math.sin(v.gRoll)) * TUK.H_CG, cg = Math.cos(v.gRoll);
+    const drive = (lat + TUK.G_ROLL * dmath.sin(v.gRoll)) * TUK.H_CG, cg = dmath.cos(v.gRoll);
     if (v.tip === 0 && v.tipV === 0) {
       const hold = TUK.G_ROLL * cg * TUK.HW;
       if (drive > hold) v.tipV = 1e-9; else if (drive < -hold) v.tipV = -1e-9;     // a wheel leaves the road
     }
     if (v.tip !== 0 || v.tipV !== 0) {
       const s = v.tip > 0 || (v.tip === 0 && v.tipV > 0) ? 1 : -1, u = Math.abs(v.tip);
-      const acc = (drive * s * Math.cos(u) - TUK.G_ROLL * (cg * TUK.HW * Math.cos(u) - TUK.H_CG * Math.sin(u))) / TUK.K2;
+      const acc = (drive * s * dmath.cos(u) - TUK.G_ROLL * (cg * TUK.HW * dmath.cos(u) - TUK.H_CG * dmath.sin(u))) / TUK.K2;
       let uv = v.tipV * s + acc * dt, un = u + uv * dt;
       if (un <= 0) {                                                              // back on three wheels
         if (uv < -1.1) v.evt |= VE.SLAM;
@@ -501,27 +502,27 @@ function move(v: Vehicle, world: StaticWorld, dt: number) {
 /** how much of a glance a tree contact is: `cosT` = cos of the angle between the motion and straight into
  *  the trunk → 0 square on (≤ GLANCE_DEG[0]°) … 1 (≥ GLANCE_DEG[1]°), smoothstep between */
 function glance(cosT: number): number {
-  const th = Math.acos(cosT > 1 ? 1 : cosT < -1 ? -1 : cosT) * (180 / Math.PI), [a, b] = TUK.GLANCE_DEG;
+  const th = dmath.acos(cosT > 1 ? 1 : cosT < -1 ? -1 : cosT) * (180 / Math.PI), [a, b] = TUK.GLANCE_DEG;
   const t = (th - a) / (b - a);
   return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
 }
 function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
-  const x0 = v.x, z0 = v.z, sy0 = Math.sin(v.yaw), cy0 = Math.cos(v.yaw);
+  const x0 = v.x, z0 = v.z, sy0 = dmath.sin(v.yaw), cy0 = dmath.cos(v.yaw);
   v.x += v.vx * dt; v.z += v.vz * dt;
   // the sideways slide it came in with (+ = to its right), and how much of it the walls stopped
   const slide = v.vx * cy0 - v.vz * sy0, ahead = -v.vx * sy0 - v.vz * cy0;
   let impact = 0, hit = false, trip = 0, shove = 0, glanced = false;
   for (let k = 0; k < 2; k++) {
     const off = k === 0 ? TUK.C_FRONT : TUK.C_REAR, r = k === 0 ? TUK.R_FRONT : TUK.R_REAR;
-    const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw);
+    const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw);
     const cx = v.x + sy * off, cz = v.z + cy * off;
-    const by = v.y - Math.sin(v.gPitch) * off + 0.06;
+    const by = v.y - dmath.sin(v.gPitch) * off + 0.06;
     // the kong's own mover (world.resolveMove), with this circle's motion of the tick: walls push it out, a gap too
     // narrow for it takes the move back, and a circle that somehow starts INSIDE something glides out a little per tick
     // (never wedged for good)
     world.velY = 0; world.wallHit = false; world.headBump = false; world.wallRound = false; world.wallFlat = false; world.roundD = -1;
     world.resolveMove(cx, by, cz, cx - (x0 + sy0 * off), 0, cz - (z0 + cy0 * off), r, TUK.CAP_H, true);
-    const px = world.P[0] - cx, pz = world.P[2] - cz, pl = Math.hypot(px, pz);
+    const px = world.P[0] - cx, pz = world.P[2] - cz, pl = dmath.hypot(px, pz);
     if (pl < 1e-7) continue;
     v.x += px; v.z += pz;
     const nx = px / pl, nz = pz / pl;
@@ -531,7 +532,7 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
     // held against it by the engine: scrub round the way the front wheel points (once per tick) — the driver's turn
     // wins over the wall's
     if (DRIVE !== 0 && v.steer !== 0 && (nx * sy + nz * cy) * DRIVE > 0.25 * Math.abs(DRIVE)) {
-      const scrub = (TUK.SCRAPE_V * Math.tan(v.steer) / TUK.WHEELBASE) * DRIVE * dt;
+      const scrub = (TUK.SCRAPE_V * dmath.tan(v.steer) / TUK.WHEELBASE) * DRIVE * dt;
       turn = turn * scrub < 0 ? scrub : turn + scrub; DRIVE = 0;
     }
     v.yaw = wrapPi(v.yaw + turn);
@@ -542,12 +543,12 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
       // a TREE (only trees touched) caught off the nose: g 0 = square on — it stops as on any wall — … 1 = a
       // glance: the motion into the trunk stops, most of the speed runs on, swung away from the trunk with the body. The
       // angle is the trunk's own: from its axis (the boxes' faces of a disk union only point 4 ways)
-      const sp = Math.hypot(v.vx, v.vz);
+      const sp = dmath.hypot(v.vx, v.vz);
       let g = 0, rnx = nx, rnz = nz;
       // (a slide round a trunk can push the circle out further than it moved this tick — the solver calls that a
       // depenetration glide; for a trunk it is still the slide)
       if (!glanced && v.st === VS.Ok && world.wallRound && !world.wallFlat && sp > 0.5 && world.roundD >= 0) {   // (on its wheels only)
-        const qx = world.P[0] - world.roundX, qz = world.P[2] - world.roundZ, ql = Math.hypot(qx, qz);
+        const qx = world.P[0] - world.roundX, qz = world.P[2] - world.roundZ, ql = dmath.hypot(qx, qz);
         if (ql > 1e-6) { rnx = qx / ql; rnz = qz / ql; }
         const rvn = v.vx * rnx + v.vz * rnz;
         g = rvn < 0 ? glance(-rvn / sp) : 1;
@@ -556,11 +557,11 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
         glanced = true;
         const rx = v.vx - nx * vn * (1 + TUK.BOUNCE), rz = v.vz - nz * vn * (1 + TUK.BOUNCE);   // what a wall would leave
         const rvn = Math.min(0, v.vx * rnx + v.vz * rnz);
-        const ux = v.vx / sp, uz = v.vz / sp, tx = v.vx - rnx * rvn, tz = v.vz - rnz * rvn, tl = Math.hypot(tx, tz);
+        const ux = v.vx / sp, uz = v.vz / sp, tx = v.vx - rnx * rvn, tz = v.vz - rnz * rvn, tl = dmath.hypot(tx, tz);
         // swing the motion toward the trunk's tangent (≤ GLANCE_TURN this tick): +a = counter-clockwise in x-z
         const cu = tl > 1e-6 ? Math.max(-1, Math.min(1, (ux * tx + uz * tz) / tl)) : 1;
-        const a = Math.min(Math.acos(cu), TUK.GLANCE_TURN) * (ux * tz - uz * tx >= 0 ? 1 : -1) * g;
-        const ca = Math.cos(a), sa = Math.sin(a), keep = sp * (1 - (1 - TUK.GLANCE_KEEP) * g);
+        const a = Math.min(dmath.acos(cu), TUK.GLANCE_TURN) * (ux * tz - uz * tx >= 0 ? 1 : -1) * g;
+        const ca = dmath.cos(a), sa = dmath.sin(a), keep = sp * (1 - (1 - TUK.GLANCE_KEEP) * g);
         const gx = (ux * ca - uz * sa) * keep, gz = (ux * sa + uz * ca) * keep;
         v.vx = rx + (gx - rx) * g; v.vz = rz + (gz - rz) * g;
         v.yaw = wrapPi(v.yaw - a);                                                     // (the motion turned by a ↔ yaw by −a)
@@ -577,7 +578,7 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
     // would roll onto its side). So what is left runs along the spine — plus the slide it came in with, unless the wall
     // stood in its way: then that slide is over, and a quick one trips it (it rocks the way it was going; a
     // handbrake slide into a kerb at speed puts it over).
-    const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), keep = trip !== 0 ? 0 : slide, vl = v.vx * cy - v.vz * sy;
+    const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), keep = trip !== 0 ? 0 : slide, vl = v.vx * cy - v.vz * sy;
     v.vx += cy * (keep - vl); v.vz -= sy * (keep - vl);
     if (!v.air && v.st === VS.Ok) {
       if (Math.abs(trip) > TUK.TRIP_V) v.tipV -= TUK.TRIP_K * trip;
@@ -603,7 +604,7 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
       const hit = -v.vy;
       v.y = yG; v.vy = 0; v.air = false;
       // set down crooked at speed (a hop with the bars over): the tyres dig in and it rocks the way it slides
-      if (v.st === VS.Ok) { const sl = v.vx * Math.cos(v.yaw) - v.vz * Math.sin(v.yaw); if (Math.abs(sl) > TUK.TRIP_V) v.tipV -= TUK.LAND_TRIP * (sl - Math.sign(sl) * TUK.TRIP_V); }
+      if (v.st === VS.Ok) { const sl = v.vx * dmath.cos(v.yaw) - v.vz * dmath.sin(v.yaw); if (Math.abs(sl) > TUK.TRIP_V) v.tipV -= TUK.LAND_TRIP * (sl - Math.sign(sl) * TUK.TRIP_V); }
       if (hit > 3.5) { v.evt |= VE.LAND; if (hit > v.crashV) v.crashV = hit; }   // (a hop's landing thumps too)
     }
   } else {
@@ -614,10 +615,10 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
       // a kerb is not a ramp: the wheels step up it, they do not launch off it (else a 25 cm step at full speed throws
       // it 4 m into the air). The climb its attitude had settled into (a ramp it has been on for a moment — not the
       // jolt of this tick's wheel contacts) may carry it off a crest; the rest of a sudden rise is a hop
-      const ramp = Math.hypot(v.vx, v.vz) * (Math.abs(Math.sin(v.gPitch)) + 0.5 * Math.abs(Math.sin(v.gRoll))) + TUK.KERB_HOP;
+      const ramp = dmath.hypot(v.vx, v.vz) * (Math.abs(dmath.sin(v.gPitch)) + 0.5 * Math.abs(dmath.sin(v.gRoll))) + TUK.KERB_HOP;
       if (vy > ramp) vy = ramp;
       v.vy = vy > 14 ? 14 : vy < -30 ? -30 : vy; v.y = yG;
-      const k = 1 - Math.exp(-dt * 14);
+      const k = 1 - dmath.exp(-dt * 14);
       v.gPitch += (WH[4] - v.gPitch) * k; v.gRoll += (WH[5] - v.gRoll) * k;
     } else { v.air = true; v.y = yB; v.vy -= GRAVITY * dt; }
   }
@@ -626,16 +627,16 @@ function moveIn(v: Vehicle, world: StaticWorld, dt: number) {
 /** on its side or its roof: it slides, the slope pulls it, sideways speed keeps it rolling; it comes to rest on a side,
  * on the roof — or, after a whole turn, back on its wheels */
 function stepTumble(v: Vehicle, world: StaticWorld, dt: number) {
-  const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), rx = cy, rz = -sy;
+  const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), rx = cy, rz = -sy;
   if (!v.air) {
     if (v.surf === 255) { const n = world.terrain.normal(v.x, v.z, N3); v.vx += n[0] * TUK.G_SLOPE * dt; v.vz += n[2] * TUK.G_SLOPE * dt; }
     // (a body that is rolling loses speed half as fast as one scraping along on its side)
-    const sp = Math.hypot(v.vx, v.vz), f = (Math.abs(v.vx * rx + v.vz * rz) > TUK.ROLL_V ? TUK.SLIDE * 0.5 : TUK.SLIDE) * dt;
+    const sp = dmath.hypot(v.vx, v.vz), f = (Math.abs(v.vx * rx + v.vz * rz) > TUK.ROLL_V ? TUK.SLIDE * 0.5 : TUK.SLIDE) * dt;
     if (sp <= f) { v.vx = 0; v.vz = 0; } else { const k = 1 - f / sp; v.vx *= k; v.vz *= k; }
   }
   const vl = v.vx * rx + v.vz * rz, rolling = Math.abs(vl) > TUK.ROLL_V;
   const q0 = Math.round(v.tip / HALF_PI);
-  if (rolling) v.tipV += (-vl / TUK.ROLL_R - v.tipV) * (1 - Math.exp(-dt * 7));
+  if (rolling) v.tipV += (-vl / TUK.ROLL_R - v.tipV) * (1 - dmath.exp(-dt * 7));
   else v.tipV += ((q0 * HALF_PI - v.tip) * 70 - v.tipV * 11) * dt;                 // settle onto the nearest rest
   v.tip += v.tipV * dt;
   const q1 = Math.round(v.tip / HALF_PI);
@@ -665,7 +666,7 @@ export function restVehicle(v: Vehicle) {
 }
 /** heave a tuk-tuk lying still back onto its wheels; false = it is not lying down, or still sliding */
 export function flipVehicle(v: Vehicle): boolean {
-  if (v.kind !== VKind.Tuk || v.st !== VS.Tipped || Math.hypot(v.vx, v.vz) > TUK.FLIP_V) return false;
+  if (v.kind !== VKind.Tuk || v.st !== VS.Tipped || dmath.hypot(v.vx, v.vz) > TUK.FLIP_V) return false;
   v.st = VS.Righting; v.rightT = 0; v.rightFrom = wrapPi(v.tip); v.tipV = 0; v.vx = v.vz = 0;
   return true;
 }
@@ -710,7 +711,7 @@ export function enterVehicle(p: Rider, v: Vehicle, seat: number) {
 /** a spot beside v where a kong can stand: body-frame (right, back) tried in the seat's order, then the roof */
 function exitSpot(p: Rider, v: Vehicle, world: StaticWorld, out: Float64Array): void {
   const SP = specOf(v.kind), SEATS = SP.SEATS, EXITS = SP.EXITS, heli = v.kind === VKind.Heli;
-  const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), rx = cy, rz = -sy, bx = sy, bz = cy;
+  const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), rx = cy, rz = -sy, bx = sy, bz = cy;
   const lift = heli ? 0 : tipLift(v.tip);
   const ex = v.x + rx * SEATS[p.seat][0] + bx * SEATS[p.seat][2], ez = v.z + rz * SEATS[p.seat][0] + bz * SEATS[p.seat][2], ey = v.y + lift + 1.3;
   // a helicopter in the air: out of the door, into the air beside it (the kong falls — or pulls its chute), well
@@ -750,10 +751,10 @@ export function exitVehicle(p: Rider, v: Vehicle | null, world: StaticWorld, thr
     p.vx = v.vx; p.vz = v.vz; p.vy = Math.max(0, v.vy);
     // out of a flying helicopter: all of its velocity (one coming down keeps coming down beside the kong, not
     // onto it) and a push away from the door
-    if (AIR_OUT !== 0) { const s = AIR_OUT * BAIL_PUSH; p.vy = v.vy; p.vx += Math.cos(v.yaw) * s; p.vz -= Math.sin(v.yaw) * s; }
-    if (thrown) { const dx = p.x - v.x, dz = p.z - v.z, d = Math.hypot(dx, dz) || 1; p.vx += (dx / d) * 3.5; p.vz += (dz / d) * 3.5; p.vy += 5; }
+    if (AIR_OUT !== 0) { const s = AIR_OUT * BAIL_PUSH; p.vy = v.vy; p.vx += dmath.cos(v.yaw) * s; p.vz -= dmath.sin(v.yaw) * s; }
+    if (thrown) { const dx = p.x - v.x, dz = p.z - v.z, d = dmath.hypot(dx, dz) || 1; p.vx += (dx / d) * 3.5; p.vz += (dz / d) * 3.5; p.vy += 5; }
     // nobody left at the bars: a slow tuk-tuk is left parked, a fast one rolls on by itself
-    if (v.seats[0] < 0 && Math.hypot(v.vx, v.vz) < 2.5) v.flags |= VF.PARK;
+    if (v.seats[0] < 0 && dmath.hypot(v.vx, v.vz) < 2.5) v.flags |= VF.PARK;
     v.idleT = 0;
   }
   p.st = 0; p.veh = -1; p.seat = 0; p.grounded = false; p.crouch = false; p.sprint = false; p.swim = false; p.under = false; p.slope = false;
@@ -781,10 +782,10 @@ export function takeSeat(p: Rider, v: Vehicle, k: number): boolean {
 
 /** distance from (x, z) to v's footprint (0 inside) — the E reach, and who a blast / a bumper touches */
 export function footDist(v: Vehicle, x: number, z: number): number {
-  const SP = specOf(v.kind), sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), dx = x - v.x, dz = z - v.z;
+  const SP = specOf(v.kind), sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), dx = x - v.x, dz = z - v.z;
   const lx = dx * cy - dz * sy, lz = dx * sy + dz * cy - SP.FOOT_Z;
   const ox = Math.abs(lx) - SP.FOOT_HW, oz = Math.abs(lz) - SP.FOOT_HL;
-  return Math.hypot(Math.max(0, ox), Math.max(0, oz));
+  return dmath.hypot(Math.max(0, ox), Math.max(0, oz));
 }
 /**
  * The tuk-tuk an E press of a kong on foot at (x, y, z) looking along (dx, dy, dz) from its eye would act on: the one
@@ -822,7 +823,7 @@ export function pushKong(set: VehicleSet, p: Walker, h: number): boolean {
     if (dx * dx + dz * dz > (heli ? 20 : 9.5)) continue;
     const base = v.y + (heli ? 0 : tipLift(v.tip)), top = base + (v.st === VS.Tipped ? 1.75 : SP.ROOF);
     if (p.y >= top || p.y + h <= base + 0.2) continue;
-    const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw);
+    const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw);
     const lx = dx * cy - dz * sy, lz = dx * sy + dz * cy - SP.FOOT_Z;
     const ox = Math.abs(lx) - SP.FOOT_HW - PLAYER_R, oz = Math.abs(lz) - SP.FOOT_HL - PLAYER_R;
     if (ox >= 0 || oz >= 0) continue;
@@ -859,7 +860,7 @@ export function findParking(world: StaticWorld, ax: number, az: number, reach: n
   for (let ring = 0; ring * 2.5 <= reach; ring++) {
     const r = ring * 2.5, n = ring === 0 ? 1 : Math.max(8, Math.round((TAU * r) / 3));
     for (let k = 0; k < n; k++) {
-      const a = yawHint + (k / n) * TAU, x = ax + Math.cos(a) * r, z = az + Math.sin(a) * r;
+      const a = yawHint + (k / n) * TAU, x = ax + dmath.cos(a) * r, z = az + dmath.sin(a) * r;
       if (T.height(x, z) < 1.2 || T.normal(x, z, N3)[1] < 0.985) continue;
       cand.push([x, z, r + (pull > 0 && !onRoad(world, x, z) ? pull : 0)]);
     }
@@ -875,7 +876,7 @@ export function findParking(world: StaticWorld, ax: number, az: number, reach: n
     // nose toward the most room (a 9 m probe at bumper + roof-rail height) — a rank: down the road first
     let bestYaw = 0, bestFree = -1, bestRun = -1, open = 0;
     for (let h = 0; h < HEADS; h++) {
-      const yaw = yawHint + (h / HEADS) * TAU, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      const yaw = yawHint + (h / HEADS) * TAU, fx = -dmath.sin(yaw), fz = -dmath.cos(yaw);
       let free = 9, run = 0;
       for (const hy of [0.5, 1.5]) { world.raycast(x, y + hy, z, fx, 0, fz, 9, GH, false); if (GH.hit && GH.t < free) free = GH.t; }
       if (free >= 5.5) open++;
@@ -885,7 +886,7 @@ export function findParking(world: StaticWorld, ax: number, az: number, reach: n
     }
     if (open * 2 < HEADS || bestFree < 7) continue;
     // its own footprint: both circles stand free and level where it would park
-    const sy = Math.sin(bestYaw), cy = Math.cos(bestYaw);
+    const sy = dmath.sin(bestYaw), cy = dmath.cos(bestYaw);
     let ok = true;
     for (let c = 0; c < 2 && ok; c++) {
       const off = c === 0 ? TUK.C_FRONT : TUK.C_REAR, rr = (c === 0 ? TUK.R_FRONT : TUK.R_REAR) + 0.25;

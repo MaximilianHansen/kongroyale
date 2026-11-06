@@ -7,6 +7,7 @@ import type { Box } from "../world/colliders";
 import { type InteriorRoom } from "./interior-kit";
 import { poiById } from "../world/map";
 import type { FallsResolved } from "./jungle-falls";
+import * as dmath from "../sim/dmath";
 
 export type H = (x: number, z: number) => number;
 export type Clearing = { x: number; z: number; r: number } | { x: number; z: number; hx: number; hz: number; yaw?: number };
@@ -121,7 +122,7 @@ const laneDist = (x: number, z: number) => {
   let best = Infinity;
   for (const L of TEMPLE_LANES) for (let i = 1; i < L.length; i++) {
     const [ax, az] = L[i - 1], [bx, bz] = L[i], dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-    best = Math.min(best, Math.hypot(x - ax - dx * t, z - az - dz * t));
+    best = Math.min(best, dmath.hypot(x - ax - dx * t, z - az - dz * t));
   }
   return best;
 };
@@ -136,12 +137,12 @@ export function templeLaneClusters(seed: number, r0: number, r1: number, step: n
   TEMPLE_LANES.forEach((L, li) => {
     let side = li % 2 ? 1 : -1, next = 0, acc = 0;
     for (let i = 1; i < L.length; i++) {
-      const [ax, az] = L[i - 1], [bx, bz] = L[i], seg = Math.hypot(bx - ax, bz - az), tx = (bx - ax) / seg, tz = (bz - az) / seg;
+      const [ax, az] = L[i - 1], [bx, bz] = L[i], seg = dmath.hypot(bx - ax, bz - az), tx = (bx - ax) / seg, tz = (bz - az) / seg;
       for (let u = 0; u < seg; u += 1) {
-        const x = ax + tx * u, z = az + tz * u, r = Math.hypot(x, z); acc += 1;
+        const x = ax + tx * u, z = az + tz * u, r = dmath.hypot(x, z); acc += 1;
         if (r < r0 || r > r1 || acc < next) continue;
         const off = 6 + rnd() * 1.5, cx = x - tz * side * off, cz = z + tx * side * off;     // the trail's left / right
-        const yaw = Math.atan2(-tz, tx) + (rnd() - 0.5) * 0.3, ux = Math.cos(yaw), uz = -Math.sin(yaw), nx = Math.sin(yaw), nz = Math.cos(yaw);
+        const yaw = dmath.atan2(-tz, tx) + (rnd() - 0.5) * 0.3, ux = dmath.cos(yaw), uz = -dmath.sin(yaw), nx = dmath.sin(yaw), nz = dmath.cos(yaw);
         const len = 4.2 + rnd() * 1.0, h = 1.6 + rnd() * 0.3, end = rnd() < 0.5 ? 1 : -1, pcs: LanePiece[] = [{ wall: [cx, cz, len, h, yaw] }];
         // the second piece sits on the side AWAY from the trail (the trail stays clear)
         const away = ((cx - x) * nx + (cz - z) * nz) >= 0 ? 1 : -1;
@@ -159,7 +160,7 @@ export function templeLaneClusters(seed: number, r0: number, r1: number, step: n
 /** footprint test points of a lane piece (centre + ends) for the keep-out / spacing checks */
 const piecePts = (p: LanePiece): Array<[number, number, number]> => {
   if (p.stela) return [[p.stela[0], p.stela[1], p.stela[2] * 1.2]];
-  const [x, z, len, , yaw] = p.wall!, ux = Math.cos(yaw), uz = -Math.sin(yaw);
+  const [x, z, len, , yaw] = p.wall!, ux = dmath.cos(yaw), uz = -dmath.sin(yaw);
   return [[x, z, 0.5], [x + ux * len / 2, z + uz * len / 2, 0.5], [x - ux * len / 2, z - uz * len / 2, 0.5]];
 };
 (function templeOuterCover() {
@@ -170,10 +171,10 @@ const piecePts = (p: LanePiece): Array<[number, number, number]> => {
   for (const t of T.towers) pts.push([t.x, t.z, t.w / 2]);
   const keep = (x: number, z: number) => (Math.abs(x) < 8.5 && z > -26 && z < 46)                                           // the long lane to the portal
     || (Math.abs(x - P.cx) < half + 4.5 && Math.abs(z - P.cz) < half + 4.5)                                                    // the pyramid skirt + its stairs
-    || T.towers.some((t) => Math.hypot(x - t.x, z - (t.z + t.w / 2 + 2)) < 4.5)                                              // tower doors
-    || Math.hypot(x, z) < T.plazaR + 4 || Math.hypot(x, z) > 91;                                                                // the plaza (hand cover) / the pad
+    || T.towers.some((t) => dmath.hypot(x - t.x, z - (t.z + t.w / 2 + 2)) < 4.5)                                              // tower doors
+    || dmath.hypot(x, z) < T.plazaR + 4 || dmath.hypot(x, z) > 91;                                                                // the plaza (hand cover) / the pad
   const ok = (pcs: LanePiece[]) => pcs.every((p) => piecePts(p).every(([x, z, r]) => !keep(x, z) && laneDist(x, z) > 3.2 + r
-    && pts.every(([px, pz, pr]) => Math.hypot(px - x, pz - z) - pr - r > 3.5)));
+    && pts.every(([px, pz, pr]) => dmath.hypot(px - x, pz - z) - pr - r > 3.5)));
   for (const pcs of templeLaneClusters(90210, 50, 90, 17, ok)) for (const p of pcs) {
     if (p.wall) { T.walls.push(p.wall); pts.push([p.wall[0], p.wall[1], p.wall[2] / 2]); }
     if (p.stela) { T.columns.push(p.stela); pts.push([p.stela[0], p.stela[1], p.stela[2]]); }
@@ -193,14 +194,14 @@ export function resolveTempleOutskirts(h: (x: number, z: number) => number): Out
     const wall = !!p.wall, [x, z, len] = wall ? p.wall! : p.stela!, ht = wall ? p.wall![3] : p.stela![3], yaw = wall ? p.wall![4] : 0;
     // the ground under the footprint (corners + centre); gentle ground only: a stub across a slope leaves a notch you can't
     // climb out of
-    const c = Math.cos(yaw), s = Math.sin(yaw), hl = wall ? len / 2 : len * 0.9, hd = wall ? 0.45 : len * 0.9;
+    const c = dmath.cos(yaw), s = dmath.sin(yaw), hl = wall ? len / 2 : len * 0.9, hd = wall ? 0.45 : len * 0.9;
     const gs = [[0, 0], [hl, hd], [-hl, hd], [hl, -hd], [-hl, -hd]].map(([u, v]) => g(x + u * c + v * s, z - u * s + v * c));
     const lo = Math.min(...gs), hi = Math.max(...gs);
     if (hi - lo > 0.7) return null;
     return [x, z, wall ? 0 : 1, wall ? Math.round(len * 100) / 100 : len, Math.round(ht * 100) / 100, Math.round(yaw * 100) / 100, Math.round((lo - 0.3) * 100) / 100, Math.round((hi + ht) * 100) / 100];
   };
-  const ok = (pcs: LanePiece[]) => pcs.every((p) => piecePts(p).every(([x, z, r]) => laneDist(x, z) > 3.2 + r && Math.hypot(x, z) <= 136
-    && pts.every(([px, pz, pr]) => Math.hypot(px - x, pz - z) - pr - r > 3.5))) && pcs.every((p) => seat(p) !== null);
+  const ok = (pcs: LanePiece[]) => pcs.every((p) => piecePts(p).every(([x, z, r]) => laneDist(x, z) > 3.2 + r && dmath.hypot(x, z) <= 136
+    && pts.every(([px, pz, pr]) => dmath.hypot(px - x, pz - z) - pr - r > 3.5))) && pcs.every((p) => seat(p) !== null);
   for (const pcs of templeLaneClusters(31337, 96, 134, 19, ok)) for (const p of pcs) {
     out.push(seat(p)!); const o = out[out.length - 1]; pts.push([o[0], o[1], o[2] === 0 ? o[3] / 2 : o[3]]);
   }
@@ -388,9 +389,9 @@ export function templeHeadCollar(): Array<[number, number, number, number, numbe
   const T = TEMPLE, H = T.head, rnd = mulberry(1717), out: Array<[number, number, number, number, number, number, number]> = [];
   const top = T.tiers[4].y0 + T.tiers[4].h, half = T.tiers[4].half;
   for (let k = 0; k < 14; k++) {
-    const a = (k / 14) * Math.PI * 2, rx = H.width * 0.5 + 0.6, rz = H.depth * 0.5 + 0.6, x = T.pyr.cx + Math.cos(a) * rx, z = T.pyr.cz + Math.sin(a) * rz;
+    const a = (k / 14) * Math.PI * 2, rx = H.width * 0.5 + 0.6, rz = H.depth * 0.5 + 0.6, x = T.pyr.cx + dmath.cos(a) * rx, z = T.pyr.cz + dmath.sin(a) * rz;
     if (Math.abs(x) > half - 1 || Math.abs(z - T.pyr.cz) > half - 1) continue;
-    if (Math.sin(a) > 0.6 && Math.abs(Math.cos(a)) < 0.45) continue;   // keep the chin clear
+    if (dmath.sin(a) > 0.6 && Math.abs(dmath.cos(a)) < 0.45) continue;   // keep the chin clear
     const w = 2.4 + rnd() * 2.2, hh = 1.6 + rnd() * 2.6, d = 2.2 + rnd(), yaw = -a + (rnd() - 0.5) * 0.2;
     out.push([w, hh, d, x, top + hh / 2 - 0.3, z, yaw]);
   }
@@ -453,11 +454,11 @@ export function towerPlan(t: Tower): TowerPlan {
   const entry: Stair = { x, y: 0, z: z + t.w / 2 + 0.7 + 3 * 0.45, dir: "z-", width: 1.9, steps: 3, rise: 1.1 / 3, tread: 0.45, base: 0 };
   // the roof: broken merlons round the edge (collide: cover up top), clear of the hatch, the bridge exits and the stair head
   const rnd = mulberry(900 + Math.round(t.x * 7 + t.z)), wt = secs[secs.length - 1][2], merlons: AABB[] = [];
-  const exits = TEMPLE.bridges.flatMap(([a, b]) => { const me = TEMPLE.towers.indexOf(t); if (a !== me && b !== me) return []; const o = TEMPLE.towers[a === me ? b : a]; return [Math.atan2(o.z - z, o.x - x)]; });
+  const exits = TEMPLE.bridges.flatMap(([a, b]) => { const me = TEMPLE.towers.indexOf(t); if (a !== me && b !== me) return []; const o = TEMPLE.towers[a === me ? b : a]; return [dmath.atan2(o.z - z, o.x - x)]; });
   const nPer = Math.max(3, Math.round(wt / 1.5));
   for (const [nx, nz] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) for (let k = 0; k < nPer; k++) {
     const u = ((k + 0.5) / nPer - 0.5) * (wt - 0.8), px = x + nx * (wt / 2 - 0.35) + (nz ? u : 0), pz = z + nz * (wt / 2 - 0.35) + (nx ? u : 0);
-    if (exits.some((a) => Math.abs(Math.atan2(Math.sin(Math.atan2(pz - z, px - x) - a), Math.cos(Math.atan2(pz - z, px - x) - a))) < 0.55)) continue;
+    if (exits.some((a) => Math.abs(dmath.atan2(dmath.sin(dmath.atan2(pz - z, px - x) - a), dmath.cos(dmath.atan2(pz - z, px - x) - a))) < 0.55)) continue;
     if (px > x + S / 2 - TW_FW - 0.6 && pz > z - S / 2 + TW_LW - 0.4) continue;   // the hatch
     if (rnd() < 0.22 + t.ruin * 0.4) continue;
     const mh = 0.9 + rnd() * 0.6, mw = Math.min(0.95, wt / nPer * 0.6);
@@ -467,7 +468,7 @@ export function towerPlan(t: Tower): TowerPlan {
 }
 /** a tower bridge: anchors on the two roof edges (the top section's edge along the span), sag */
 export const towerBridge = (k: number) => {
-  const [ia, ib, sag] = TEMPLE.bridges[k], A = TEMPLE.towers[ia], B = TEMPLE.towers[ib], dx = B.x - A.x, dz = B.z - A.z, span = Math.hypot(dx, dz), ux = dx / span, uz = dz / span;
+  const [ia, ib, sag] = TEMPLE.bridges[k], A = TEMPLE.towers[ia], B = TEMPLE.towers[ib], dx = B.x - A.x, dz = B.z - A.z, span = dmath.hypot(dx, dz), ux = dx / span, uz = dz / span;
   const edge = (t: Tower) => { const w = towerSections(t)[3][2]; return w / 2 / Math.max(Math.abs(ux), Math.abs(uz)); };
   return { A, B, sag, a0: edge(A) - 0.25, a1: span - edge(B) + 0.25, span, ux, uz };
 };
@@ -476,8 +477,8 @@ export const towerBridge = (k: number) => {
 export function templeScatter(): Array<{ kind: "rock" | "block"; x: number; y: number; z: number; w: number; h: number; d: number; yaw: number; tilt: number; seed: number }> {
   const T = TEMPLE, rnd = mulberry(1213), out: ReturnType<typeof templeScatter> = [];
   for (let i = 0; i < 44; i++) {
-    const a = rnd() * 6.28, r = T.plazaR + 3 + rnd() * 30, x = Math.cos(a) * r, z = Math.sin(a) * r, sz = 0.5 + rnd() * 1.3, yaw = rnd() * 6.28, bw = 1 + rnd(), br = rnd(), tilt = (rnd() - 0.5) * 0.5;
-    if (Math.hypot(x - T.pyr.cx, z - T.pyr.cz) < 36) continue;
+    const a = rnd() * 6.28, r = T.plazaR + 3 + rnd() * 30, x = dmath.cos(a) * r, z = dmath.sin(a) * r, sz = 0.5 + rnd() * 1.3, yaw = rnd() * 6.28, bw = 1 + rnd(), br = rnd(), tilt = (rnd() - 0.5) * 0.5;
+    if (dmath.hypot(x - T.pyr.cx, z - T.pyr.cz) < 36) continue;
     // a round boulder's box stands proud of its crown, so the big ones are tumbled masonry blocks (exact
     // colliders), the small ones step-over pebbles without colliders
     if (sz > 0.55) { const bh = Math.min(1.3, 0.55 + sz * 0.5); out.push({ kind: "block", x, y: bh / 2, z, w: 0.9 + sz * 0.8, h: bh, d: 0.8 + sz * 0.5, yaw, tilt: 0, seed: 20 + i }); }
@@ -491,7 +492,7 @@ export function templeScatter(): Array<{ kind: "rock" | "block"; x: number; y: n
 export function templeRuinSegs(): Array<[number, number, number, number, number]> {
   const T = TEMPLE, rnd = mulberry(4242), out: Array<[number, number, number, number, number]> = [], r = T.plazaR + 1;
   for (const [a, len, h] of T.ruins) {
-    const n = Math.max(2, Math.round(len / 2.6)), ux = -Math.sin(a), uz = Math.cos(a), cx = Math.cos(a) * r, cz = Math.sin(a) * r, courses = Math.max(2, Math.round(h / 0.62));
+    const n = Math.max(2, Math.round(len / 2.6)), ux = -dmath.sin(a), uz = dmath.cos(a), cx = dmath.cos(a) * r, cz = dmath.sin(a) * r, courses = Math.max(2, Math.round(h / 0.62));
     for (let i = 0; i < n; i++) {
       const t = (i + 0.5) / n - 0.5, drop = Math.min(courses - 2, Math.floor(rnd() * 3)), sh = Math.round((courses - drop) * 0.62 * 100) / 100;
       if (rnd() < 0.12 && i > 0 && i < n - 1) continue;   // a breach
@@ -505,7 +506,7 @@ export function heapBands(x: number, z: number, R: number, H: number, base: numb
   if (H < 0.32) return [];
   const out: ReturnType<typeof heapBands> = [];
   for (const f of [0.35, 0.66, 0.92]) {
-    const t = H * f, d = R * Math.sqrt(Math.max(0, 1 - Math.pow(f, 1 / 0.85)));
+    const t = H * f, d = R * Math.sqrt(Math.max(0, 1 - dmath.pow(f, 1 / 0.85)));
     if (d < 0.3) break;
     for (const yaw of [0, Math.PI / 4]) out.push({ x, z, s: d * 0.72, y0: base, y1: base + t, yaw });
   }
@@ -522,7 +523,7 @@ export const HERO_SLICES: Record<"guardian" | "totem", Array<[number, number, nu
  *  [cx, cy, cz, w, h, d, yaw] (the L() argument order); `split` (covered rooms): two envelope boxes, below / above
  *  split·H — no mantle-able ledge under a low ceiling */
 export function heroBoxes(id: "guardian" | "totem", x: number, y: number, z: number, H: number, yaw: number, split?: number): Array<[number, number, number, number, number, number, number]> {
-  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const c = dmath.cos(yaw), s = dmath.sin(yaw);
   let sl = HERO_SLICES[id];
   if (split !== undefined) { const env = (a: number, b: number) => { const q = sl.filter((v) => v[0] < b && v[1] > a); return [a, Math.min(b, Math.max(...q.map((v) => v[1]))), Math.min(...q.map((v) => v[2])), Math.max(...q.map((v) => v[3])), Math.min(...q.map((v) => v[4])), Math.max(...q.map((v) => v[5]))] as [number, number, number, number, number, number]; }; sl = [env(0, split), env(split, 1)]; }
   return sl.map(([y0, y1, x0, x1, z0, z1]) => {
@@ -579,7 +580,7 @@ export function templeColliders(): Box[] {
   }
   // rope bridges between the roofs (deck planks + rope rails that stop players, not bullets)
   for (let k = 0; k < T.bridges.length; k++) {
-    const { A: TA, B: TB, sag, a0, a1, span, ux, uz } = towerBridge(k), n = Math.max(8, Math.round((a1 - a0) / 1.2)), ly = Math.atan2(-uz, ux);
+    const { A: TA, B: TB, sag, a0, a1, span, ux, uz } = towerBridge(k), n = Math.max(8, Math.round((a1 - a0) / 1.2)), ly = dmath.atan2(-uz, ux);
     for (let i = 0; i < n; i++) {
       const tt = (i + 0.5) / n, s = a0 + (a1 - a0) * tt, y = TA.h + (TB.h - TA.h) * ((s - a0) / (a1 - a0)) - sag * 4 * tt * (1 - tt);
       L(TA.x + ux * s, y - 0.1, TA.z + uz * s, (a1 - a0) / n + 0.08, 0.24, 1.7, ly, "wood");
@@ -676,7 +677,7 @@ export function templeDress(): DressPiece[] {
 /** a dress piece's collider AABB footprint in its room's local frame (offset from the room centre) for the kit keep-outs */
 function dressKeepOuts(id: string, cx: number, cz: number): Array<{ r: [number, number, number, number]; solid: true }> {
   return templeDress().filter((p) => p.room === id && p.solid).map((p) => {
-    const c = Math.abs(Math.cos(p.yaw)), s = Math.abs(Math.sin(p.yaw)), ex = (c * p.w + s * p.d) / 2 + 0.05, ez = (s * p.w + c * p.d) / 2 + 0.05;
+    const c = Math.abs(dmath.cos(p.yaw)), s = Math.abs(dmath.sin(p.yaw)), ex = (c * p.w + s * p.d) / 2 + 0.05, ez = (s * p.w + c * p.d) / 2 + 0.05;
     return { r: [p.x - cx - ex, p.z - cz - ez, p.x - cx + ex, p.z - cz + ez].map((v) => Math.round(v * 100) / 100) as [number, number, number, number], solid: true as const };
   });
 }
@@ -755,8 +756,8 @@ export function templeLootSpots(): { chests: Array<[number, number, number, numb
   // spots keep the generator's coverage pass from dropping the ring's chests on random open ground in the jungle
   let ring = 0;
   T.walls.forEach(([x, z, len, , yaw]) => {
-    if (Math.hypot(x, z) < 44 || len < 3.4 || ring++ % 2) return;
-    const nx = Math.sin(yaw), nz = Math.cos(yaw), s = (nx * (T.pyr.cx - x) + nz * (T.pyr.cz - z)) >= 0 ? 1 : -1, d = 0.45 + 0.7;
+    if (dmath.hypot(x, z) < 44 || len < 3.4 || ring++ % 2) return;
+    const nx = dmath.sin(yaw), nz = dmath.cos(yaw), s = (nx * (T.pyr.cx - x) + nz * (T.pyr.cz - z)) >= 0 ? 1 : -1, d = 0.45 + 0.7;
     chests.push(C(x + nx * s * d, 0, z + nz * s * d, Math.round((yaw + (s > 0 ? 0 : Math.PI)) * 1000) / 1000));
   });
   return { chests, floor };
@@ -858,14 +859,14 @@ export interface LootSpotsXYZ { chests: Array<[number, number, number, number]>;
  *  ledge, the fan landings and the rim gate; floor loot on every bench (both wings), the plateau lanes, the crag */
 export function peakLootCandidates(R: PeakResolved): { chests: Array<[number, number, number, number]>; floor: Array<[number, number, number]> } {
   const C = PEAK_C, chests: Array<[number, number, number, number]> = [], floor: Array<[number, number, number]> = [];
-  const pt = (a: number, r: number): [number, number] => [C.x + Math.cos(a) * r, C.z + Math.sin(a) * r];
+  const pt = (a: number, r: number): [number, number] => [C.x + dmath.cos(a) * r, C.z + dmath.sin(a) * r];
   // the summit crater: a plain chest beside the glowing vent, listed FIRST so the generator keeps it as the
   // POI's always-on (non-Rare) hero — a glider drop into the volcano always finds a gun (the summit is the peak's worst
   // landing point: as a floor item it gave a weapon ≤ 10 s in only 50 % of seeds). The Rare payoff sits at the stair
   // head between the gate totems (shared/pois/ripe-peak.ts): alone on the bare summit it reads as a purple box on an empty peak
-  { const S = R.summit, a = PEAK.fan.c + Math.PI, r = S.rf - 0.9; chests.push([C.x + Math.cos(a) * r, S.floor, C.z + Math.sin(a) * r, -a - Math.PI / 2]); }
+  { const S = R.summit, a = PEAK.fan.c + Math.PI, r = S.rf - 0.9; chests.push([C.x + dmath.cos(a) * r, S.floor, C.z + dmath.sin(a) * r, -a - Math.PI / 2]); }
   // crown totems (plinth = crest totem): the chest on the inner lane, facing the lane
-  for (const t of R.totems) if (t.plinth) { const a = Math.atan2(t.z - C.z, t.x - C.x), [ri, y] = rimInner(R, a), [x, z] = pt(a, ri + 2.4); chests.push([x, y, z, -a + Math.PI / 2]); }
+  for (const t of R.totems) if (t.plinth) { const a = dmath.atan2(t.z - C.z, t.x - C.x), [ri, y] = rimInner(R, a), [x, z] = pt(a, ri + 2.4); chests.push([x, y, z, -a + Math.PI / 2]); }
   // crag: top plateau (beside the camera stand) + the front ledge (between the foreground totems)
   { const cg = R.crag, [cx, , cz] = R.cam; chests.push([cx + (cg.x - cx) * 0.35, cg.top, cz + (cg.z - cz) * 0.35, 0]); chests.push([cg.ledge.x, cg.ledge.y, cg.ledge.z, 0]); }
   // fan landings (the slab at the top of each flight: reached by the stair, a fight up the zig-zag)
@@ -875,7 +876,7 @@ export function peakLootCandidates(R: PeakResolved): { chests: Array<[number, nu
   // plateau lanes: 6 spots round the ring (away from the fan), inner third
   for (let q = 0; q < 6; q++) { const a = PEAK.fan.c + Math.PI / 3 + q * (Math.PI * 4 / 3) / 5, [ri, y] = rimInner(R, a), [x, z] = pt(a, ri + 1.6); floor.push([x, y, z]); }
   // the crag's tiers (spiral stair stops) — 2 spots on its top plateau away from the chest
-  { const cg = R.crag; for (const q of [1.9, 3.8]) floor.push([cg.x + Math.cos(q) * cg.rTop * 0.55, cg.top, cg.z + Math.sin(q) * cg.rTop * 0.55]); }
+  { const cg = R.crag; for (const q of [1.9, 3.8]) floor.push([cg.x + dmath.cos(q) * cg.rTop * 0.55, cg.top, cg.z + dmath.sin(q) * cg.rTop * 0.55]); }
   return { chests, floor };
 }
 /** the rim plateau's inner edge at bearing a: [radius, plateau height] (interpolated between samples) */
@@ -893,12 +894,12 @@ export function summitAt(R: PeakResolved, a: number, t: number): [number, number
 /** the summit crater's inner wall radius at height y (floor → lip) */
 export function summitCraterR(R: PeakResolved, y: number): number {
   const S = R.summit, q = Math.min(1, Math.max(0, (y - S.floor) / (S.y1 - 0.8 - S.floor)));
-  return S.rf + (S.r1 - 1.8 - S.rf) * Math.pow(q, 0.8);
+  return S.rf + (S.r1 - 1.8 - S.rf) * dmath.pow(q, 0.8);
 }
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 /** three.js yaw (rotation.y) → sim Box.yaw (box +X = world (cos, 0, sin)) */
 export const simYaw = (threeYaw: number) => -threeYaw;
-const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+const wrapA = (a: number) => dmath.atan2(dmath.sin(a), dmath.cos(a));
 
 /** a straight flight (chord) climbing a curved / ragged wall leaves a lens-shaped slot between its inner side and the
  *  wall — players drop into it and are trapped. The treads are widened inward by up to 1.2 m; whatever gap is left is
@@ -928,17 +929,17 @@ function closeRockGaps(rocks: PeakRock[]) {
   for (const r of rocks) {
     if (!((r.kind === 1 && !r.nc) || r.kind === 4)) continue;
     const k = r.kind === 4 ? 1 : 0.92, y = r.kind === 4 ? r.y + 0.1 : r.y, hy = r.kind === 4 ? r.sy + 0.1 : r.sy * k, a = simYaw(r.ry);
-    fp.push({ x: r.x, z: r.z, hx: r.sx * 0.8, hz: r.sz * 0.8, c: Math.cos(a), s: Math.sin(a), y0: y - hy, y1: y + hy });
+    fp.push({ x: r.x, z: r.z, hx: r.sx * 0.8, hz: r.sz * 0.8, c: dmath.cos(a), s: dmath.sin(a), y0: y - hy, y1: y + hy });
   }
   const exit = (f: F, ux: number, uz: number) => { const ax = Math.abs(ux * f.c + uz * f.s), az = Math.abs(-ux * f.s + uz * f.c); return Math.min(ax > 1e-6 ? f.hx / ax : 1e9, az > 1e-6 ? f.hz / az : 1e9); };
   let n = 0;
   for (let i = 0; i < fp.length; i++) for (let j = i + 1; j < fp.length; j++) {
-    const A = fp[i], B = fp[j], dx = B.x - A.x, dz = B.z - A.z, d = Math.hypot(dx, dz);
-    if (d < 0.01 || d > Math.hypot(A.hx, A.hz) + Math.hypot(B.hx, B.hz) + 2) continue;
+    const A = fp[i], B = fp[j], dx = B.x - A.x, dz = B.z - A.z, d = dmath.hypot(dx, dz);
+    if (d < 0.01 || d > dmath.hypot(A.hx, A.hz) + dmath.hypot(B.hx, B.hz) + 2) continue;
     const ux = dx / d, uz = dz / d, ta = exit(A, ux, uz), tb = exit(B, -ux, -uz), gap = d - ta - tb;
     const lo = Math.max(A.y0, B.y0), hi = Math.min(A.y1, B.y1);
     if (gap <= 0.05 || gap >= 1.9 || hi - lo < 1.5) continue;
-    const mx = A.x + ux * (ta + gap / 2), mz = A.z + uz * (ta + gap / 2), top = hi - 0.2, sx = (gap + 1.6) / 2 / 0.8, sz = Math.min(2.2, Math.min(A.hx, A.hz, B.hx, B.hz)) / 0.8, sy = (top - lo) / 2, ry = -Math.atan2(uz, ux);
+    const mx = A.x + ux * (ta + gap / 2), mz = A.z + uz * (ta + gap / 2), top = hi - 0.2, sx = (gap + 1.6) / 2 / 0.8, sz = Math.min(2.2, Math.min(A.hx, A.hz, B.hx, B.hz)) / 0.8, sy = (top - lo) / 2, ry = -dmath.atan2(uz, ux);
     rocks.push({ x: r3(mx), y: r3(lo + sy), z: r3(mz), sx: r3(sx), sy: r3(sy), sz: r3(sz), ry: r3(ry), seed: 12000 + n, kind: 1, nc: 1 });
     rocks.push({ x: r3(mx), y: r3(lo + sy - 0.1), z: r3(mz), sx: r3(sx), sy: r3(sy - 0.1), sz: r3(sz), ry: r3(ry), seed: 12000 + n, kind: 4 });
     n++;
@@ -946,7 +947,7 @@ function closeRockGaps(rocks: PeakRock[]) {
 }
 export function resolvePeak(h: H): PeakResolved {
   const C = PEAK_C, F = PEAK.fan, FL = PEAK.flight, RIM = PEAK.rim;
-  const at = (a: number, r: number) => h(C.x + Math.cos(a) * r, C.z + Math.sin(a) * r);
+  const at = (a: number, r: number) => h(C.x + dmath.cos(a) * r, C.z + dmath.sin(a) * r);
   const crest = (a: number): [number, number] => { let br = 60, bh = -1e9; for (let r = 46; r <= 84; r += 0.5) { const v = at(a, r); if (v > bh) { bh = v; br = r; } } return [br, bh]; };
   /** radius where the terrain first drops below y going outward from the crest (bisection-refined) */
   const contour = (a: number, y: number) => {
@@ -966,7 +967,7 @@ export function resolvePeak(h: H): PeakResolved {
     const y0 = y - sy, hs: number[] = []; for (let c = 0; c < n; c++) hs.push(0.85 + RS() * 0.3); const hsum = hs.reduce((a, b) => a + b, 0);
     let yb = y0;
     for (let c = 0; c < n; c++) {
-      const h = hs[c] / hsum * 2 * sy, cs = Math.cos(ry), sn = Math.sin(ry), ox = (RS() - 0.5) * 0.5, oz = (RS() - 0.5) * 0.5;
+      const h = hs[c] / hsum * 2 * sy, cs = dmath.cos(ry), sn = dmath.sin(ry), ox = (RS() - 0.5) * 0.5, oz = (RS() - 0.5) * 0.5;
       rocks.push({ x: r3(x + ox * cs + oz * sn), y: r3(yb + h / 2), z: r3(z - ox * sn + oz * cs), sx: r3(sx * (0.92 + RS() * 0.16)), sy: r3(h / 2 + 0.28), sz: r3(sz * (0.9 + RS() * 0.15)), ry: r3(ry + (RS() - 0.5) * 0.18), seed: seed + c * 37, kind, ...(kind === 1 ? { nc: 1 as const } : {}) });
       yb += h;
     }
@@ -1032,35 +1033,35 @@ export function resolvePeak(h: H): PeakResolved {
     let y0 = F.levels[k + 1], steps = Math.ceil((F.levels[k] - y0) / FL.rise), run = steps * FL.tread;
     let r = edgeAt(benches[k], F.c, "rout") + FL.width / 2 + 0.3, a0 = 0, a1 = 0;
     for (let it = 0; it < 8; it++) {
-      const dA = 2 * Math.asin(Math.min(0.99, run / 2 / r));
+      const dA = 2 * dmath.asin(Math.min(0.99, run / 2 / r));
       a0 = F.c - dir * dA / 2; a1 = F.c + dir * dA / 2;
-      const need = (maxRout(benches[k], Math.min(a0, a1) - 0.02, Math.max(a0, a1) + 0.02) + FL.width / 2 + 0.3) / Math.cos(dA / 2);
+      const need = (maxRout(benches[k], Math.min(a0, a1) - 0.02, Math.max(a0, a1) + 0.02) + FL.width / 2 + 0.3) / dmath.cos(dA / 2);
       r = Math.max(r, need);
       if (last) { // lowest flight: start from the terrain at (and just before) the chord's start
-        const gx = C.x + Math.cos(a0) * r, gz = C.z + Math.sin(a0) * r, ex = C.x + Math.cos(a1) * r, ez = C.z + Math.sin(a1) * r, L2 = Math.hypot(ex - gx, ez - gz) || 1, tx = -(ex - gx) / L2, tz = -(ez - gz) / L2;
+        const gx = C.x + dmath.cos(a0) * r, gz = C.z + dmath.sin(a0) * r, ex = C.x + dmath.cos(a1) * r, ez = C.z + dmath.sin(a1) * r, L2 = dmath.hypot(ex - gx, ez - gz) || 1, tx = -(ex - gx) / L2, tz = -(ez - gz) / L2;
         y0 = Math.min(F.levels[k + 1], h(gx, gz), h(gx + tx * 1.5, gz + tz * 1.5), h(gx + tx * 3, gz + tz * 3)) - 0.05; steps = Math.ceil((F.levels[k] - y0) / FL.rise); run = steps * FL.tread;
       }
     }
-    const sx = C.x + Math.cos(a0) * r, sz = C.z + Math.sin(a0) * r, ex = C.x + Math.cos(a1) * r, ez = C.z + Math.sin(a1) * r;
-    const ux = (ex - sx) / Math.hypot(ex - sx, ez - sz), uz = (ez - sz) / Math.hypot(ex - sx, ez - sz);
+    const sx = C.x + dmath.cos(a0) * r, sz = C.z + dmath.sin(a0) * r, ex = C.x + dmath.cos(a1) * r, ez = C.z + dmath.sin(a1) * r;
+    const ux = (ex - sx) / dmath.hypot(ex - sx, ez - sz), uz = (ez - sz) / dmath.hypot(ex - sx, ez - sz);
     let base = y0 - 0.25;
     // every flight is solid down to the terrain under it (a flight overhanging its bench's outer edge roofs the
     // steep slope below: covered jump-only floors 25–35 m under it)
     for (let i = 0; i <= steps; i += 2) for (const o of [-FL.width / 2 - FL.cheek, 0, FL.width / 2 + FL.cheek]) { const px = sx + ux * i * FL.tread - uz * o, pz = sz + uz * i * FL.tread + ux * o; base = Math.min(base, h(px, pz) - 0.6); }
-    const rise = (F.levels[k] - y0) / steps, yaw = Math.atan2(-uz, ux);
+    const rise = (F.levels[k] - y0) / steps, yaw = dmath.atan2(-uz, ux);
     // outer side: local +Z = (sin yaw, cos yaw) = (−uz, ux) in world xz; outward radial ≈ (cos F.c, sin F.c)
-    const side = (-uz * Math.cos(F.c) + ux * Math.sin(F.c)) > 0 ? 1 : -1;
+    const side = (-uz * dmath.cos(F.c) + ux * dmath.sin(F.c)) > 0 ? 1 : -1;
     // a straight chord against the curved (ragged) wall leaves a lens-shaped slot between the stair's inner side and the
     // wall — players drop into it and are trapped. The flight is widened INWARD until it meets the wall everywhere
     // (0.6 m into it); the outer edge + cheek stay where they were.
-    const perX = -uz, perZ = ux, inn = flightFill({ sx, sz, ux, uz, y0, rise, tread: FL.tread, steps, width: FL.width, yaw, base }, -side, (px, pz) => { const pa = Math.atan2(pz - C.z, px - C.x); return edgeAt(benches[k], F.c + wrapA(pa - F.c), "rout") + 0.15; }, (px, pz) => Math.hypot(px - C.x, pz - C.z), fills);
+    const perX = -uz, perZ = ux, inn = flightFill({ sx, sz, ux, uz, y0, rise, tread: FL.tread, steps, width: FL.width, yaw, base }, -side, (px, pz) => { const pa = dmath.atan2(pz - C.z, px - C.x); return edgeAt(benches[k], F.c + wrapA(pa - F.c), "rout") + 0.15; }, (px, pz) => dmath.hypot(px - C.x, pz - C.z), fills);
     const fsx = sx - side * perX * inn / 2, fsz = sz - side * perZ * inn / 2;
     flights.push({ x: r3(fsx), z: r3(fsz), y: r3(y0), yaw: r3(yaw), steps, rise: r3(rise), tread: FL.tread, width: r3(FL.width + inn), base: r3(base), cheek: [side, FL.cheek, FL.cheekH] });
     fRange[k] = [Math.min(a0, a1) - 4 / r, Math.max(a0, a1) + 4 / r];
     // landing: from the chord's top end, 2.2 m long, reaching radially in over wall k onto bench k
-    const tx = sx + ux * (run + 1.1), tz = sz + uz * (run + 1.1), aT = Math.atan2(tz - C.z, tx - C.x), rT = Math.hypot(tx - C.x, tz - C.z);
+    const tx = sx + ux * (run + 1.1), tz = sz + uz * (run + 1.1), aT = dmath.atan2(tz - C.z, tx - C.x), rT = dmath.hypot(tx - C.x, tz - C.z);
     const rIn = edgeAt(benches[k], aT, "rout") - 1.2, rOut = rT + FL.width / 2, rm = (rIn + rOut) / 2;
-    slabs.push({ x: r3(C.x + Math.cos(aT) * rm), y: F.levels[k], z: r3(C.z + Math.sin(aT) * rm), hx: r3((rOut - rIn) / 2), hz: 1.15, yaw: r3(-aT), base: r3(last ? Math.min(base, y0 - 0.25) : F.levels[k + 1] - 0.25) });
+    slabs.push({ x: r3(C.x + dmath.cos(aT) * rm), y: F.levels[k], z: r3(C.z + dmath.sin(aT) * rm), hx: r3((rOut - rIn) / 2), hz: 1.15, yaw: r3(-aT), base: r3(last ? Math.min(base, y0 - 0.25) : F.levels[k + 1] - 0.25) });
     // cheek rocks: a row of jointed blocks along the outer side, tops following the steps + parapet, feet below the bench
     { const nR = Math.max(2, Math.round(run / 3.3)), lat = side * (FL.width / 2 + FL.cheek * 0.5 + 0.9), perX = -uz, perZ = ux;
       for (let i = 0; i < nR; i++) {
@@ -1073,17 +1074,17 @@ export function resolvePeak(h: H): PeakResolved {
   }
   // final flight: bench 0 → up onto the rim plateau: a chord along the plateau's outer face (standing on bench 0, cheek
   // outside), continuing the zig-zag from where flight 0 ends; a landing reaches in onto the plateau at its top
-  { const f0 = flights[0], L0 = f0.steps * f0.tread, e0x = f0.x + Math.cos(f0.yaw) * L0, e0z = f0.z - Math.sin(f0.yaw) * L0, aS = Math.atan2(e0z - C.z, e0x - C.x), dir = 1;
+  { const f0 = flights[0], L0 = f0.steps * f0.tread, e0x = f0.x + dmath.cos(f0.yaw) * L0, e0z = f0.z - dmath.sin(f0.yaw) * L0, aS = dmath.atan2(e0z - C.z, e0x - C.x), dir = 1;
     const b0 = benches[0], y0 = F.levels[0], rF = Math.max(edgeAt(b0, aS, "rin"), edgeAt(b0, F.c, "rin"), edgeAt(b0, aS + 0.2, "rin")) + 0.3 + FL.width / 2;
     let steps = 0, run = 0, a1 = aS, yTop = 0;
-    for (let it = 0; it < 4; it++) { yTop = rimAt(a1).y; steps = Math.max(2, Math.ceil((yTop - y0) / FL.rise)); run = steps * FL.tread; a1 = aS + dir * 2 * Math.asin(Math.min(0.99, run / 2 / rF)); }
-    const sx = C.x + Math.cos(aS) * rF, sz = C.z + Math.sin(aS) * rF, ex = C.x + Math.cos(a1) * rF, ez = C.z + Math.sin(a1) * rF, ux = (ex - sx) / run, uz = (ez - sz) / run, yaw = Math.atan2(-uz, ux);
-    const side = (-uz * Math.cos(aS) + ux * Math.sin(aS)) > 0 ? 1 : -1;
-    const routAt = (px: number, pz: number) => { const pa = Math.atan2(pz - C.z, px - C.x), u = ((pa % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / PL.step, i = Math.floor(u) % nA, j = (i + 1) % nA, t = u - Math.floor(u); return rim.rout[i] + (rim.rout[j] - rim.rout[i]) * t; };
-    const inn = flightFill({ sx, sz, ux, uz, y0, rise: (yTop - y0) / steps, tread: FL.tread, steps, width: FL.width, yaw, base: y0 - 0.25 }, -side, routAt, (px, pz) => Math.hypot(px - C.x, pz - C.z), fills);
+    for (let it = 0; it < 4; it++) { yTop = rimAt(a1).y; steps = Math.max(2, Math.ceil((yTop - y0) / FL.rise)); run = steps * FL.tread; a1 = aS + dir * 2 * dmath.asin(Math.min(0.99, run / 2 / rF)); }
+    const sx = C.x + dmath.cos(aS) * rF, sz = C.z + dmath.sin(aS) * rF, ex = C.x + dmath.cos(a1) * rF, ez = C.z + dmath.sin(a1) * rF, ux = (ex - sx) / run, uz = (ez - sz) / run, yaw = dmath.atan2(-uz, ux);
+    const side = (-uz * dmath.cos(aS) + ux * dmath.sin(aS)) > 0 ? 1 : -1;
+    const routAt = (px: number, pz: number) => { const pa = dmath.atan2(pz - C.z, px - C.x), u = ((pa % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / PL.step, i = Math.floor(u) % nA, j = (i + 1) % nA, t = u - Math.floor(u); return rim.rout[i] + (rim.rout[j] - rim.rout[i]) * t; };
+    const inn = flightFill({ sx, sz, ux, uz, y0, rise: (yTop - y0) / steps, tread: FL.tread, steps, width: FL.width, yaw, base: y0 - 0.25 }, -side, routAt, (px, pz) => dmath.hypot(px - C.x, pz - C.z), fills);
     flights.push({ x: r3(sx + side * uz * inn / 2), z: r3(sz - side * ux * inn / 2), y: y0, yaw: r3(yaw), steps, rise: r3((yTop - y0) / steps), tread: FL.tread, width: r3(FL.width + inn), base: y0 - 0.25, cheek: [side, FL.cheek, FL.cheekH] });
-    const tx = sx + ux * (run + 1.1), tz = sz + uz * (run + 1.1), aT = Math.atan2(tz - C.z, tx - C.x), rT = Math.hypot(tx - C.x, tz - C.z), rOut = rT + FL.width / 2, rIn = rimAt(aT).cr + 2, rm = (rIn + rOut) / 2;
-    slabs.push({ x: r3(C.x + Math.cos(aT) * rm), y: r3(yTop), z: r3(C.z + Math.sin(aT) * rm), hx: r3((rOut - rIn) / 2), hz: 1.15, yaw: r3(-aT), base: y0 - 0.25 });
+    const tx = sx + ux * (run + 1.1), tz = sz + uz * (run + 1.1), aT = dmath.atan2(tz - C.z, tx - C.x), rT = dmath.hypot(tx - C.x, tz - C.z), rOut = rT + FL.width / 2, rIn = rimAt(aT).cr + 2, rm = (rIn + rOut) / 2;
+    slabs.push({ x: r3(C.x + dmath.cos(aT) * rm), y: r3(yTop), z: r3(C.z + dmath.sin(aT) * rm), hx: r3((rOut - rIn) / 2), hz: 1.15, yaw: r3(-aT), base: y0 - 0.25 });
     finalRange = [Math.min(aS, a1) - 5 / rF, Math.max(aS, a1) + 5 / rF];
     const perX = -uz, perZ = ux, lat = side * (FL.width / 2 + FL.cheek * 0.5 + 0.9), nR = Math.max(2, Math.round(run / 3.3));
     for (let i = 0; i < nR; i++) { const t1 = (i + 1) / nR, along = (i + 0.5) / nR * run, top = y0 + (yTop - y0) * Math.min(1, t1 + 0.04) + FL.cheekH, foot = y0 - 1.5;
@@ -1092,26 +1093,26 @@ export function resolvePeak(h: H): PeakResolved {
   // ---- lava seams: meandering rivers of melt from the rim down the flank either side of the fan (never parallel to its
   // edges: each follows the terrain's fall line with its own wander), + free seams
   const seams: PeakResolved["seams"] = [];
-  const onFanR = (x: number, z: number, m: number) => { const r = Math.hypot(x - C.x, z - C.z), a = Math.atan2(z - C.z, x - C.x); for (const b of benches) { if (!b.a.length) continue; const aa = F.c + wrapA(a - F.c); if (aa < b.a[0] - m / r || aa > b.a[b.a.length - 1] + m / r) continue; if (r > edgeAt(b, aa, "rin") - m && r < edgeAt(b, aa, "rout") + m) return true; } return false; };
+  const onFanR = (x: number, z: number, m: number) => { const r = dmath.hypot(x - C.x, z - C.z), a = dmath.atan2(z - C.z, x - C.x); for (const b of benches) { if (!b.a.length) continue; const aa = F.c + wrapA(a - F.c); if (aa < b.a[0] - m / r || aa > b.a[b.a.length - 1] + m / r) continue; if (r > edgeAt(b, aa, "rin") - m && r < edgeAt(b, aa, "rout") + m) return true; } return false; };
   const flow = (a0: number, w: number, bias: number, seed: number, cross = false) => {
     const pts: Array<[number, number, number]> = [], rr = mulberry(seed); const [cr] = crest(a0);
-    let x = C.x + Math.cos(a0) * (cr + 9), z = C.z + Math.sin(a0) * (cr + 9), ph = rr() * 6.28;
+    let x = C.x + dmath.cos(a0) * (cr + 9), z = C.z + dmath.sin(a0) * (cr + 9), ph = rr() * 6.28;
     for (let i = 0; i < 90; i++) {
       pts.push([r3(x), r3(h(x, z)), r3(z)]);
-      const e = 2, gx = h(x + e, z) - h(x - e, z), gz = h(x, z + e) - h(x, z - e), gl = Math.hypot(gx, gz) || 1;
-      const rx = x - C.x, rz = z - C.z, rl = Math.hypot(rx, rz), tx = -rz / rl, tz = rx / rl;
-      const wander = (Math.sin(i * 0.23 + ph) * 0.55 + Math.sin(i * 0.61 + ph * 2) * 0.25) * (cross ? 1.25 : 1) + bias;
-      let nx = -gx / gl * 0.55 + rx / rl * 0.45 + tx * wander, nz = -gz / gl * 0.55 + rz / rl * 0.45 + tz * wander; const nl = Math.hypot(nx, nz); nx /= nl; nz /= nl;
-      if (!cross && onFanR(x + nx * 3, z + nz * 3, 6)) { nx -= tx * bias * 1.5; nz -= tz * bias * 1.5; const l2 = Math.hypot(nx, nz); nx /= l2; nz /= l2; }
+      const e = 2, gx = h(x + e, z) - h(x - e, z), gz = h(x, z + e) - h(x, z - e), gl = dmath.hypot(gx, gz) || 1;
+      const rx = x - C.x, rz = z - C.z, rl = dmath.hypot(rx, rz), tx = -rz / rl, tz = rx / rl;
+      const wander = (dmath.sin(i * 0.23 + ph) * 0.55 + dmath.sin(i * 0.61 + ph * 2) * 0.25) * (cross ? 1.25 : 1) + bias;
+      let nx = -gx / gl * 0.55 + rx / rl * 0.45 + tx * wander, nz = -gz / gl * 0.55 + rz / rl * 0.45 + tz * wander; const nl = dmath.hypot(nx, nz); nx /= nl; nz /= nl;
+      if (!cross && onFanR(x + nx * 3, z + nz * 3, 6)) { nx -= tx * bias * 1.5; nz -= tz * bias * 1.5; const l2 = dmath.hypot(nx, nz); nx /= l2; nz /= l2; }
       x += nx * 3; z += nz * 3;
-      if (Math.hypot(x - C.x, z - C.z) > 215) break;
+      if (dmath.hypot(x - C.x, z - C.z) > 215) break;
     }
     return pts;
   };
   for (const [side, off, w] of PEAK.seams) seams.push({ pts: flow(F.c + side * off, w, side * 0.12, side > 0 ? 71 : 17), w });
   for (const [a0, w] of PEAK.freeSeams) seams.push({ pts: flow(a0, w, 0.1, 33), w });
   PEAK.fanSeams.forEach(([off, w], i) => seams.push({ pts: flow(F.c + off, w, -off * 0.05, 91 + i * 17, true), w, fan: true }));
-  const nearSeam = (x: number, z: number, m: number) => seams.some((sm) => sm.fan && sm.pts.some((p) => Math.hypot(p[0] - x, p[2] - z) < sm.w / 2 + m));
+  const nearSeam = (x: number, z: number, m: number) => seams.some((sm) => sm.fan && sm.pts.some((p) => dmath.hypot(p[0] - x, p[2] - z) < sm.w / 2 + m));
 
   // ---- bench-wall blocks (visual): a band of big jointed lava-rock blocks along every bench's outer edge, irregular
   // widths / set-back / tops (±0.6 m, a few outcrops rise 1.2–2.2 m and collide), feet below the bench beneath
@@ -1126,9 +1127,9 @@ export function resolvePeak(h: H): PeakResolved {
       const a = b.a[j] + (b.a[j + 1] - b.a[j]) * u, ro = b.rout[j] + (b.rout[j + 1] - b.rout[j]) * u;
       // tall columnar masses (basalt columns: 6–12 m wide, up to ~1.8× as tall, rounded tops at mixed heights,
       // set back / proud by ±1.5 m), a proud buttress now and then, slumped low blocks
-      const out = buttress || (R() < 0.1 && !nearStair), dep = 2.6 + R() * 1.6 + (buttress ? 1.8 + R() * 1.4 : 0), top = b.y + (buttress ? 1.2 + R() * 2.4 : slump ? -3 - R() * 4 : out ? 1.0 + R() * 1.2 : (R() - 0.6) * 2.4), foot = Math.min(b.y1, h(C.x + Math.cos(a) * (ro + 1), C.z + Math.sin(a) * (ro + 1))) - 1.6;
+      const out = buttress || (R() < 0.1 && !nearStair), dep = 2.6 + R() * 1.6 + (buttress ? 1.8 + R() * 1.4 : 0), top = b.y + (buttress ? 1.2 + R() * 2.4 : slump ? -3 - R() * 4 : out ? 1.0 + R() * 1.2 : (R() - 0.6) * 2.4), foot = Math.min(b.y1, h(C.x + dmath.cos(a) * (ro + 1), C.z + dmath.sin(a) * (ro + 1))) - 1.6;
       const rr = ro - dep * 0.62 + (R() - 0.5) * 3.0 + (buttress ? 1.6 : 0), ry = Math.PI / 2 - a + (R() - 0.5) * 0.34;
-      if (!nearSeam(C.x + Math.cos(a) * rr, C.z + Math.sin(a) * rr, wdt * 0.45 + 1.2)) rock(C.x + Math.cos(a) * rr, (top + foot) / 2, C.z + Math.sin(a) * rr, wdt / 2, (top - foot) / 2, dep, ry, 5000 + rocks.length, out ? 1 : 0, 1.8);
+      if (!nearSeam(C.x + dmath.cos(a) * rr, C.z + dmath.sin(a) * rr, wdt * 0.45 + 1.2)) rock(C.x + dmath.cos(a) * rr, (top + foot) / 2, C.z + dmath.sin(a) * rr, wdt / 2, (top - foot) / 2, dep, ry, 5000 + rocks.length, out ? 1 : 0, 1.8);
       s += wdt * (0.72 + R() * 0.16);
     }
     // ragged ends: big outcrop masses tumbling down each end of the bench (collide)
@@ -1137,7 +1138,7 @@ export function resolvePeak(h: H): PeakResolved {
       // three masses STRADDLING the bench's end face, radially overlapping (collider 0.8 × size), aligned with the
       // bearing — free-standing outcrops leave 1–2 m notches against the end face where players get stuck
       for (let q = 0; q < 3; q++) {
-        const rr = b.rin[j] + depth * (0.18 + q * 0.32), aa = a + sgn * (0.3 + R() * 1.1) / rr, x = C.x + Math.cos(aa) * rr, z = C.z + Math.sin(aa) * rr, sx = 2.4 + R() * 1.6, sz = Math.max(2.6 + R() * 1.4, depth * 0.23);
+        const rr = b.rin[j] + depth * (0.18 + q * 0.32), aa = a + sgn * (0.3 + R() * 1.1) / rr, x = C.x + dmath.cos(aa) * rr, z = C.z + dmath.sin(aa) * rr, sx = 2.4 + R() * 1.6, sz = Math.max(2.6 + R() * 1.4, depth * 0.23);
         let gy = h(x, z); for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) gy = Math.min(gy, h(x + ox * sx, z + oz * sz));
         const top = b.y + 0.3 + R() * 1.6, foot = gy - 1.5; if (top - foot < 2) continue;
         rock(x, (top + foot) / 2, z, sx, (top - foot) / 2, sz, Math.PI / 2 - aa + (R() - 0.5) * 0.2, 5600 + rocks.length, 1);
@@ -1153,25 +1154,25 @@ export function resolvePeak(h: H): PeakResolved {
   const crown = [...RIM.bearings.filter((a) => { const w = wrapA(a - F.c); return w < fanA0 - F.c - 0.2 || w > fanA1 - F.c + 0.2; }), fanA0 - 0.16, fanA1 + 0.16];
   for (const a of crown) {
     // on the plateau's OUTER edge (the lane inside stays open): the plinth is a rock bastion down to the flank
-    const { y, cr, i } = rimAt(a), gate = Math.abs(wrapA(a - (fanA0 - 0.16))) < 0.01 || Math.abs(wrapA(a - (fanA1 + 0.16))) < 0.01, th = gate ? RIM.gateH : RIM.h, rr = Math.max(cr + 1, rim.rout[i] - 0.12 * th * 0.68), x = C.x + Math.cos(a) * rr, z = C.z + Math.sin(a) * rr, pr = 0.25 * th;
-    let gmin = y; for (let q = 0; q < 10; q++) { const qa = q / 10 * Math.PI * 2; gmin = Math.min(gmin, h(x + Math.cos(qa) * pr, z + Math.sin(qa) * pr)); }
+    const { y, cr, i } = rimAt(a), gate = Math.abs(wrapA(a - (fanA0 - 0.16))) < 0.01 || Math.abs(wrapA(a - (fanA1 + 0.16))) < 0.01, th = gate ? RIM.gateH : RIM.h, rr = Math.max(cr + 1, rim.rout[i] - 0.12 * th * 0.68), x = C.x + dmath.cos(a) * rr, z = C.z + dmath.sin(a) * rr, pr = 0.25 * th;
+    let gmin = y; for (let q = 0; q < 10; q++) { const qa = q / 10 * Math.PI * 2; gmin = Math.min(gmin, h(x + dmath.cos(qa) * pr, z + dmath.sin(qa) * pr)); }
     totems.push({ x: r3(x), y: r3(y + 0.9), z: r3(z), h: th, yaw: r3(-a + (gate ? (a < F.c ? -0.3 : 0.3) : 0)), plinth: [r3(pr), r3(gmin - 1.2), r3(y + 0.9)] });
     // the bastion under it: a ring of jointed lava blocks from the flank up to the cap (visual; the plinth box collides)
-    for (let q = 0; q < 7; q++) { const qa = (q + R() * 0.4) / 7 * Math.PI * 2, bx = x + Math.cos(qa) * pr * 0.58, bz = z + Math.sin(qa) * pr * 0.58, top = y + 0.35 + (R() - 0.5) * 0.3, foot = gmin - 1.5;
+    for (let q = 0; q < 7; q++) { const qa = (q + R() * 0.4) / 7 * Math.PI * 2, bx = x + dmath.cos(qa) * pr * 0.58, bz = z + dmath.sin(qa) * pr * 0.58, top = y + 0.35 + (R() - 0.5) * 0.3, foot = gmin - 1.5;
       rock(bx, (top + foot) / 2, bz, pr * (0.42 + R() * 0.1), (top - foot) / 2, pr * 0.46, Math.PI / 2 - qa, 9700 + totems.length * 10 + q, 0); }
   }
 
   // ---- the lookout crag (butte) + front ledge + spiral stair + foreground totems/crate + the camera stand
   const cg = PEAK.crag, RC = mulberry(5151);   // its own RNG: fan / rim edits never reshuffle the crag
-  const minGround = (x: number, z: number, Rr: number) => { let g = Infinity; for (let i = 0; i < 16; i++) { const q = i / 16 * Math.PI * 2; g = Math.min(g, h(x + Math.cos(q) * Rr, z + Math.sin(q) * Rr)); } return g; };
+  const minGround = (x: number, z: number, Rr: number) => { let g = Infinity; for (let i = 0; i < 16; i++) { const q = i / 16 * Math.PI * 2; g = Math.min(g, h(x + dmath.cos(q) * Rr, z + dmath.sin(q) * Rr)); } return g; };
   const ground = minGround(cg.x, cg.z, cg.rBase);
-  const toCone = Math.atan2(C.z - cg.z, C.x - cg.x), fx = Math.cos(toCone), fz = Math.sin(toCone);
+  const toCone = dmath.atan2(C.z - cg.z, C.x - cg.x), fx = dmath.cos(toCone), fz = dmath.sin(toCone);
   const lx = cg.x + fx * cg.ledge.d, lz = cg.z + fz * cg.ledge.d, ly = cg.top - cg.ledge.drop;
   const ledge = { x: r3(lx), z: r3(lz), y: ly, r: cg.ledge.r, ground: r3(minGround(lx, lz, cg.ledge.r + 3)) };
   const HH = cg.top - ground, tiers: Array<[number, number]> = [[cg.rBase, r3(ground + HH * 0.27)], [cg.rBase - 6.5, r3(ground + HH * 0.52)], [cg.rBase - 12, r3(ground + HH * 0.77)], [cg.rTop + 0.3, cg.top]];
   // irregular butte: 8 lobes per tier (never a cylinder), exactly round on the back where the spiral stair runs
   const backA = toCone + Math.PI, lobes = tiers.map((_, ti) => Array.from({ length: 8 }, (_, q) => { const d = Math.abs(wrapA(q / 8 * Math.PI * 2 - backA)); return d < 1.9 ? 1 : r3((ti === tiers.length - 1 ? 0.9 : 0.74) + RC() * (ti === tiers.length - 1 ? 0.16 : 0.42)); }));
-  const lobeAt = (ti: number, a: number) => { const u = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2) * 8, i = Math.floor(u) % 8, t = u - Math.floor(u), k = (1 - Math.cos(t * Math.PI)) / 2; return lobes[ti][i] * (1 - k) + lobes[ti][(i + 1) % 8] * k; };
+  const lobeAt = (ti: number, a: number) => { const u = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2) * 8, i = Math.floor(u) % 8, t = u - Math.floor(u), k = (1 - dmath.cos(t * Math.PI)) / 2; return lobes[ti][i] * (1 - k) + lobes[ti][(i + 1) % 8] * k; };
   const cragFlights: Flight[] = [];
   { // a SPIRAL stair on the back faces (away from the view): per tier, straight chords (≤ 17 steps) at one lane round the
     // tier, each solid down to the tier ring below (or the ground) with an outer rock cheek; flat solid landings between
@@ -1182,23 +1183,23 @@ export function resolvePeak(h: H): PeakResolved {
     tiers.forEach(([Rt, yTop], ti) => {
       const floor = ti === 0 ? null : tiers[ti - 1][1], r0 = Rt + SW / 2 + 0.3, dirT = ti % 2 === 0 ? 1 : -1;
       const total = Math.ceil((yTop - y) / rise), nCh = Math.ceil(total / 17), per = Math.ceil(total / nCh);
-      const span = nCh * (2 * Math.asin(Math.min(0.99, per * tread / 2 / r0)) + 3 / r0) - 3 / r0;
+      const span = nCh * (2 * dmath.asin(Math.min(0.99, per * tread / 2 / r0)) + 3 / r0) - 3 / r0;
       ang = back - dirT * span / 2;
       for (let c = 0; c < nCh; c++) {
-        const steps = Math.min(per, Math.ceil((yTop - y) / rise)), run = steps * tread, dA = 2 * Math.asin(Math.min(0.99, run / 2 / r0)) * dirT;
-        const sx = cg.x + Math.cos(ang) * r0, sz = cg.z + Math.sin(ang) * r0, ex = cg.x + Math.cos(ang + dA) * r0, ez = cg.z + Math.sin(ang + dA) * r0;
-        const ux = (ex - sx) / run, uz = (ez - sz) / run, rr = Math.min(rise, (yTop - y) / steps), yaw = Math.atan2(-uz, ux);
+        const steps = Math.min(per, Math.ceil((yTop - y) / rise)), run = steps * tread, dA = 2 * dmath.asin(Math.min(0.99, run / 2 / r0)) * dirT;
+        const sx = cg.x + dmath.cos(ang) * r0, sz = cg.z + dmath.sin(ang) * r0, ex = cg.x + dmath.cos(ang + dA) * r0, ez = cg.z + dmath.sin(ang + dA) * r0;
+        const ux = (ex - sx) / run, uz = (ez - sz) / run, rr = Math.min(rise, (yTop - y) / steps), yaw = dmath.atan2(-uz, ux);
         let base = floor ?? Infinity; if (floor === null) for (let i = 0; i <= steps; i += 3) for (const o of [-SW / 2 - 1, SW / 2 + 1]) base = Math.min(base, h(sx + ux * i * tread - uz * o, sz + uz * i * tread + ux * o) - 0.6);
         base = Math.min(base, y - 0.25);
-        const side = (-uz * Math.cos(ang + dA / 2) + ux * Math.sin(ang + dA / 2)) > 0 ? 1 : -1;   // outward from the crag axis
+        const side = (-uz * dmath.cos(ang + dA / 2) + ux * dmath.sin(ang + dA / 2)) > 0 ? 1 : -1;   // outward from the crag axis
         // fill the lens between the chord and the tier wall (see the fan flights)
-        const inn = flightFill({ sx, sz, ux, uz, y0: y, rise: rr, tread, steps, width: SW, yaw, base }, -side, (px, pz) => 0.93 * Rt * lobeAt(ti, Math.atan2(pz - cg.z, px - cg.x)), (px, pz) => Math.hypot(px - cg.x, pz - cg.z), fills);
+        const inn = flightFill({ sx, sz, ux, uz, y0: y, rise: rr, tread, steps, width: SW, yaw, base }, -side, (px, pz) => 0.93 * Rt * lobeAt(ti, dmath.atan2(pz - cg.z, px - cg.x)), (px, pz) => dmath.hypot(px - cg.x, pz - cg.z), fills);
         cragFlights.push({ x: r3(sx + side * uz * inn / 2), z: r3(sz - side * ux * inn / 2), y: r3(y), yaw: r3(yaw), steps, rise: r3(rr), tread, width: r3(SW + inn), base: r3(base), cheek: [side, 0.9, 1.0] });
         y += steps * rr;
         // landing past the chord end (solid); the tier's last landing reaches in onto the tier top
         const la = ang + dA + dirT * 1.5 / r0, top = y >= yTop - 0.05;
         const rIn = top && ti < tiers.length - 1 ? tiers[ti + 1][0] + 0.6 : Rt - 0.3, rOut = r0 + SW / 2 + 0.9, rm = (rIn + rOut) / 2;
-        slabs.push({ x: r3(cg.x + Math.cos(la) * rm), y: r3(y), z: r3(cg.z + Math.sin(la) * rm), hx: r3((rOut - rIn) / 2), hz: 1.5, yaw: r3(-la), base: r3(Math.min(base, y - 0.6)) });
+        slabs.push({ x: r3(cg.x + dmath.cos(la) * rm), y: r3(y), z: r3(cg.z + dmath.sin(la) * rm), hx: r3((rOut - rIn) / 2), hz: 1.5, yaw: r3(-la), base: r3(Math.min(base, y - 0.6)) });
         // cheek rocks along the outer side
         const nR = Math.max(2, Math.round(run / 3.2)), perX = -uz, perZ = ux, lat = side * (SW / 2 + 0.45 + 0.9);
         for (let i = 0; i < nR; i++) { const t1 = (i + 1) / nR, along = (i + 0.5) / nR * run, tp = y - steps * rr * (1 - Math.min(1, t1 + 0.04)) + 1.0 + (RC() - 0.5) * 0.3, ft = base - 1;
@@ -1211,7 +1212,7 @@ export function resolvePeak(h: H): PeakResolved {
     // plateau (its end 9 m out along the axis, 5.5 m left: inside the plateau disc), solid down to the ledge
     { const steps = Math.ceil(cg.ledge.drop / 0.41), run = steps * 0.56, lat = -5.5, sx = -fz, sz = fx, along = cg.rTop - 1.6 + run;
       const bx = cg.x + fx * along + sx * lat, bz = cg.z + fz * along + sz * lat;
-      cragFlights.push({ x: r3(bx), z: r3(bz), y: ly, yaw: r3(Math.atan2(fz, -fx)), steps, rise: r3(cg.ledge.drop / steps), tread: 0.56, width: 2.4, base: ly - 0.3 }); }
+      cragFlights.push({ x: r3(bx), z: r3(bz), y: ly, yaw: r3(dmath.atan2(fz, -fx)), steps, rise: r3(cg.ledge.drop / steps), tread: 0.56, width: 2.4, base: ly - 0.3 }); }
   }
   // crag blocks (visual): each tier = a ring of jointed blocks (3–5 m), irregular set-back and heights, 1–3 stacked courses
   tiers.forEach(([Rt, yTop], ti) => {
@@ -1221,33 +1222,33 @@ export function resolvePeak(h: H): PeakResolved {
       let yb = y0;
       for (let c = 0; c < courses; c++) {
         const last = c === courses - 1, ht = last ? yTop - yb + (RC() - 0.6) * 0.8 : (yTop - y0) / courses * (0.85 + RC() * 0.3), rr = Rt * lobeAt(ti, a) - 1.8 + (RC() - 0.5) * 1.6 - c * 0.35;
-        rock(cg.x + Math.cos(a) * rr, yb + ht / 2, cg.z + Math.sin(a) * rr, wdt / 2, ht / 2 + 0.3, 2.8 + RC() * 1.0, Math.PI / 2 - a + (RC() - 0.5) * 0.3, 9000 + rocks.length, 3);
+        rock(cg.x + dmath.cos(a) * rr, yb + ht / 2, cg.z + dmath.sin(a) * rr, wdt / 2, ht / 2 + 0.3, 2.8 + RC() * 1.0, Math.PI / 2 - a + (RC() - 0.5) * 0.3, 9000 + rocks.length, 3);
         yb += ht * 0.97;
       }
     }
   });
   { const Lr = cg.ledge.r, y0 = ledge.ground - 2, n = Math.round(Lr * 6.283 / 4); // the ledge lobe
-    for (let i = 0; i < n; i++) { const a = (i + RC() * 0.4) / n * Math.PI * 2, x = lx + Math.cos(a) * (Lr - 1.6), z = lz + Math.sin(a) * (Lr - 1.6); if (Math.hypot(x - cg.x, z - cg.z) < cg.rTop - 0.5) continue;
-      const mid = y0 + (ly - y0) * 0.5; rock(x, (y0 + mid) / 2, z, 2.0 + RC() * 0.8, (mid - y0) / 2 + 0.3, 2.2, Math.PI / 2 - a, 9500 + i, 3); rock(x - Math.cos(a) * 0.3, (mid + ly - 0.15) / 2 - 0.2, z - Math.sin(a) * 0.3, 1.8 + RC() * 0.8, (ly - 0.15 - mid) / 2 + 0.3, 2.0, Math.PI / 2 - a + 0.2, 9550 + i, 3); } }
+    for (let i = 0; i < n; i++) { const a = (i + RC() * 0.4) / n * Math.PI * 2, x = lx + dmath.cos(a) * (Lr - 1.6), z = lz + dmath.sin(a) * (Lr - 1.6); if (dmath.hypot(x - cg.x, z - cg.z) < cg.rTop - 0.5) continue;
+      const mid = y0 + (ly - y0) * 0.5; rock(x, (y0 + mid) / 2, z, 2.0 + RC() * 0.8, (mid - y0) / 2 + 0.3, 2.2, Math.PI / 2 - a, 9500 + i, 3); rock(x - dmath.cos(a) * 0.3, (mid + ly - 0.15) / 2 - 0.2, z - dmath.sin(a) * 0.3, 1.8 + RC() * 0.8, (ly - 0.15 - mid) / 2 + 0.3, 2.0, Math.PI / 2 - a + 0.2, 9550 + i, 3); } }
 
   // ---- flank outcrops: lava-rock masses strewn over the SW flank round the fan (collide); never on the fan, the seams,
   // the stair line or the crag
   // the approach trails first: the flank outcrops keep clear of them (an outcrop on a trail blocked its run-out)
   const trails = PEAK.trails.map(([x, y, z, hx, hz, n]) => peakTrail(h, x, y, z, hx, hz, n));
   for (const [a, n] of PEAK.rimTrails) { let bi = 0, bd = 9; rim.a.forEach((aa, i) => { const d = Math.abs(wrapA(aa - a)); if (d < bd) { bd = d; bi = i; } });
-    const r = rim.rout[bi] - 0.6; trails.push(peakTrail(h, C.x + Math.cos(a) * r, rim.y[bi] - 0.02, C.z + Math.sin(a) * r, Math.cos(a), Math.sin(a), n)); }
-  const nearTrail = (x: number, z: number, m: number) => trails.some((t) => t.some((st) => Math.hypot(st.x - x, st.z - z) < m));
-  { const FK = PEAK.flank, onFan = (x: number, z: number) => { const r = Math.hypot(x - C.x, z - C.z), a = Math.atan2(z - C.z, x - C.x); for (const b of benches) { if (!b.a.length) continue; const aa = F.c + wrapA(a - F.c); if (aa < b.a[0] - 5 / r || aa > b.a[b.a.length - 1] + 5 / r) continue; if (r > edgeAt(b, aa, "rin") - 3 && r < edgeAt(b, aa, "rout") + 6) return true; } return false; };
+    const r = rim.rout[bi] - 0.6; trails.push(peakTrail(h, C.x + dmath.cos(a) * r, rim.y[bi] - 0.02, C.z + dmath.sin(a) * r, dmath.cos(a), dmath.sin(a), n)); }
+  const nearTrail = (x: number, z: number, m: number) => trails.some((t) => t.some((st) => dmath.hypot(st.x - x, st.z - z) < m));
+  { const FK = PEAK.flank, onFan = (x: number, z: number) => { const r = dmath.hypot(x - C.x, z - C.z), a = dmath.atan2(z - C.z, x - C.x); for (const b of benches) { if (!b.a.length) continue; const aa = F.c + wrapA(a - F.c); if (aa < b.a[0] - 5 / r || aa > b.a[b.a.length - 1] + 5 / r) continue; if (r > edgeAt(b, aa, "rin") - 3 && r < edgeAt(b, aa, "rout") + 6) return true; } return false; };
     const flankPts: Array<[number, number, number]> = [];
     for (let r = FK.r0; r <= FK.r1; r += FK.spacing * (0.8 + R() * 0.3)) {
       const dA = FK.spacing / r;
       for (let a = F.c - FK.span; a <= F.c + FK.span; a += dA * (0.75 + R() * 0.5)) {
-        const rr = r + (R() - 0.5) * FK.spacing * 0.6, aa = a + (R() - 0.5) * dA * 0.5, x = C.x + Math.cos(aa) * rr, z = C.z + Math.sin(aa) * rr;
+        const rr = r + (R() - 0.5) * FK.spacing * 0.6, aa = a + (R() - 0.5) * dA * 0.5, x = C.x + dmath.cos(aa) * rr, z = C.z + dmath.sin(aa) * rr;
         if (R() < 0.3 || onFan(x, z)) continue;
-        if (seams.some((sm) => sm.pts.some((p) => Math.hypot(p[0] - x, p[2] - z) < sm.w / 2 + 5))) continue;
-        if (Math.hypot(x - cg.x, z - cg.z) < cg.rBase + 8 || rr < rimAt(aa).cr + PL.out + 3) continue;
+        if (seams.some((sm) => sm.pts.some((p) => dmath.hypot(p[0] - x, p[2] - z) < sm.w / 2 + 5))) continue;
+        if (dmath.hypot(x - cg.x, z - cg.z) < cg.rBase + 8 || rr < rimAt(aa).cr + PL.out + 3) continue;
         const s = 2.2 + R() * 3.8, sy = s * (0.6 + R() * 0.5); let gmin = Infinity;
-        if (flankPts.some(([px, pz, ps]) => { const dd = Math.hypot(px - x, pz - z); return dd < (ps + s) * 1.25 + 2.4; })) continue;   // no narrow notches between outcrops
+        if (flankPts.some(([px, pz, ps]) => { const dd = dmath.hypot(px - x, pz - z); return dd < (ps + s) * 1.25 + 2.4; })) continue;   // no narrow notches between outcrops
         if (nearTrail(x, z, s * 1.4 + 2.5)) continue;
         flankPts.push([x, z, s]); for (const [ox, oz] of [[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3], [0.9, 0.9], [-0.9, 0.9], [0.9, -0.9], [-0.9, -0.9]]) gmin = Math.min(gmin, h(x + ox * s, z + oz * s));
         const gc = h(x, z), y = Math.min(gmin + sy * 0.45, gc + sy * 0.25);
@@ -1260,13 +1261,13 @@ export function resolvePeak(h: H): PeakResolved {
     const byStair = a > finalRange[0] && a < finalRange[1];   // behind the final flight: a flush face, never proud of it
     for (const [edge, kSide] of [[rim.rout[i], 1]] as Array<[number, number]>) {   // outer edge only: the summit cone rises from the inner edge
       if (R() < (byStair && kSide > 0 ? -1 : 0.25)) continue;
-      if (trails.some((t) => t.length && Math.hypot(t[t.length - 1].x - C.x - Math.cos(a) * edge, t[t.length - 1].z - C.z - Math.sin(a) * edge) < 7)) continue;   // the rim trails' heads stay open
+      if (trails.some((t) => t.length && dmath.hypot(t[t.length - 1].x - C.x - dmath.cos(a) * edge, t[t.length - 1].z - C.z - dmath.sin(a) * edge) < 7)) continue;   // the rim trails' heads stay open
       const dep = 2.0 + R() * 1.0, rr = byStair && kSide > 0 ? edge - dep * 0.6 : edge + kSide * dep * 0.1, gy = Math.min(at(a, edge + kSide * 1.5), at(a, edge + kSide * dep * 1.2), at(a - 2.4 / edge, edge + kSide * dep), at(a + 2.4 / edge, edge + kSide * dep)), top = y + (R() < 0.18 ? 0.8 + R() * 0.8 : (R() - 0.7) * 0.5), foot = Math.min(gy, y) - 2;   // down to the lowest ground under it (no floating overhang over the flank)
-      rock(C.x + Math.cos(a) * rr, (byStair ? Math.min(top, y) + foot : top + foot) / 2, C.z + Math.sin(a) * rr, 2.4 + R() * 1.4, ((byStair ? Math.min(top, y) : top) - foot) / 2, dep, Math.PI / 2 - a + (R() - 0.5) * 0.3, 9800 + i * 2 + (kSide > 0 ? 1 : 0), top > y + 0.5 && !byStair ? 1 : 0);
+      rock(C.x + dmath.cos(a) * rr, (byStair ? Math.min(top, y) + foot : top + foot) / 2, C.z + dmath.sin(a) * rr, 2.4 + R() * 1.4, ((byStair ? Math.min(top, y) : top) - foot) / 2, dep, Math.PI / 2 - a + (R() - 0.5) * 0.3, 9800 + i * 2 + (kSide > 0 ? 1 : 0), top > y + 0.5 && !byStair ? 1 : 0);
     }
   }
 
-  for (const [ao, d, th] of PEAK.cragTotems) { const q = toCone + ao, x = lx + Math.cos(q) * d, z = lz + Math.sin(q) * d; totems.push({ x: r3(x), y: ly, z: r3(z), h: th, yaw: r3(-(toCone + Math.PI) + (ao > 0 ? -0.35 : 0.35)), plinth: null }); }
+  for (const [ao, d, th] of PEAK.cragTotems) { const q = toCone + ao, x = lx + dmath.cos(q) * d, z = lz + dmath.sin(q) * d; totems.push({ x: r3(x), y: ly, z: r3(z), h: th, yaw: r3(-(toCone + Math.PI) + (ao > 0 ? -0.35 : 0.35)), plinth: null }); }
   const camX = cg.x + fx * (cg.rTop - 1.8), camZ = cg.z + fz * (cg.rTop - 1.8);
   const cam: [number, number, number] = [r3(camX), cg.top + 1.75, r3(camZ)];
   const crate: [number, number, number, number] = [r3(camX + fx * PEAK.crate.f - fz * PEAK.crate.r), cg.top, r3(camZ + fz * PEAK.crate.f + fx * PEAK.crate.r), 0.35];
@@ -1274,7 +1275,7 @@ export function resolvePeak(h: H): PeakResolved {
   // plug rocks: lava masses closing the slivers of steep terrain found between bench walls / flight
   // fills (traps + sealed pockets after the terrain re-bakes): [x, z, half-size, top y]; foot 1.5 m under the lowest ground
   for (const [x, z, r, top] of PEAK.plugs) { let lo = Infinity; for (const [dx, dz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) lo = Math.min(lo, h(x + dx, z + dz)); const bot = lo - 1.5, sy = (top - bot) / 2 / 0.95;
-    rock(x, (top + bot) / 2, z, r, sy, r, Math.atan2(z - C.z, x - C.x), 9100 + Math.round(x + z), 1); }   // kind 1: drawn courses + ONE collider mass
+    rock(x, (top + bot) / 2, z, r, sy, r, dmath.atan2(z - C.z, x - C.x), 9100 + Math.round(x + z), 1); }   // kind 1: drawn courses + ONE collider mass
   closeRockGaps(rocks);
   const SM = PEAK.summit, yTop = Math.max(...rim.y) + SM.above;
   const summit = { y1: r3(yTop), r1: SM.lip, floor: r3(yTop - SM.depth), rf: SM.floorR, k: SM.k };
@@ -1287,7 +1288,7 @@ export function resolvePeak(h: H): PeakResolved {
 
 /** step boxes of a flight (solid down to its base) + its cheek parapet boxes, sim convention */
 export function flightBoxes(f: Flight, out: Box[], surf: Box["surf"] = "stone") {
-  const c = Math.cos(f.yaw), s = -Math.sin(f.yaw); // three yaw → world direction of +X local; local +Z = (−s, c)
+  const c = dmath.cos(f.yaw), s = -dmath.sin(f.yaw); // three yaw → world direction of +X local; local +Z = (−s, c)
   for (let i = 0; i < f.steps; i++) {
     const along = i * f.tread + f.tread / 2, top = f.y + f.rise * (i + 1), bot = f.base === null ? top - 0.55 : Math.min(f.base, top - 0.3);
     out.push({ c: [f.x + c * along, (top + bot) / 2, f.z + s * along], h: [f.tread / 2 + 0.01, (top - bot) / 2, f.width / 2], yaw: simYaw(f.yaw), surf });
@@ -1308,13 +1309,13 @@ export function peakColliders(R: PeakResolved, tags?: string[]): Box[] {
   // rim plateau: one flat box per sample segment (top = plateau height, down to 4 m below the lowest ground under it)
   { const P = R.rim, n = P.a.length; for (let i = 0; i < n; i++) { const j = (i + 1) % n, a = P.a[i] + (((P.a[j] - P.a[i]) + Math.PI * 3) % (Math.PI * 2) - Math.PI) / 2, ri = (P.rin[i] + P.rin[j]) / 2, ro = (P.rout[i] + P.rout[j]) / 2, rm = (ri + ro) / 2, y = Math.max(P.y[i], P.y[j]) - 0.02;
       const len = Math.abs(((P.a[j] - P.a[i]) + Math.PI * 3) % (Math.PI * 2) - Math.PI) * rm + 0.3, bot = P.bot ? Math.min(P.bot[i], P.bot[j]) : y - 14;
-      out.push(box(C.x + Math.cos(a) * rm, (y + bot) / 2, C.z + Math.sin(a) * rm, ro - ri, y - bot, len, a)); } }
+      out.push(box(C.x + dmath.cos(a) * rm, (y + bot) / 2, C.z + dmath.sin(a) * rm, ro - ri, y - bot, len, a)); } }
   tag("plateau");
   for (const b of R.benches) {
     for (let j = 0; j + 1 < b.a.length; j++) {
       const a = (b.a[j] + b.a[j + 1]) / 2, ri = (b.rin[j] + b.rin[j + 1]) / 2, ro = (b.rout[j] + b.rout[j + 1]) / 2, rm = (ri + ro) / 2;
       const len = (b.a[j + 1] - b.a[j]) * rm + 0.25, bot = b.bot ? Math.min(b.bot[j], b.bot[j + 1]) : b.y1 - 3;
-      out.push(box(C.x + Math.cos(a) * rm, (b.y + bot) / 2, C.z + Math.sin(a) * rm, ro - ri + 0.3, b.y - bot, len, a));
+      out.push(box(C.x + dmath.cos(a) * rm, (b.y + bot) / 2, C.z + dmath.sin(a) * rm, ro - ri + 0.3, b.y - bot, len, a));
     }
     tag("bench" + b.k);
   }
@@ -1328,10 +1329,10 @@ export function peakColliders(R: PeakResolved, tags?: string[]): Box[] {
   });
   const cg = R.crag;
   { let y0 = cg.ground - 2; cg.tiers.forEach(([rr0, yTop], ti) => { // each tier: 8 lobed boxes (flat top level with the block tops)
-      const top = yTop - 0.05; for (let q = 0; q < 8; q++) { const a = q / 8 * Math.PI * 2, rr = rr0 * (cg.lobes?.[ti]?.[q] ?? 1); out.push(box(cg.x + Math.cos(a) * rr * 0.47, (y0 + top) / 2, cg.z + Math.sin(a) * rr * 0.47, rr * 0.95, top - y0, rr * 0.8, a)); } y0 = top - 3; }); }
+      const top = yTop - 0.05; for (let q = 0; q < 8; q++) { const a = q / 8 * Math.PI * 2, rr = rr0 * (cg.lobes?.[ti]?.[q] ?? 1); out.push(box(cg.x + dmath.cos(a) * rr * 0.47, (y0 + top) / 2, cg.z + dmath.sin(a) * rr * 0.47, rr * 0.95, top - y0, rr * 0.8, a)); } y0 = top - 3; }); }
   tag("cragTier");
   { const L = cg.ledge; out.push(box(L.x, L.y - 1.5, L.z, L.r * 1.75, 3, L.r * 1.75));
-    for (let q = 0; q < 8; q++) { const a = q / 8 * Math.PI * 2; out.push(box(L.x + Math.cos(a) * L.r * 0.45, (L.ground - 2 + L.y - 2) / 2, L.z + Math.sin(a) * L.r * 0.45, L.r, L.y - L.ground, L.r * 0.83, a)); } }
+    for (let q = 0; q < 8; q++) { const a = q / 8 * Math.PI * 2; out.push(box(L.x + dmath.cos(a) * L.r * 0.45, (L.ground - 2 + L.y - 2) / 2, L.z + dmath.sin(a) * L.r * 0.45, L.r, L.y - L.ground, L.r * 0.83, a)); } }
   tag("ledge");
   cg.flights.forEach((f, i) => { flightBoxes(f, out); tag("cragFlight" + i); });
   out.push(box(R.crate[0], R.crate[1] + 0.45, R.crate[2], 1.1, 0.9, 1.1, simYaw(R.crate[3]), "wood")); tag("crate");
@@ -1342,8 +1343,8 @@ export function peakColliders(R: PeakResolved, tags?: string[]): Box[] {
  *  outer face at the cone's mid-layer radius (mid-chord ±0.4 m), a solid core under the plateau, the crater hole above its
  *  floor + a floor of 4 crossed boxes */
 function summitBoxes(R: PeakResolved, out: Box[]) {
-  const C = PEAK_C, S = R.summit, n = PEAK.summit.slots, L = PEAK.summit.layer, half = Math.PI / n, cs = (1 + Math.cos(half)) / 2;
-  const wedge = (a: number, ri: number, ro: number, y0: number, y1: number) => { const rm = (ri + ro) / 2; out.push(box(C.x + Math.cos(a) * rm, (y0 + y1) / 2, C.z + Math.sin(a) * rm, ro - ri, y1 - y0, 2 * ro * Math.tan(half) * 1.03, a)); };
+  const C = PEAK_C, S = R.summit, n = PEAK.summit.slots, L = PEAK.summit.layer, half = Math.PI / n, cs = (1 + dmath.cos(half)) / 2;
+  const wedge = (a: number, ri: number, ro: number, y0: number, y1: number) => { const rm = (ri + ro) / 2; out.push(box(C.x + dmath.cos(a) * rm, (y0 + y1) / 2, C.z + dmath.sin(a) * rm, ro - ri, y1 - y0, 2 * ro * dmath.tan(half) * 1.03, a)); };
   for (let i = 0; i < n; i++) {
     const a = (i + 0.5) / n * Math.PI * 2, [rin, yp] = rimInner(R, a), yb = yp - 0.4, lo = R.apex[1] - 6;
     // hidden core in the crater, under the plateau: it reaches 1 m INTO the plateau everywhere in its slot (a slot between
@@ -1370,7 +1371,7 @@ export const TRAIL_END = { why: "" };
  *  the side where the ground falls ~one riser per tread, so the path hugs the slope instead of standing on stilts. Ends
  *  where the step reaches the ground on a slope a kong walks (≤ 0.55). Returned bottom → top. */
 export function peakTrail(h: H, x0: number, y0: number, z0: number, hx: number, hz: number, maxSteps: number): TrailStep[] {
-  const T = TRAIL, out: TrailStep[] = [], hl = Math.hypot(hx, hz), ux0 = hx / hl, uz0 = hz / hl;
+  const T = TRAIL, out: TrailStep[] = [], hl = dmath.hypot(hx, hz), ux0 = hx / hl, uz0 = hz / hl;
   let x = x0, z = z0, y = y0, side = 1, lateral = 0, turns = 0;
   const gmax = (cx: number, cz: number, dx: number, dz: number) => { let m = -Infinity; for (const w of [-T.width / 2, 0, T.width / 2]) for (const a of [-T.len / 2, T.len / 2]) m = Math.max(m, h(cx + dx * a - dz * w, cz + dz * a + dx * w)); return m; };
   const gmin = (cx: number, cz: number, dx: number, dz: number) => { let m = Infinity; for (const w of [-T.width / 2, 0, T.width / 2]) for (const a of [-T.len / 2, T.len / 2]) m = Math.min(m, h(cx + dx * a - dz * w, cz + dz * a + dx * w)); return m; };
@@ -1379,12 +1380,12 @@ export function peakTrail(h: H, x0: number, y0: number, z0: number, hx: number, 
     // is closest to one riser without the step sinking (the ground under it must stay below the new tread)
     let best: [number, number, number, number] | null = null;
     for (const da of [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2, 1.35, -0.15, -0.3, -0.45, -0.6, -0.75, -0.9, -1.05, -1.2, -1.35]) {
-      const a = da * side, dx = ux0 * Math.cos(a) - uz0 * Math.sin(a), dz = ux0 * Math.sin(a) + uz0 * Math.cos(a);
+      const a = da * side, dx = ux0 * dmath.cos(a) - uz0 * dmath.sin(a), dz = ux0 * dmath.sin(a) + uz0 * dmath.cos(a);
       const nx = x + dx * T.tread, nz = z + dz * T.tread, ny = y - T.rise, gm = gmax(nx, nz, dx, dz);
       if (gm > ny + 0.02 && gm > y - 0.05) continue;                         // would climb or bury the tread
-      const yw = Math.atan2(-dz, dx); if (out.length && Math.abs(Math.atan2(Math.sin(yw - out[out.length - 1].yaw), Math.cos(yw - out[out.length - 1].yaw))) > 0.32) continue;   // gentle bends only
-      const drop = y - gm, score = Math.abs(drop - T.rise) + Math.abs(da) * 0.15 + (Math.abs(lateral + Math.sin(a) * T.tread) > 18 ? 5 : 0);
-      if (!best || score < best[0]) best = [score, nx, nz, Math.atan2(-dz, dx)];
+      const yw = dmath.atan2(-dz, dx); if (out.length && Math.abs(dmath.atan2(dmath.sin(yw - out[out.length - 1].yaw), dmath.cos(yw - out[out.length - 1].yaw))) > 0.32) continue;   // gentle bends only
+      const drop = y - gm, score = Math.abs(drop - T.rise) + Math.abs(da) * 0.15 + (Math.abs(lateral + dmath.sin(a) * T.tread) > 18 ? 5 : 0);
+      if (!best || score < best[0]) best = [score, nx, nz, dmath.atan2(-dz, dx)];
     }
     if (!best) {
       // a switchback LANDING: a flat round platform (5 treads at one height turning 0.6 rad each) — the path reverses
@@ -1393,17 +1394,17 @@ export function peakTrail(h: H, x0: number, y0: number, z0: number, hx: number, 
       // turn 90° in place, walk 4 flat treads across, turn another 90°
       const dir = Math.sign(lateral || 1) * -1; let cx = l.x, cz = l.z, yw = l.yaw;
       for (let k = 1; k <= 3; k++) { yw = l.yaw + dir * (Math.PI / 2) * k / 3; out.push({ ...l, x: Math.round(cx * 1000) / 1000, z: Math.round(cz * 1000) / 1000, yaw: Math.round(yw * 1000) / 1000 }); }
-      for (let k = 1; k <= 5; k++) { cx += Math.cos(yw) * T.tread; cz -= Math.sin(yw) * T.tread; const g2 = gmax(cx, cz, Math.cos(yw), -Math.sin(yw)); if (g2 > l.y + 0.05) break; out.push({ ...l, x: Math.round(cx * 1000) / 1000, z: Math.round(cz * 1000) / 1000, yaw: Math.round(yw * 1000) / 1000, base: Math.round((Math.min(l.base, gmin(cx, cz, Math.cos(yw), -Math.sin(yw)) - 0.4)) * 1000) / 1000 }); }
+      for (let k = 1; k <= 5; k++) { cx += dmath.cos(yw) * T.tread; cz -= dmath.sin(yw) * T.tread; const g2 = gmax(cx, cz, dmath.cos(yw), -dmath.sin(yw)); if (g2 > l.y + 0.05) break; out.push({ ...l, x: Math.round(cx * 1000) / 1000, z: Math.round(cz * 1000) / 1000, yaw: Math.round(yw * 1000) / 1000, base: Math.round((Math.min(l.base, gmin(cx, cz, dmath.cos(yw), -dmath.sin(yw)) - 0.4)) * 1000) / 1000 }); }
       for (let k = 1; k <= 3; k++) { const y2 = yw + dir * (Math.PI / 2) * k / 3; out.push({ ...l, x: Math.round(cx * 1000) / 1000, z: Math.round(cz * 1000) / 1000, yaw: Math.round(y2 * 1000) / 1000, base: out[out.length - 1].base }); }
       x = cx; z = cz; side = dir; lateral = 0; continue;
     }
-    const [, nx, nz, yaw] = best, dx = Math.cos(yaw), dz = -Math.sin(yaw);
+    const [, nx, nz, yaw] = best, dx = dmath.cos(yaw), dz = -dmath.sin(yaw);
     lateral += (dx * -uz0 + dz * ux0) * T.tread; if (Math.abs(lateral) > 17) side = -Math.sign(lateral);
     const gm = gmax(nx, nz, dx, dz), ny = Math.max(gm + 0.02, y - T.rise);
     out.push({ x: Math.round(nx * 1000) / 1000, z: Math.round(nz * 1000) / 1000, y: Math.round(ny * 1000) / 1000, yaw: Math.round(yaw * 1000) / 1000, base: Math.round((gmin(nx, nz, dx, dz) - 0.4) * 1000) / 1000 });
     x = nx; z = nz; y = ny;
     // gentle ground reached and the tread sits on it: the path is done
-    const sl = Math.hypot(h(x + 1.5, z) - h(x - 1.5, z), h(x, z + 1.5) - h(x, z - 1.5)) / 3;
+    const sl = dmath.hypot(h(x + 1.5, z) - h(x - 1.5, z), h(x, z + 1.5) - h(x, z - 1.5)) / 3;
     if (y - gm < 0.1 && y - gmin(x, z, dx, dz) < 0.42 && sl < 0.75 && i > 6) { TRAIL_END.why = "ground"; break; }
     TRAIL_END.why = "max steps";
   }
@@ -1411,8 +1412,8 @@ export function peakTrail(h: H, x0: number, y0: number, z0: number, hx: number, 
   // steps ≤ 0.55 m from the ground under its capsule)
   for (let k = 0; k < 16; k++) { const l = out[out.length - 1]; if (!l) break;
     // down the fall line (no cross-slope under the tread), turning at most 0.5 rad per step
-    const gx = h(l.x - 1, l.z) - h(l.x + 1, l.z), gz = h(l.x, l.z - 1) - h(l.x, l.z + 1), want = Math.atan2(-gz, gx), cur = l.yaw, dyaw = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
-    const yaw = cur + Math.max(-0.5, Math.min(0.5, dyaw)), dx = Math.cos(yaw), dz = -Math.sin(yaw), fx = l.x + dx * (T.len / 2 + 0.45), fz = l.z + dz * (T.len / 2 + 0.45);
+    const gx = h(l.x - 1, l.z) - h(l.x + 1, l.z), gz = h(l.x, l.z - 1) - h(l.x, l.z + 1), want = dmath.atan2(-gz, gx), cur = l.yaw, dyaw = dmath.atan2(dmath.sin(want - cur), dmath.cos(want - cur));
+    const yaw = cur + Math.max(-0.5, Math.min(0.5, dyaw)), dx = dmath.cos(yaw), dz = -dmath.sin(yaw), fx = l.x + dx * (T.len / 2 + 0.45), fz = l.z + dz * (T.len / 2 + 0.45);
     if (l.y - gmin(l.x, l.z, dx, dz) <= 0.3 && l.y - h(fx, fz) <= 0.3) break;
     // (the tread may sink ≤ 0.25 m into the ground at its uphill corner: there the kong walks on the terrain itself)
     const x2 = l.x + dx * T.tread, z2 = l.z + dz * T.tread, y2 = Math.max(gmax(x2, z2, dx, dz) - 0.25, l.y - T.rise);
@@ -1427,8 +1428,8 @@ export function trailBoxes(steps: TrailStep[], out: Box[]) {
 export const TRAIL_DIMS = TRAIL;
 export function peakClearings(R: PeakResolved): Clearing[] {
   const C = PEAK_C, out: Clearing[] = [{ x: C.x, z: C.z, r: 60 }];
-  for (let i = 0; i < R.rim.a.length; i += 4) { const a = R.rim.a[i], rm = (R.rim.rin[i] + R.rim.rout[i]) / 2; out.push({ x: C.x + Math.cos(a) * rm, z: C.z + Math.sin(a) * rm, r: (R.rim.rout[i] - R.rim.rin[i]) / 2 + 1 }); }
-  for (const b of R.benches) for (let j = 0; j < b.a.length; j += 3) { const a = b.a[j], rm = (b.rin[j] + b.rout[j]) / 2; out.push({ x: C.x + Math.cos(a) * rm, z: C.z + Math.sin(a) * rm, r: (b.rout[j] - b.rin[j]) / 2 + 2 }); }
+  for (let i = 0; i < R.rim.a.length; i += 4) { const a = R.rim.a[i], rm = (R.rim.rin[i] + R.rim.rout[i]) / 2; out.push({ x: C.x + dmath.cos(a) * rm, z: C.z + dmath.sin(a) * rm, r: (R.rim.rout[i] - R.rim.rin[i]) / 2 + 1 }); }
+  for (const b of R.benches) for (let j = 0; j < b.a.length; j += 3) { const a = b.a[j], rm = (b.rin[j] + b.rout[j]) / 2; out.push({ x: C.x + dmath.cos(a) * rm, z: C.z + dmath.sin(a) * rm, r: (b.rout[j] - b.rin[j]) / 2 + 2 }); }
   for (const s of R.seams) for (let i = 0; i < s.pts.length; i += 2) out.push({ x: s.pts[i][0], z: s.pts[i][2], r: s.w / 2 + 2.5 });
   for (const r of R.rocks) if (r.kind === 1 && r.sx > 2.5) out.push({ x: r.x, z: r.z, r: Math.max(r.sx, r.sz) * 0.8 });
   out.push({ x: R.crag.x, z: R.crag.z, r: R.crag.rBase + 5 }, { x: R.crag.ledge.x, z: R.crag.ledge.z, r: R.crag.ledge.r + 5 });
@@ -1441,7 +1442,7 @@ export function peakClearings(R: PeakResolved): Clearing[] {
 }
 /** walkable surface height on the peak (rim plateau, benches, crag top) — for placing props/plants */
 export function peakSurface(R: PeakResolved, h: H, x: number, z: number): number {
-  const C = PEAK_C, r = Math.hypot(x - C.x, z - C.z), a = Math.atan2(z - C.z, x - C.x);
+  const C = PEAK_C, r = dmath.hypot(x - C.x, z - C.z), a = dmath.atan2(z - C.z, x - C.x);
   let best = h(x, z);
   { const P = R.rim, n = P.a.length, u = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2) * n, i = Math.floor(u) % n, j = (i + 1) % n, t = u - Math.floor(u);
     if (r >= P.rin[i] + (P.rin[j] - P.rin[i]) * t && r <= P.rout[i] + (P.rout[j] - P.rout[i]) * t) best = Math.max(best, P.y[i] + (P.y[j] - P.y[i]) * t); }
@@ -1453,8 +1454,8 @@ export function peakSurface(R: PeakResolved, h: H, x: number, z: number): number
     const t = (aa - b.a[j]) / ((b.a[j + 1] - b.a[j]) || 1), ri = b.rin[j] + (b.rin[j + 1] - b.rin[j]) * t, ro = b.rout[j] + (b.rout[j + 1] - b.rout[j]) * t;
     if (r >= ri && r <= ro) best = Math.max(best, b.y);
   }
-  if (Math.hypot(x - R.crag.x, z - R.crag.z) < R.crag.rTop) best = Math.max(best, R.crag.top);
-  else if (Math.hypot(x - R.crag.ledge.x, z - R.crag.ledge.z) < R.crag.ledge.r) best = Math.max(best, R.crag.ledge.y);
+  if (dmath.hypot(x - R.crag.x, z - R.crag.z) < R.crag.rTop) best = Math.max(best, R.crag.top);
+  else if (dmath.hypot(x - R.crag.ledge.x, z - R.crag.ledge.z) < R.crag.ledge.r) best = Math.max(best, R.crag.ledge.y);
   return best;
 }
 

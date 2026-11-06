@@ -15,6 +15,7 @@
 // every `walk` keep-out and every loot slot is reachable by the kong capsule (PLAYER_R + 6 cm on a 0.2 m grid); no piece
 // sits in front of a window above its sill; every collider stays inside the room.
 import type { Box, Surface } from "../world/colliders";
+import * as dmath from "../sim/dmath";
 
 export type InteriorStyle = "house" | "shop" | "warehouse" | "lab" | "hut" | "cabin" | "temple";
 export type RoomRole =
@@ -419,8 +420,8 @@ class Placer {
   materialise(g: Group, side: Side | -1, a: number, cz = 0, yawC = 0): { rect: Rect; items: InteriorItem[] } {
     let ox: number, oz: number, yaw: number;
     if (side >= 0) { [ox, oz] = wallPoint(this.room, side as Side, a, WALL_GAP); yaw = sideYaw(side as Side); }
-    else { yaw = yawC; const c = Math.cos(yaw), s = Math.sin(yaw); ox = a - (g.d / 2) * s; oz = cz - (g.d / 2) * c; }
-    const c = Math.cos(yaw), s = Math.sin(yaw);
+    else { yaw = yawC; const c = dmath.cos(yaw), s = dmath.sin(yaw); ox = a - (g.d / 2) * s; oz = cz - (g.d / 2) * c; }
+    const c = dmath.cos(yaw), s = dmath.sin(yaw);
     const T = (x: number, z: number): [number, number] => [ox + x * c + z * s, oz - x * s + z * c];
     const pts = [T(-g.w / 2, 0), T(g.w / 2, 0), T(-g.w / 2, g.d), T(g.w / 2, g.d)];
     const rect = { x0: Math.min(...pts.map((p) => p[0])), z0: Math.min(...pts.map((p) => p[1])), x1: Math.max(...pts.map((p) => p[0])), z1: Math.max(...pts.map((p) => p[1])) };
@@ -457,8 +458,8 @@ class Placer {
   groupRect(g: Group, side: Side | -1, a: number, cz: number, yawC: number): Rect {
     let ox: number, oz: number, yaw: number;
     if (side >= 0) { [ox, oz] = wallPoint(this.room, side as Side, a, WALL_GAP); yaw = sideYaw(side as Side); }
-    else { yaw = yawC; ox = a - (g.d / 2) * Math.sin(yaw); oz = cz - (g.d / 2) * Math.cos(yaw); }
-    const c = Math.cos(yaw), s = Math.sin(yaw);
+    else { yaw = yawC; ox = a - (g.d / 2) * dmath.sin(yaw); oz = cz - (g.d / 2) * dmath.cos(yaw); }
+    const c = dmath.cos(yaw), s = dmath.sin(yaw);
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (const [x, z] of [[-g.w / 2, 0], [g.w / 2, 0], [-g.w / 2, g.d], [g.w / 2, g.d]]) {
       const px = ox + x * c + z * s, pz = oz - x * s + z * c;
@@ -532,7 +533,7 @@ class Placer {
   acceptChest(before: number): boolean {
     const it = this.used[before].items[0];
     (it as InteriorItem & { chest?: boolean }).chest = true;
-    this.chestPts.push([it.x + Math.sin(it.yaw) * 0.9, it.z + Math.cos(it.yaw) * 0.9]);
+    this.chestPts.push([it.x + dmath.sin(it.yaw) * 0.9, it.z + dmath.cos(it.yaw) * 0.9]);
     if (!this.connected()) { this.chestPts.pop(); return false; }
     this.chests.push([it.x, it.z, it.yaw]);
     return true;
@@ -621,7 +622,7 @@ class Placer {
     const frames = this.room.finish?.frames ?? FINISH[this.room.style].frames;
     if (!frames) return false;
     const a = o.at + (this.r() < 0.5 ? -1 : 1) * (o.w / 2 - 0.2);
-    for (const u of this.used) for (const it of u.items) if (it.kind === "sill-pot" && Math.hypot(it.x - wallPoint(this.room, o.side, a, 0.06)[0], it.z - wallPoint(this.room, o.side, a, 0.06)[1]) < 0.4) return false;
+    for (const u of this.used) for (const it of u.items) if (it.kind === "sill-pot" && dmath.hypot(it.x - wallPoint(this.room, o.side, a, 0.06)[0], it.z - wallPoint(this.room, o.side, a, 0.06)[1]) < 0.4) return false;
     const [x, z] = wallPoint(this.room, o.side, a, 0.065);
     this.used.push({ rect: { x0: 1e9, z0: 1e9, x1: 1e9, z1: 1e9 }, items: [{ kind: "sill-pot", x, y: o.y0 ?? 1.0, z, yaw: sideYaw(o.side), w: 0.22, h: 0.3, d: 0.12, v: this.r(), c, col: 0 }], side: o.side });
     return true;
@@ -653,7 +654,7 @@ class Placer {
     if (!clear(x, z)) {
       let found = false;
       for (let rr = 0.3; rr < Math.max(w, d) && !found; rr += 0.3) for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2, px = x + Math.cos(a) * rr, pz = z + Math.sin(a) * rr;
+        const a = (k / 12) * Math.PI * 2, px = x + dmath.cos(a) * rr, pz = z + dmath.sin(a) * rr;
         if (clear(px, pz)) { bx = px; bz = pz; found = true; break; }
       }
       if (!found) return false;
@@ -755,7 +756,7 @@ class Placer {
     for (let j = Math.max(0, cj - k); j <= Math.min(D - 1, cj + k); j++) for (let i = Math.max(0, ci - k); i <= Math.min(W - 1, ci + k); i++) {
       const c = j * W + i;
       if (b[c]) continue;
-      const dd = Math.hypot(-w / 2 + (i + 0.5) * cw - x, -d / 2 + (j + 0.5) * cd - z);
+      const dd = dmath.hypot(-w / 2 + (i + 0.5) * cw - x, -d / 2 + (j + 0.5) * cd - z);
       if (dd < bd) { bd = dd; best = c; }
     }
     return best;
@@ -802,7 +803,7 @@ function inward(s: Side): [number, number] { return s === 0 ? [0, -1] : s === 1 
 function sideYaw(s: Side): number { return s === 0 ? Math.PI : s === 1 ? -HALF_PI : s === 2 ? 0 : HALF_PI; }
 /** room-local AABB of an item's footprint */
 export function itemRect(it: { x: number; z: number; yaw: number; w: number; d: number }): Rect {
-  const c = Math.abs(Math.cos(it.yaw)), s = Math.abs(Math.sin(it.yaw));
+  const c = Math.abs(dmath.cos(it.yaw)), s = Math.abs(dmath.sin(it.yaw));
   const hx = (it.w * c + it.d * s) / 2, hz = (it.w * s + it.d * c) / 2;
   return { x0: it.x - hx, z0: it.z - hz, x1: it.x + hx, z1: it.z + hz };
 }
@@ -955,7 +956,7 @@ function recipe(p: Placer, role: RoomRole, dens: number) {
         }
         // hero: yellow / black hazard marking along every rack face
         for (const u of [...p.used]) for (const it of u.items) if (it.kind === "rack") {
-          const fx = Math.sin(it.yaw), fz = Math.cos(it.yaw);
+          const fx = dmath.sin(it.yaw), fz = dmath.cos(it.yaw);
           for (const sgn of u.side >= 0 ? [1] : [1, -1]) p.flat("hazard", it.x + fx * sgn * (it.d / 2 + 0.2), it.z + fz * sgn * (it.d / 2 + 0.2), it.yaw, it.w, 0.14);
         }
       }
@@ -1228,7 +1229,7 @@ function island(p: Placer, g: Group): boolean {
   const pts: Array<[number, number, number]> = [];
   for (let z = -d / 2 + m; z <= d / 2 - m; z += 0.4) for (let x = -w / 2 + m; x <= w / 2 - m; x += 0.4) {
     // (the squared test skips the exact hypot only where it surely cannot lower q: the same q, without most of the hypots)
-    let q = 5; for (const [cx, cz] of cs) { const dx = cx - x, dz = cz - z; if (dx * dx + dz * dz < q * q * 1.000001) q = Math.min(q, Math.hypot(dx, dz)); }
+    let q = 5; for (const [cx, cz] of cs) { const dx = cx - x, dz = cz - z; if (dx * dx + dz * dz < q * q * 1.000001) q = Math.min(q, dmath.hypot(dx, dz)); }
     pts.push([x, z, q + r() * 0.8]);
   }
   pts.sort((a, b) => b[2] - a[2]);
@@ -1296,33 +1297,33 @@ function lootSlots(p: Placer): { chests: Array<[number, number, number]>; floor:
   // off the walls, with a reachable standing cell within 0.95 m (the match generator re-validates every slot)
   {
     const pieces = p.used.flatMap((u) => u.items).filter((it) => it.col && it.y < 0.3 && !FLAT.has(it.kind) && !(it as InteriorItem & { chest?: boolean }).chest);
-    const inside = (x: number, z: number, m: number) => pieces.some((it) => { const c = Math.cos(it.yaw), s = Math.sin(it.yaw), dx = x - it.x, dz = z - it.z; return Math.abs(dx * c - dz * s) < it.w / 2 + m && Math.abs(dx * s + dz * c) < it.d / 2 + m; });
-    const reachNear = (x: number, z: number) => { for (const [cx, cz] of all) if (Math.hypot(cx - x, cz - z) < 0.95) return true; return false; };
+    const inside = (x: number, z: number, m: number) => pieces.some((it) => { const c = dmath.cos(it.yaw), s = dmath.sin(it.yaw), dx = x - it.x, dz = z - it.z; return Math.abs(dx * c - dz * s) < it.w / 2 + m && Math.abs(dx * s + dz * c) < it.d / 2 + m; });
+    const reachNear = (x: number, z: number) => { for (const [cx, cz] of all) if (dmath.hypot(cx - x, cz - z) < 0.95) return true; return false; };
     const beside: Array<[number, number]> = [];
     for (const it of pieces) {
-      const c = Math.cos(it.yaw), s = Math.sin(it.yaw);
+      const c = dmath.cos(it.yaw), s = dmath.sin(it.yaw);
       // item-local front +z, then the two sides
       for (const [lx, lz] of [[0, it.d / 2 + 0.32], [it.w / 2 + 0.32, 0], [-(it.w / 2 + 0.32), 0]] as Array<[number, number]>) {
         const x = it.x + lx * c + lz * s, z = it.z - lx * s + lz * c;
         if (Math.abs(x) > room.w / 2 - 0.3 || Math.abs(z) > room.d / 2 - 0.3 || inside(x, z, 0.12)) continue;
         if (p.keep.some((k) => x > k.x0 - 0.2 && x < k.x1 + 0.2 && z > k.z0 - 0.2 && z < k.z1 + 0.2)) continue;
-        if (chests.some((q) => Math.hypot(q[0] - x, q[1] - z) < 1.0) || !reachNear(x, z)) continue;
+        if (chests.some((q) => dmath.hypot(q[0] - x, q[1] - z) < 1.0) || !reachNear(x, z)) continue;
         beside.push([x, z]);
       }
     }
     for (let k = beside.length - 1; k > 0; k--) { const j = Math.floor(r() * (k + 1)); [beside[k], beside[j]] = [beside[j], beside[k]]; }
-    for (const q of beside) { if (floor.length >= n) break; if (floor.every((f) => Math.hypot(f[0] - q[0], f[1] - q[1]) >= 1.5)) floor.push(q); }
+    for (const q of beside) { if (floor.length >= n) break; if (floor.every((f) => dmath.hypot(f[0] - q[0], f[1] - q[1]) >= 1.5)) floor.push(q); }
   }
   // the rest: free cells hugging a floor-standing piece (≤ 0.4 m off its
   // footprint) first — spread ≥ 1.2 m — then the open floor
   const pcs = p.used.flatMap((u) => u.items).filter((it) => it.col && it.y < 0.3 && !FLAT.has(it.kind) && !(it as InteriorItem & { chest?: boolean }).chest);
-  const off = (x: number, z: number) => { let m = 9; for (const it of pcs) { const c = Math.cos(it.yaw), s = Math.sin(it.yaw), dx = x - it.x, dz = z - it.z; m = Math.min(m, Math.hypot(Math.max(0, Math.abs(dx * c - dz * s) - it.w / 2), Math.max(0, Math.abs(dx * s + dz * c) - it.d / 2))); } return m; };
-  const hug = pool.filter(([x, z]) => { const o = off(x, z); return o > 0.12 && o <= 0.4 && chests.every((q) => Math.hypot(q[0] - x, q[1] - z) >= 1.0); });
+  const off = (x: number, z: number) => { let m = 9; for (const it of pcs) { const c = dmath.cos(it.yaw), s = dmath.sin(it.yaw), dx = x - it.x, dz = z - it.z; m = Math.min(m, dmath.hypot(Math.max(0, Math.abs(dx * c - dz * s) - it.w / 2), Math.max(0, Math.abs(dx * s + dz * c) - it.d / 2))); } return m; };
+  const hug = pool.filter(([x, z]) => { const o = off(x, z); return o > 0.12 && o <= 0.4 && chests.every((q) => dmath.hypot(q[0] - x, q[1] - z) >= 1.0); });
   for (const src of [hug, pool]) {
     if (!floor.length && src.length) floor.push(src[Math.floor(r() * src.length)]);
     while (floor.length < n) {
       let best = -1, bd = -1;
-      for (let i = 0; i < src.length; i++) { const dmin = Math.min(...floor.map((f) => Math.hypot(f[0] - src[i][0], f[1] - src[i][1]))); if (dmin > bd) { bd = dmin; best = i; } }
+      for (let i = 0; i < src.length; i++) { const dmin = Math.min(...floor.map((f) => dmath.hypot(f[0] - src[i][0], f[1] - src[i][1]))); if (dmin > bd) { bd = dmin; best = i; } }
       if (bd < 1.2) break;
       floor.push(src[best]);
     }
@@ -1358,7 +1359,7 @@ export function furnishRoom(room: InteriorRoom): InteriorLayout {
   const finish: RoomFinish = { ...FINISH[room.style], ...(room.finish ?? {}) };
   const colliders: Box[] = [];
   for (const it of items) if (it.col) colliders.push(...itemColliders(room, it));
-  const c = Math.cos(room.yaw), s = Math.sin(room.yaw);
+  const c = dmath.cos(room.yaw), s = dmath.sin(room.yaw);
   const W = (lx: number, lz: number): [number, number] => [room.x + lx * c + lz * s, room.z - lx * s + lz * c];
   const loot: LootSlots = {
     chests: lootLocal.chests.map(([x, z, yaw]) => { const [wx, wz] = W(x, z); return [wx, room.y, wz, room.yaw + yaw]; }),
@@ -1396,15 +1397,15 @@ export function itemLocalBoxes(it: InteriorItem): Array<[number, number, number,
 export function itemColliders(room: InteriorRoom, it: InteriorItem): Box[] {
   const surf = itemSurface(it.kind, room.style);
   const out: Box[] = [];
-  const yaw = room.yaw + it.yaw, ci = Math.cos(it.yaw), si = Math.sin(it.yaw);
-  const c = Math.cos(room.yaw), s = Math.sin(room.yaw);
+  const yaw = room.yaw + it.yaw, ci = dmath.cos(it.yaw), si = dmath.sin(it.yaw);
+  const c = dmath.cos(room.yaw), s = dmath.sin(room.yaw);
   for (const [x0, y0, z0, x1, y1, z1] of itemLocalBoxes(it)) {
     const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
     const lx = it.x + mx * ci + mz * si, lz = it.z - mx * si + mz * ci;
     const wx = room.x + lx * c + lz * s, wz = room.z - lx * s + lz * c;
     const b: Box = { c: [wx, room.y + it.y + (y0 + y1) / 2, wz], h: [(x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2], surf };
     const sy = -yaw;
-    if (Math.abs(Math.sin(sy)) > 1e-6 || Math.cos(sy) < 0) b.yaw = sy;
+    if (Math.abs(dmath.sin(sy)) > 1e-6 || dmath.cos(sy) < 0) b.yaw = sy;
     out.push(b);
   }
   return out;

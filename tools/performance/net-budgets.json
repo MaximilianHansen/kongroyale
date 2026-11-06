@@ -1,0 +1,142 @@
+{
+  "about": "Network tail budgets for tools/performance/net-tail.mts. Each row of the matrix (weapon x profile x RTT) is one deterministic tools/netlab.mts run with the game's two sockets (--aux). A budget applies to the rows its rtt range and profiles name. Set from main's own numbers; npm test runs net-tail --check against them (check id nettail).",
+  "rtts": [
+    50,
+    150,
+    250
+  ],
+  "weapons": [
+    "ar",
+    "smg",
+    "shotgun"
+  ],
+  "profiles": {
+    "jitter20": {
+      "jitter": 20,
+      "loss": 0,
+      "why": "a steady home connection: 20 ms of jitter, nothing lost"
+    },
+    "loss1": {
+      "jitter": 20,
+      "loss": 1,
+      "why": "busy Wi-Fi: 1% of TCP segments lost on each socket and direction, resent after about 1.25 RTT"
+    },
+    "loss2j40": {
+      "jitter": 40,
+      "loss": 2,
+      "why": "a bad connection: 2% loss and 40 ms of jitter; reported, no budget yet"
+    }
+  },
+  "budgets": [
+    {
+      "id": "hitConfirm",
+      "metric": "confirmPct",
+      "min": 99,
+      "rtt": [
+        0,
+        150
+      ],
+      "profiles": [
+        "jitter20",
+        "loss1"
+      ],
+      "why": "a hit marker the server then rejects is the worst thing a player feels; 150 ms covers most of North America and Europe to one server"
+    },
+    {
+      "id": "ghostHits",
+      "metric": "ghost",
+      "max": 0,
+      "rtt": [
+        0,
+        150
+      ],
+      "profiles": [
+        "jitter20",
+        "loss1"
+      ],
+      "why": "same: no hit marker the server rejects"
+    },
+    {
+      "id": "hitConfirm250",
+      "metric": "confirmPct",
+      "min": 99,
+      "rtt": [
+        151,
+        250
+      ],
+      "profiles": [
+        "jitter20"
+      ],
+      "why": "netlab --check already holds this on a steady link up to 250 ms"
+    },
+    {
+      "id": "snapshotGap",
+      "metric": "snapGapP99Ms",
+      "max": 67,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "jitter20",
+        "loss1"
+      ],
+      "why": "p99 never misses more than one 30 Hz snapshot in a row; the redundant socket is what keeps this true under loss"
+    },
+    {
+      "id": "inputAck",
+      "metric": "inputAckP99OverRttMs",
+      "max": 50,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "jitter20"
+      ],
+      "why": "the server's own share of input→first ack (queue, the next tick, the next 30 Hz snapshot, jitter) stays within 3 ticks on a steady link; main is 37.5-41.7 ms"
+    },
+    {
+      "id": "inputAckLossy",
+      "metric": "inputAckP99OverRttMs",
+      "max": 85,
+      "rtt": [
+        0,
+        150
+      ],
+      "profiles": [
+        "loss1"
+      ],
+      "why": "with 1% loss a resent input costs up to one more RTT on one socket; two sockets keep the p99 near the steady case (main: 65.3-72.2 ms at ≤150 ms)"
+    },
+    {
+      "id": "corrections",
+      "metric": "corrPct",
+      "max": 5,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "jitter20",
+        "loss1",
+        "loss2j40"
+      ],
+      "why": "rubber-banding: under 5% of snapshots correct the local prediction (perf-state target)"
+    },
+    {
+      "id": "remoteHolds",
+      "metric": "holdPct",
+      "max": 2,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "jitter20",
+        "loss1"
+      ],
+      "why": "enemies freeze on screen when interpolation runs dry; under 2% of frames"
+    }
+  ]
+}

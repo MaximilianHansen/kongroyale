@@ -4,6 +4,7 @@
 // decoration (square pedestal, front planter pier, rim planters, statue) is rotated by `statueYaw` (statue faces +z
 // at yaw 0, like everything else in the town kit).
 import type { Box } from "../world/colliders";
+import * as dmath from "../sim/dmath";
 
 export interface FountainDims {
   R: number; statueHeight: number; statueYaw: number;
@@ -56,12 +57,12 @@ export function fountainColliders(x: number, y: number, z: number, o: { R?: numb
   const out: Box[] = [];
   const yaw = d.statueYaw;
   // local (rotated by statueYaw) → world
-  const W = (lx: number, lz: number): [number, number] => [x + lx * Math.cos(yaw) + lz * Math.sin(yaw), z - lx * Math.sin(yaw) + lz * Math.cos(yaw)];
+  const W = (lx: number, lz: number): [number, number] => [x + lx * dmath.cos(yaw) + lz * dmath.sin(yaw), z - lx * dmath.sin(yaw) + lz * dmath.cos(yaw)];
   const ring = (r0: number, r1: number, y0: number, y1: number, n: number) => {
     const rm = (r0 + r1) / 2, half = Math.PI / n;
     for (let i = 0; i < n; i++) {
       const a = (i + 0.5) * 2 * Math.PI / n;
-      out.push({ c: [x + Math.cos(a) * rm, y + (y0 + y1) / 2, z + Math.sin(a) * rm], h: [Math.tan(half) * r1 + 0.02, (y1 - y0) / 2, (r1 - r0) / 2], yaw: -a + Math.PI / 2, surf: "stone" });
+      out.push({ c: [x + dmath.cos(a) * rm, y + (y0 + y1) / 2, z + dmath.sin(a) * rm], h: [dmath.tan(half) * r1 + 0.02, (y1 - y0) / 2, (r1 - r0) / 2], yaw: -a + Math.PI / 2, surf: "stone" });
     }
   };
   ring(d.R - 0.05, d.stepR, 0, d.stepH, 20);        // walkable step
@@ -69,7 +70,7 @@ export function fountainColliders(x: number, y: number, z: number, o: { R?: numb
   // front planter pier + rim planters
   { const [px, pz] = W(0, d.pier.r); out.push({ c: [px, y + d.pier.y1 / 2, pz], h: [d.pier.w / 2, d.pier.y1 / 2, d.pier.d / 2], yaw, surf: "stone" }); }
   for (const p of d.rimPlanters) {
-    const [px, pz] = W(Math.sin(p.a) * (d.R - 0.17), Math.cos(p.a) * (d.R - 0.17));
+    const [px, pz] = W(dmath.sin(p.a) * (d.R - 0.17), dmath.cos(p.a) * (d.R - 0.17));
     out.push({ c: [px, y + (d.copY1 + p.h) / 2, pz], h: [p.w / 2, (d.copY1 + p.h) / 2, p.w / 2], yaw: yaw + p.a, surf: "stone" });
   }
   // pedestal tiers
