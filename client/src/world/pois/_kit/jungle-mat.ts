@@ -4,6 +4,7 @@
 // (darker + glossier rock near water), and per-vertex tint via vertex colours.
 import * as THREE from "three";
 import type { WorldCtx } from "../../../engine/engine";
+import { shareTexture } from "../../../engine/texture-release";
 
 export type TexName = "temple-blocks" | "glyph-frieze" | "basalt" | "boulder" | "flagstone" | "planks" | "moss" | "lava-crust" | "sand" | "lava-rock" | "sand2";
 const TEX_DIR = "assets/pois/jungle/tex/";
@@ -124,7 +125,7 @@ export function stoneMaterial(set: PbrSet | Promise<PbrSet>, o: StoneOpts = {}, 
   m.normalScale.setScalar(o.normalScale ?? 1);
   const apply = (s: PbrSet) => {
     if (!o.triplanar) { // uv variant: the geometry's UVs are scaled by `scale` for ALL three maps (clones share the GPU image)
-      const rep = (t: THREE.Texture) => { const c = t.clone(); c.repeat.set(1 / scale, 1 / scale); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.anisotropy = 8; c.needsUpdate = true; return c; };
+      const rep = (t: THREE.Texture) => { const c = shareTexture(t); c.repeat.set(1 / scale, 1 / scale); return c; };
       m.map = rep(s.map); m.normalMap = rep(s.normalMap); m.roughnessMap = rep(s.roughnessMap);
     } else { m.map = s.map; m.normalMap = s.normalMap; m.roughnessMap = s.roughnessMap; }
     m.needsUpdate = true;

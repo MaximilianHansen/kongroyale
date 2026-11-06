@@ -20,6 +20,7 @@ import type { InteriorRoom } from "./interior-kit";
 import TOWN_INT from "./town-interiors.json";
 import { settleLoot } from "./coast-kit";
 import { HOTEL, hotelColliders, HotelPath, hotelLayout, hotelRooms, pavFrame, PLINTH } from "./town-hotel";
+import * as dmath from "../sim/dmath";
 
 const P = poiById("coconut-cove");
 export const CX = P.x, CZ = P.z, Y = P.padY as number;
@@ -29,7 +30,7 @@ type V2 = [number, number];
 // ---------------------------------------------------------------- view camera (shared so the layout can be tested against it)
 /** view frame: camera C, heading TH (from +z toward +x); V(f, r) = f metres ahead, r metres to the screen RIGHT */
 const CAM: V2 = [46, 424], TH = 22 * Math.PI / 180;
-export const V = (f: number, r: number): V2 => [CAM[0] + f * Math.sin(TH) - r * Math.cos(TH), CAM[1] + f * Math.cos(TH) + r * Math.sin(TH)];
+export const V = (f: number, r: number): V2 => [CAM[0] + f * dmath.sin(TH) - r * dmath.cos(TH), CAM[1] + f * dmath.cos(TH) + r * dmath.sin(TH)];
 const VT = V(110, -3.5);
 /** the camera stands 4.5 m forward of the terrace frame origin (over the planted front edge) with a slightly longer
  *  lens, so the hotel fills ~45 % of the width like the target art */
@@ -43,12 +44,12 @@ const POOL_PHI = 1.36;
 /** kidney outline (closed, world XZ, counter-clockwise in x/z) */
 export const POOL: V2[] = (() => {
   const pts: V2[] = [];
-  const n = 44, ca = Math.cos(POOL_PHI), sa = Math.sin(POOL_PHI);
+  const n = 44, ca = dmath.cos(POOL_PHI), sa = dmath.sin(POOL_PHI);
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
     // bean: 13 × 8 along the facade, a bite on the hotel (east) side, a bulge toward the camera side
-    const r = 1 + 0.14 * Math.cos(a * 2 + 0.5) - 0.1 * Math.sin(a - 0.3);
-    const lx = Math.cos(a) * 14 * r, lz = Math.sin(a) * 8.5 * r - 1.6 * Math.cos(a * 2);
+    const r = 1 + 0.14 * dmath.cos(a * 2 + 0.5) - 0.1 * dmath.sin(a - 0.3);
+    const lx = dmath.cos(a) * 14 * r, lz = dmath.sin(a) * 8.5 * r - 1.6 * dmath.cos(a * 2);
     pts.push([POOL_C[0] + lx * ca - lz * sa, POOL_C[1] + lx * sa + lz * ca]);
   }
   return pts;
@@ -67,9 +68,9 @@ export function offsetPolyTS(pts: V2[], d: number): V2[] {
   for (let i = 0; i < n; i++) {
     const p = pts[(i + n - 1) % n], c = pts[i], q = pts[(i + 1) % n];
     const e1 = [c[0] - p[0], c[1] - p[1]], e2 = [q[0] - c[0], q[1] - c[1]];
-    const l1 = Math.hypot(e1[0], e1[1]) || 1, l2 = Math.hypot(e2[0], e2[1]) || 1;
+    const l1 = dmath.hypot(e1[0], e1[1]) || 1, l2 = dmath.hypot(e2[0], e2[1]) || 1;
     const n1 = [e1[1] / l1 * sgn, -e1[0] / l1 * sgn], n2 = [e2[1] / l2 * sgn, -e2[0] / l2 * sgn];
-    let nx = n1[0] + n2[0], nz = n1[1] + n2[1]; const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+    let nx = n1[0] + n2[0], nz = n1[1] + n2[1]; const l = dmath.hypot(nx, nz) || 1; nx /= l; nz /= l;
     const k = 1 / Math.max(0.5, nx * n1[0] + nz * n1[1]);
     out.push([c[0] + nx * d * k, c[1] + nz * d * k]);
   }
@@ -80,13 +81,13 @@ export const DECK: V2[] = offsetPolyTS(POOL, DECK_PAD);
 /** a straight flight of steps going DOWN from (x, z) at yTop along (dirX, dirZ) to yBottom */
 export interface Flight { x: number; z: number; dirX: number; dirZ: number; width: number; yTop: number; yBottom: number; steps: number; rise: number; tread: number }
 export function flight(x: number, z: number, dirX: number, dirZ: number, yTop: number, yBottom: number, width = 3.2, tread = 0.34): Flight {
-  const l = Math.hypot(dirX, dirZ) || 1, steps = Math.max(1, Math.round((yTop - yBottom) / 0.2));
+  const l = dmath.hypot(dirX, dirZ) || 1, steps = Math.max(1, Math.round((yTop - yBottom) / 0.2));
   return { x, z, dirX: dirX / l, dirZ: dirZ / l, width, yTop, yBottom, steps, rise: (yTop - yBottom) / steps, tread };
 }
 /** deck point + outward normal at pool-outline index i (the deck edge) */
 function deckEdge(i: number): { p: V2; n: V2 } {
   const n = DECK.length, a = DECK[(i + n - 1) % n], b = DECK[(i + 1) % n], p = DECK[i];
-  let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+  let dx = b[0] - a[0], dz = b[1] - a[1]; const l = dmath.hypot(dx, dz) || 1; dx /= l; dz /= l;
   // outward = away from the pool centre
   let nx = dz, nz = -dx; if ((p[0] - POOL_C[0]) * nx + (p[1] - POOL_C[1]) * nz < 0) { nx = -nx; nz = -nz; }
   return { p: [p[0] - nx * 0.02, p[1] - nz * 0.02], n: [nx, nz] };
@@ -94,7 +95,7 @@ function deckEdge(i: number): { p: V2; n: V2 } {
 /** index on the deck outline closest to a world bearing (radians, world xz) from the pool centre */
 function deckIndexToward(a: number): number {
   let best = 0, bd = -2;
-  for (let i = 0; i < DECK.length; i++) { const d = DECK[i]; const v = Math.cos(a) * (d[0] - POOL_C[0]) + Math.sin(a) * (d[1] - POOL_C[1]); const l = Math.hypot(d[0] - POOL_C[0], d[1] - POOL_C[1]) || 1; if (v / l > bd) { bd = v / l; best = i; } }
+  for (let i = 0; i < DECK.length; i++) { const d = DECK[i]; const v = dmath.cos(a) * (d[0] - POOL_C[0]) + dmath.sin(a) * (d[1] - POOL_C[1]); const l = dmath.hypot(d[0] - POOL_C[0], d[1] - POOL_C[1]) || 1; if (v / l > bd) { bd = v / l; best = i; } }
   return best;
 }
 /** the pool deck's flights down to the sand: west (tiki / camera), south (beach), east (annex terrace) */
@@ -166,9 +167,9 @@ const DECK_KEEP = offsetPolyTS(POOL, DECK_PAD + 0.6);
 function genLayout(): CoveLayout {
   const rng = mulberry(5150);
   const buildings: TownBuilding[] = [], props: CoveProp[] = [], paths: Array<[V2, V2]> = [];
-  const free = (x: number, z: number, r = 0.8) => !inPoly(HOTEL_KEEP, x, z) && !inPoly(DECK_KEEP, x, z) && Math.hypot(x - TIKI.x, z - TIKI.z) > TIKI.r + r && !blocked(x, z, r) && Math.hypot(x - HILL.x, z - HILL.z) > HILL.R + r;
+  const free = (x: number, z: number, r = 0.8) => !inPoly(HOTEL_KEEP, x, z) && !inPoly(DECK_KEEP, x, z) && dmath.hypot(x - TIKI.x, z - TIKI.z) > TIKI.r + r && !blocked(x, z, r) && dmath.hypot(x - HILL.x, z - HILL.z) > HILL.R + r;
   const taken: Array<[number, number, number]> = [];
-  const blocked = (x: number, z: number, r: number) => taken.some(([tx, tz, tr]) => Math.hypot(x - tx, z - tz) < tr + r);
+  const blocked = (x: number, z: number, r: number) => taken.some(([tx, tz, tr]) => dmath.hypot(x - tx, z - tz) < tr + r);
   const take = (x: number, z: number, r: number) => taken.push([x, z, r]);
 
   // ---- beach hut (pink/cream, pointed gable roof) near the pier head, porch toward the camera
@@ -204,20 +205,20 @@ function genLayout(): CoveLayout {
   const bung = (x: number, z: number, yaw: number, wall: string, w = 8.2, d = 6.6) => {
     buildings.push({ id: `bungalow-${buildings.length}`, use: "bungalow", x, z, y: PY, yaw, w, d, floors: 1, floorH: 3.1, wall, trim: "#f2e6cc", shutter: "#3d6a4e", door: "#3d6a4e",
       roof: "gable", roofColor: "#5f8a5c", roofAxis: "x", overhang: 0.9, material: "plaster", t: 0.22, windowPitch: 2.4, balcony: false, awning: null, tank: null, ac: false, sign: null, shop: false, roofAccess: false, seed: 21 + buildings.length, interior: true });
-    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const c = dmath.cos(yaw), s = dmath.sin(yaw);
     bungalowDecks.push({ x: x + 1.3 * s, z: z + 1.3 * c, yaw, w: w + 3.0, d: d + 4.6, y: PY, rail: [1, 2, 3] });
   };
   // front (+z local = porch + door) faces the pier platform (dir d, mid m): east + west of it and off its far end
   {
-    const a: V2 = [26, 538], b: V2 = [20, 552], L = Math.hypot(b[0] - a[0], b[1] - a[1]), d: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], p1: V2 = [d[1], -d[0]], m: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    const place = (c: V2, front: V2, wall: string, w: number, dd: number) => bung(c[0], c[1], Math.atan2(front[0], front[1]), wall, w, dd);
+    const a: V2 = [26, 538], b: V2 = [20, 552], L = dmath.hypot(b[0] - a[0], b[1] - a[1]), d: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], p1: V2 = [d[1], -d[0]], m: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const place = (c: V2, front: V2, wall: string, w: number, dd: number) => bung(c[0], c[1], dmath.atan2(front[0], front[1]), wall, w, dd);
     const off = 2 + (6.6 + 4.6) / 2 + 1.3;
     place([m[0] + p1[0] * off + d[0] * 1.5, m[1] + p1[1] * off + d[1] * 1.5], [-p1[0], -p1[1]], "#eea38e", 8.6, 6.6);
     place([m[0] - p1[0] * off - d[0] * 3, m[1] - p1[1] * off - d[1] * 3], [p1[0], p1[1]], "#f5c3aa", 7.8, 6.6);
     place([b[0] + d[0] * off, b[1] + d[1] * off], [-d[0], -d[1]], "#f2dcbc", 8.2, 6.6);
     // the side bungalows' porches open onto the platform through a gap in its rails
     const plat = pier[2];
-    for (const k of bungalowDecks.slice(0, 2)) { const fx = k.x + Math.sin(k.yaw) * k.d / 2, fz = k.z + Math.cos(k.yaw) * k.d / 2; deckGap(plat, fx, fz, k.w - 0.8); }
+    for (const k of bungalowDecks.slice(0, 2)) { const fx = k.x + dmath.sin(k.yaw) * k.d / 2, fz = k.z + dmath.cos(k.yaw) * k.d / 2; deckGap(plat, fx, fz, k.w - 0.8); }
   }
   // STAIRS OFF THE PIER — the pier stands 1.2–4 m over the beach and the shallows with no way up but its head:
   // a kong under it or in the surf would walk 40–60 m round. A timber flight down to the sand off the second leg's east side
@@ -225,7 +226,7 @@ function genLayout(): CoveLayout {
   const stairs: Flight[] = [];
   {
     const st = (k: Deck, side: 1 | 3, along: number, yBot: number) => {
-      const c = Math.cos(k.yaw), s = Math.sin(k.yaw), sg = side === 1 ? 1 : -1, lx = sg * (k.w / 2 - 0.02), lz = along;
+      const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), sg = side === 1 ? 1 : -1, lx = sg * (k.w / 2 - 0.02), lz = along;
       const x = k.x + lx * c + lz * s, z = k.z - lx * s + lz * c, dx = sg * c, dz = -sg * s;
       deckGap(k, x + dx * 0.03, z + dz * 0.03, 1.5);
       stairs.push(flight(x, z, dx, dz, k.y, yBot, 1.2, 0.3));
@@ -238,7 +239,7 @@ function genLayout(): CoveLayout {
   const umbrella = (x: number, z: number, y: number, face: number, spread: number) => {
     props.push({ kind: "umbrella", x, z, yaw: rng() * 6.28, y, v: (rng() - 0.5) * 0.12, s: 1.7 + rng() * 0.15 });
     // two loungers side by side under it; `face` = the yaw the sitter looks along (back rest behind them)
-    const c = Math.cos(face), s = Math.sin(face);
+    const c = dmath.cos(face), s = dmath.sin(face);
     for (const side of [-1, 1]) {
       if (side > 0 && rng() < 0.15) continue;
       const lx = x + c * side * spread, lz = z - s * side * spread;
@@ -252,19 +253,19 @@ function genLayout(): CoveLayout {
   // the pool and the hotel (east deck) + two on the far (south) end
   for (const a of [-0.55, -0.05, 0.45, 1.2, 1.75]) {
     const e = deckEdge(deckIndexToward(a));
-    umbrella(e.p[0] - e.n[0] * 1.6, e.p[1] - e.n[1] * 1.6, DECK_TOP, Math.atan2(-e.n[0], -e.n[1]), 1.05);
+    umbrella(e.p[0] - e.n[0] * 1.6, e.p[1] - e.n[1] * 1.6, DECK_TOP, dmath.atan2(-e.n[0], -e.n[1]), 1.05);
   }
   // south terrace
   for (const a of [1.85, 2.1, 2.35]) {
-    const x = EAST_TERRACE.cx + Math.cos(a) * 23, z = EAST_TERRACE.cz + Math.sin(a) * 23;
-    umbrella(x, z, EAST_TERRACE.y, Math.atan2(EAST_TERRACE.cx - x, EAST_TERRACE.cz - z), 1.05);
+    const x = EAST_TERRACE.cx + dmath.cos(a) * 23, z = EAST_TERRACE.cz + dmath.sin(a) * 23;
+    umbrella(x, z, EAST_TERRACE.y, dmath.atan2(EAST_TERRACE.cx - x, EAST_TERRACE.cz - z), 1.05);
   }
   // sand: west of the pool toward the beach hut / pier (loungers face the sea)
   for (const [x, z] of [[53, 472], [46, 466], [60, 498], [70, 502], [40, 478]] as V2[]) { if (inTerrace(x, z, 1.5) || !free(x, z, 1.5)) continue; umbrella(x, z, Y, 0.1 + (rng() - 0.5) * 0.5, 1.1); }
   // lamps: the paths, along the pier
   for (const [x, z, y] of [[58, 446, Y], [52, 462, Y], [44, 492, Y], [38.6, 506, PY], [35, 517, PY], [30.6, 528, PY], [27.6, 537, PY], [74, 452, Y]] as Array<[number, number, number]>) props.push({ kind: "lamp", x, z, yaw: 0, y });
   // terracotta planters round the deck edge (every ~7 m)
-  for (let i = 0; i < DECK.length; i += 5) { const e = deckEdge(i); const x = e.p[0] - e.n[0] * 0.6, z = e.p[1] - e.n[1] * 0.6; if (DECK_FLIGHTS.some((f) => Math.hypot(f.x - x, f.z - z) < 2.6)) continue; props.push({ kind: "planter", x, z, yaw: 0, y: DECK_TOP, s: 0.46 + rng() * 0.12 }); }
+  for (let i = 0; i < DECK.length; i += 5) { const e = deckEdge(i); const x = e.p[0] - e.n[0] * 0.6, z = e.p[1] - e.n[1] * 0.6; if (DECK_FLIGHTS.some((f) => dmath.hypot(f.x - x, f.z - z) < 2.6)) continue; props.push({ kind: "planter", x, z, yaw: 0, y: DECK_TOP, s: 0.46 + rng() * 0.12 }); }
   // ---- rocks: sand-coloured mossy boulders at the grounds' edge + in the surf round the pier
   for (const [x, z, r] of [[30, 535, 1.5], [18, 550, 1.2], [-10, 542, 1.8], [44, 540, 1.3], [26, 562, 1.4], [-14, 572, 1.1], [52, 528, 1.0], [8, 520, 1.2], [60, 512, 1.4], [104, 508, 1.5], [20, 470, 1.3], [26, 490, 1.0]] as Array<[number, number, number]>) { props.push({ kind: "rock", x, z, yaw: rng() * 6.28, s: r }); take(x, z, r); }
 
@@ -277,7 +278,7 @@ function genLayout(): CoveLayout {
   const tk: V2 = [TIKI.x - 4.8, TIKI.z + 1.6];
   const PATHS: Array<[V2, V2]> = [[foot(terraceSteps(WEST_TERRACE, Y)), tk], [tk, foot(DECK_FLIGHTS[0])], [foot(DECK_FLIGHTS[1]), [hut[0] + 3.4, hut[1] - 3]], [[hut[0] + 3.4, hut[1] - 3], [40, 497]]];
   paths.push(...PATHS);
-  const nearPath = (x: number, z: number, r: number) => PATHS.some(([a, b]) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return Math.hypot(x - a[0] - dx * t, z - a[1] - dz * t) < r; });
+  const nearPath = (x: number, z: number, r: number) => PATHS.some(([a, b]) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return dmath.hypot(x - a[0] - dx * t, z - a[1] - dz * t) < r; });
   /** planted beds as CLUSTERS, never a grid — clump centres scattered over the polygon (≈ one per step² × 3), each
    *  a mixed-species clump of 2–6 plants (random scale 0.6–1.4 ×, a tall one in the middle, low ones round it) with grass
    *  tufts at its skirt; open ground between clumps (a jittered grid reads as a banana plantation) */
@@ -299,12 +300,12 @@ function genLayout(): CoveLayout {
       for (let k = 1; k < n; k++) kinds.push(pickKind());
       kinds.forEach((k, i) => {
         const a = rng() * Math.PI * 2, r = i === 0 ? rng() * 0.3 : R * (0.45 + rng() * 0.6);
-        const px = cx + Math.cos(a) * r, pz = cz + Math.sin(a) * r;
+        const px = cx + dmath.cos(a) * r, pz = cz + dmath.sin(a) * r;
         if (!free(px, pz, 0.3) || nearPath(px, pz, 1.6) || inTerrace(px, pz, 0.4)) return;
         const sc = (i === 0 ? 1.1 + rng() * 0.3 : 0.6 + rng() * 0.6) * k[2];
         props.push({ kind: k[0], x: px, z: pz, yaw: rng() * 6.28, s: sc });
       });
-      for (let g = 0; g < 3 + Math.floor(rng() * 4); g++) { const a = rng() * Math.PI * 2, r = R + 0.3 + rng() * 1.2, px = cx + Math.cos(a) * r, pz = cz + Math.sin(a) * r; if (free(px, pz, 0.2) && !inTerrace(px, pz, 0.2)) props.push({ kind: rng() < 0.85 ? "grass" : "flowers", x: px, z: pz, yaw: rng() * 6.28, s: 0.7 + rng() * 0.6 }); }
+      for (let g = 0; g < 3 + Math.floor(rng() * 4); g++) { const a = rng() * Math.PI * 2, r = R + 0.3 + rng() * 1.2, px = cx + dmath.cos(a) * r, pz = cz + dmath.sin(a) * r; if (free(px, pz, 0.2) && !inTerrace(px, pz, 0.2)) props.push({ kind: rng() < 0.85 ? "grass" : "flowers", x: px, z: pz, yaw: rng() * 6.28, s: 0.7 + rng() * 0.6 }); }
       take(cx, cz, R + 0.5);
     }
   };
@@ -343,7 +344,7 @@ function genLayout(): CoveLayout {
   fill([[44, 500], [80, 504], [80, 512], [44, 510]], 3.0, [["grass", 3, 1.2], ["fern", 2, 1.0], ["banana-plant", 1, 1.0]]);
   // grass tufts + flowers across the sand (denser toward its edge) + fallen palm fronds
   for (let i = 0; i < 170; i++) {
-    const a = rng() * 6.28, r = 10 + Math.sqrt(rng()) * 40, x = 62 + Math.cos(a) * r, z = 478 + Math.sin(a) * r * 0.75;
+    const a = rng() * 6.28, r = 10 + Math.sqrt(rng()) * 40, x = 62 + dmath.cos(a) * r, z = 478 + dmath.sin(a) * r * 0.75;
     if (!free(x, z, 0.3) || inTerrace(x, z, 0.3)) continue;
     props.push({ kind: rng() < 0.82 ? "grass" : "flowers", x, z, yaw: rng() * 6.28, s: 0.7 + rng() * 0.6 });
   }
@@ -353,7 +354,7 @@ function genLayout(): CoveLayout {
 
   // ---- the palm hill's planting (on its slope: y = the drawn profile), the lush band south of the hotel
   {
-    const hp = (a: number, r: number): [number, number, number] => { const x = HILL.x + Math.cos(a) * r, z = HILL.z + Math.sin(a) * r; return [x, z, Y + hillH(r)]; };
+    const hp = (a: number, r: number): [number, number, number] => { const x = HILL.x + dmath.cos(a) * r, z = HILL.z + dmath.sin(a) * r; return [x, z, Y + hillH(r)]; };
     for (const [a, r, k, sc] of [[0.4, 1.6, "palm", 1.25], [2.6, 1.9, "palm-leaning", 1.15], [4.4, 5.5, "palm", 1.05], [1.4, 6.8, "palm-leaning", 1.0], [5.6, 8.2, "palm", 0.95], [3.3, 8.6, "palm", 1.1]] as Array<[number, number, CoveProp["kind"], number]>) { const [x, z, y] = hp(a, r); props.push({ kind: k, x, z, y, yaw: rng() * 6.28, s: sc }); }
     for (let i = 0; i < 22; i++) { const a = rng() * 6.283, r = 3 + rng() * 7.5, [x, z, y] = hp(a, r), k = rng(); props.push({ kind: k < 0.35 ? "banana-plant" : k < 0.6 ? "fern" : k < 0.8 ? "monstera" : "grass", x, z, y, yaw: rng() * 6.28, s: 0.8 + rng() * 0.5 }); }
     for (const [a, r, sz] of [[1.0, 9.5, 1.3], [3.9, 10.2, 1.0], [5.1, 3.4, 0.8], [2.2, 10.6, 1.5]] as Array<[number, number, number]>) { const [x, z] = hp(a, r); props.push({ kind: "rock", x, z, y: Y + hillH(r), yaw: rng() * 6.28, s: sz }); }
@@ -364,19 +365,19 @@ function genLayout(): CoveLayout {
   // groves on a jittered 16 m grid wherever the resort leaves the pad / beach empty
   // (a grove is ONE or two palms over low planting, a 'palms' cell is a boulder outcrop with at most one palm: a hard
   //  cover rhythm for the lanes without a palm forest round the resort, clear views from the hotel to the beach and the hill)
-  for (const c0 of coverScatter(GRID, { cx: P.x, cz: P.z, r: P.r, step: 16, seed: 5151, minY: 0.8, free: (x, z) => Math.hypot(x - VIEW.pos[0], z - VIEW.pos[2]) > 22 && free(x, z, 4.5) && !(x > 20 && x < 112 && z > 430 && z < 530 && !free(x, z, 6)) && !nearPath(x, z, 3) && !inTerrace(x, z, 3) && !(x < 45 && z > 495) })) {
+  for (const c0 of coverScatter(GRID, { cx: P.x, cz: P.z, r: P.r, step: 16, seed: 5151, minY: 0.8, free: (x, z) => dmath.hypot(x - VIEW.pos[0], z - VIEW.pos[2]) > 22 && free(x, z, 4.5) && !(x > 20 && x < 112 && z > 430 && z < 530 && !free(x, z, 6)) && !nearPath(x, z, 3) && !inTerrace(x, z, 3) && !(x < 45 && z > 495) })) {
     const c = c0.kind === "palms" ? { ...c0, kind: "rocks" as const } : c0;
     const g = (dx: number, dz: number) => gridH(GRID, c.x + dx, c.z + dz);
     if (c.kind === "rocks" && c0.kind === "palms" && rng() < 0.4) props.push({ kind: "palm", x: c.x + 3.6, z: c.z - 1.0, y: g(3.6, -1.0), yaw: rng() * 6.28, s: 0.95 + rng() * 0.25 });
     if (c.kind === "rocks") {
       const n = 1 + Math.floor(rng() * 2.4);
       // (v 1: the cover boulders use the 320-tri rock — 400 of them at 1 280 tris would be ~0.5 M tris)
-      for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() * 1.0 : 0, s0 = i ? 0.75 + rng() * 0.45 : 1.45 + rng() * 0.45; props.push({ kind: "rock", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: s0 * c.s, v: 1 }); }
-      for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 2 + rng() * 1.5; props.push({ kind: rng() < 0.6 ? "grass" : "fern", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
+      for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() * 1.0 : 0, s0 = i ? 0.75 + rng() * 0.45 : 1.45 + rng() * 0.45; props.push({ kind: "rock", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: s0 * c.s, v: 1 }); }
+      for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 2 + rng() * 1.5; props.push({ kind: rng() < 0.6 ? "grass" : "fern", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
     } else {
       const n = 1 + (rng() < 0.45 ? 1 : 0);
-      for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.8 + rng() * 1.6 : 0; props.push({ kind: rng() < 0.4 ? "palm-leaning" : "palm", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.9 + rng() * 0.3 }); }
-      for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 1 + rng() * 2.8, k = rng(); props.push({ kind: k < 0.25 ? "banana-plant" : k < 0.55 ? "bush" : "fern", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
+      for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.8 + rng() * 1.6 : 0; props.push({ kind: rng() < 0.4 ? "palm-leaning" : "palm", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.9 + rng() * 0.3 }); }
+      for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 1 + rng() * 2.8, k = rng(); props.push({ kind: k < 0.25 ? "banana-plant" : k < 0.55 ? "bush" : "fern", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
     }
     take(c.x, c.z, c0.kind === "palms" ? 4 : 3);
   }
@@ -385,13 +386,13 @@ function genLayout(): CoveLayout {
   // the pier view) — sandstone outcrops: a big boulder + a smaller one beside it, seated on the sand
   for (const [x, z, s] of [[5, 513, 1.6], [14, 527, 1.35], [-5, 523, 1.25], [112, 535, 1.45], [62, 533, 1.4], [18, 505, 1.2]] as Array<[number, number, number]>) {
     if (!free(x, z, s + 1)) continue;
-    const a = rng() * 6.283, x2 = x + Math.cos(a) * (s + 0.9), z2 = z + Math.sin(a) * (s + 0.9);
+    const a = rng() * 6.283, x2 = x + dmath.cos(a) * (s + 0.9), z2 = z + dmath.sin(a) * (s + 0.9);
     props.push({ kind: "rock", x, z, y: gridH(GRID, x, z), yaw: rng() * 6.28, s, v: 1 });
     props.push({ kind: "rock", x: x2, z: z2, y: gridH(GRID, x2, z2), yaw: rng() * 6.28, s: s * 0.55, v: 1 });
     take(x, z, s + 1.5);
   }
   // (keep the camera → tiki-bar sight line clear of tall planting)
-  { const ax = VIEW.pos[0], az = VIEW.pos[2], dx = TIKI.x - ax, dz = TIKI.z - az, L = Math.hypot(dx, dz);
+  { const ax = VIEW.pos[0], az = VIEW.pos[2], dx = TIKI.x - ax, dz = TIKI.z - az, L = dmath.hypot(dx, dz);
     for (let i = props.length - 1; i >= 0; i--) { const q = props[i]; if (!(q.kind === "banana-plant" || q.kind === "palm" || q.kind === "palm-leaning" || q.kind === "monstera")) continue;
       const t = ((q.x - ax) * dx + (q.z - az) * dz) / L, o = Math.abs(-(q.x - ax) * dz + (q.z - az) * dx) / L;
       if (t > 1 && t < L - 2 && o < 2.2 + t * 0.12) props.splice(i, 1); } }
@@ -400,19 +401,19 @@ function genLayout(): CoveLayout {
   const SN = 72;
   for (let i = 0; i < SN; i++) {
     const a = i / SN * Math.PI * 2;
-    const w = 1 + 0.12 * Math.sin(a * 3 + 1.3) + 0.08 * Math.sin(a * 7 + 0.4) + 0.05 * Math.sin(a * 13 + 2.1);
-    const rx = 38 * w, rz = (Math.sin(a) > 0 ? 44 : 30) * w;
-    sand.push([60 + Math.cos(a) * rx, 470 + Math.sin(a) * rz]);
+    const w = 1 + 0.12 * dmath.sin(a * 3 + 1.3) + 0.08 * dmath.sin(a * 7 + 0.4) + 0.05 * dmath.sin(a * 13 + 2.1);
+    const rx = 38 * w, rz = (dmath.sin(a) > 0 ? 44 : 30) * w;
+    sand.push([60 + dmath.cos(a) * rx, 470 + dmath.sin(a) * rz]);
   }
   const parts = buildings.map(resolveBuilding);
   return { buildings, parts, pier, bungalowDecks, props, sand, paths, stairs };
 }
 function inTerrace(x: number, z: number, m = 0): boolean {
-  for (const t of [EAST_TERRACE, WEST_TERRACE]) { const r = Math.hypot(x - t.cx, z - t.cz); if (r > t.r0 - m && r < t.r1 + m && terraceAngleIn(t, x, z)) return true; }
+  for (const t of [EAST_TERRACE, WEST_TERRACE]) { const r = dmath.hypot(x - t.cx, z - t.cz); if (r > t.r0 - m && r < t.r1 + m && terraceAngleIn(t, x, z)) return true; }
   return false;
 }
 function terraceAngleIn(t: Terrace, x: number, z: number): boolean {
-  let a = Math.atan2(z - t.cz, x - t.cx);
+  let a = dmath.atan2(z - t.cz, x - t.cx);
   while (a < t.a0 - Math.PI) a += Math.PI * 2;
   while (a > t.a0 + Math.PI) a -= Math.PI * 2;
   return a >= t.a0 && a <= t.a1;
@@ -424,10 +425,10 @@ export function terraceSteps(t: Terrace, y0: number): { x: number; z: number; di
   const a = t.stair ?? (t.a0 + t.a1) / 2, r = t.front === "r0" ? t.r0 : t.r1;
   const dir = t.front === "r0" ? -1 : 1; // downhill direction: away from the terrace
   const steps = Math.round((t.y - y0) / 0.2);
-  return { x: t.cx + Math.cos(a) * r, z: t.cz + Math.sin(a) * r, dirX: Math.cos(a) * dir, dirZ: Math.sin(a) * dir, steps, rise: (t.y - y0) / steps, tread: 0.32, width: 5 };
+  return { x: t.cx + dmath.cos(a) * r, z: t.cz + dmath.sin(a) * r, dirX: dmath.cos(a) * dir, dirZ: dmath.sin(a) * dir, steps, rise: (t.y - y0) / steps, tread: 0.32, width: 5 };
 }
 function flightBoxes(f: Flight, surf: Box["surf"] = "stone"): Box[] {
-  const out: Box[] = [], yaw = Math.atan2(f.dirX, f.dirZ);
+  const out: Box[] = [], yaw = dmath.atan2(f.dirX, f.dirZ);
   for (let i = 0; i < f.steps; i++) {
     const u = (i + 0.5) * f.tread, top = f.yTop - (i + 1) * f.rise;
     if (top <= f.yBottom + 1e-3) break;
@@ -447,10 +448,10 @@ function terraceBoxes(t: Terrace, y0: number): Box[] {
     const nb = Math.max(1, Math.ceil(dr / 2.6));
     for (let j = 0; j < nb; j++) {
       const rb0 = t.r0 + dr * j / nb, rb1 = t.r0 + dr * (j + 1) / nb, rm = (rb0 + rb1) / 2, w = rb1 * da + 0.12;
-      out.push({ c: [t.cx + Math.cos(a) * rm, (y0 - 0.6 + t.y) / 2, t.cz + Math.sin(a) * rm], h: [w / 2, (t.y - y0 + 0.6) / 2, (rb1 - rb0) / 2 + 0.01], yaw: -a + Math.PI / 2, surf: "stone" });
+      out.push({ c: [t.cx + dmath.cos(a) * rm, (y0 - 0.6 + t.y) / 2, t.cz + dmath.sin(a) * rm], h: [w / 2, (t.y - y0 + 0.6) / 2, (rb1 - rb0) / 2 + 0.01], yaw: -a + Math.PI / 2, surf: "stone" });
     }
     const ph = t.planted ? 0.28 : 0.45; // planted fronts: a low planter kerb (the plants are noShoot foliage)
-    if (Math.abs(a - (t.stair ?? mid)) * rf > 2.9) out.push({ c: [t.cx + Math.cos(a) * rf, t.y + ph, t.cz + Math.sin(a) * rf], h: [rf * da / 2 + 0.03, ph, 0.21], yaw: -a + Math.PI / 2, surf: "stone" });
+    if (Math.abs(a - (t.stair ?? mid)) * rf > 2.9) out.push({ c: [t.cx + dmath.cos(a) * rf, t.y + ph, t.cz + dmath.sin(a) * rf], h: [rf * da / 2 + 0.03, ph, 0.21], yaw: -a + Math.PI / 2, surf: "stone" });
   }
   const st = terraceSteps(t, y0);
   out.push(...flightBoxes({ x: st.x, z: st.z, dirX: st.dirX, dirZ: st.dirZ, width: st.width, yTop: t.y, yBottom: y0, steps: st.steps, rise: st.rise, tread: st.tread }));
@@ -462,11 +463,11 @@ function poolBoxes(): Box[] {
   for (let i = 0; i < n; i++) {
     const a = POOL[i], b = POOL[(i + 1) % n], A = DECK[i], B = DECK[(i + 1) % n];
     const cx = (a[0] + b[0] + A[0] + B[0]) / 4, cz = (a[1] + b[1] + A[1] + B[1]) / 4;
-    const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
-    const len = Math.max(l, Math.hypot(B[0] - A[0], B[1] - A[1])) + 0.12;
+    const dx = b[0] - a[0], dz = b[1] - a[1], l = dmath.hypot(dx, dz) || 1;
+    const len = Math.max(l, dmath.hypot(B[0] - A[0], B[1] - A[1])) + 0.12;
     const mi: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], mo: V2 = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
-    const dep = Math.hypot(mo[0] - mi[0], mo[1] - mi[1]);
-    out.push({ c: [cx, (Y - 0.3 + DECK_TOP) / 2, cz], h: [len / 2, (DECK_TOP - Y + 0.3) / 2, dep / 2], yaw: Math.atan2(-dz, dx), surf: "stone" });
+    const dep = dmath.hypot(mo[0] - mi[0], mo[1] - mi[1]);
+    out.push({ c: [cx, (Y - 0.3 + DECK_TOP) / 2, cz], h: [len / 2, (DECK_TOP - Y + 0.3) / 2, dep / 2], yaw: dmath.atan2(-dz, dx), surf: "stone" });
   }
   // basin floor (the water itself does not collide)
   out.push({ c: [POOL_C[0], POOL_FLOOR_Y - 0.2, POOL_C[1]], h: [14, 0.2, 14], yaw: 0, surf: "stone" });
@@ -477,7 +478,7 @@ function poolBoxes(): Box[] {
   //  drawn slope, ≤ 0.36 m between neighbours — climbable everywhere) + the summit arch (two piers + a broken lintel)
   { const C = 0.6, n = Math.ceil(HILL.R / C);
     for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
-      const x = HILL.x + (i + 0.5) * C, z = HILL.z + (j + 0.5) * C, h = hillH(Math.hypot(x - HILL.x, z - HILL.z));
+      const x = HILL.x + (i + 0.5) * C, z = HILL.z + (j + 0.5) * C, h = hillH(dmath.hypot(x - HILL.x, z - HILL.z));
       if (h < 0.12) continue;
       out.push({ c: [x, Y + (h - 1) / 2, z], h: [C / 2, (h + 1) / 2, C / 2], surf: "grass" });
     } }
@@ -506,12 +507,12 @@ function propColliders(): Box[] {
     }
   }
   // tiki bar: round counter (8 segments), roof posts
-  for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + Math.PI / 8; if (Math.abs(Math.cos(a - 0.35)) > 0.92 && Math.cos(a - 0.35) > 0) continue; out.push({ c: [TIKI.x + Math.cos(a) * (TIKI.r - 1.35), Y + 0.56, TIKI.z + Math.sin(a) * (TIKI.r - 1.35)], h: [0.95, 0.56, 0.22], yaw: -a + Math.PI / 2, surf: "wood" }); }
-  for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; out.push({ c: [TIKI.x + Math.cos(a) * (TIKI.r - 0.35), Y + 1.4, TIKI.z + Math.sin(a) * (TIKI.r - 0.35)], h: [0.13, 1.4, 0.13], surf: "wood" }); }
+  for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + Math.PI / 8; if (Math.abs(dmath.cos(a - 0.35)) > 0.92 && dmath.cos(a - 0.35) > 0) continue; out.push({ c: [TIKI.x + dmath.cos(a) * (TIKI.r - 1.35), Y + 0.56, TIKI.z + dmath.sin(a) * (TIKI.r - 1.35)], h: [0.95, 0.56, 0.22], yaw: -a + Math.PI / 2, surf: "wood" }); }
+  for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; out.push({ c: [TIKI.x + dmath.cos(a) * (TIKI.r - 0.35), Y + 1.4, TIKI.z + dmath.sin(a) * (TIKI.r - 0.35)], h: [0.13, 1.4, 0.13], surf: "wood" }); }
   // the thatch dome collides (bullets don't pass through the roof). Fitted to town-resort.ts addTikiBar: per height band a hollow ring of 12 tangent boxes from the rafter line out to the dome's outer skin
   // at mid-band (±0.25 m of the drawn thatch; the bar under it stays open to its 2.5 m eave), + the cupola on the crown
   for (const [y0, y1, r0, r1] of [[2.5, 2.95, 4.1, 4.55], [2.95, 3.4, 3.4, 4.19], [3.4, 3.85, 2.61, 3.62], [3.85, 4.3, 1.83, 2.83], [4.3, 4.75, 1.04, 2.09], [4.75, 5.1, 0.34, 0.97]]) {
-    for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6, rc = (r0 + r1) / 2; out.push({ c: [TIKI.x + Math.cos(a) * rc, Y + (y0 + y1) / 2, TIKI.z + Math.sin(a) * rc], h: [r1 * Math.tan(Math.PI / 12), (y1 - y0) / 2, (r1 - r0) / 2], yaw: -a + Math.PI / 2, surf: "wood" }); }
+    for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6, rc = (r0 + r1) / 2; out.push({ c: [TIKI.x + dmath.cos(a) * rc, Y + (y0 + y1) / 2, TIKI.z + dmath.sin(a) * rc], h: [r1 * dmath.tan(Math.PI / 12), (y1 - y0) / 2, (r1 - r0) / 2], yaw: -a + Math.PI / 2, surf: "wood" }); }
   }
   for (const yaw of [0, Math.PI / 4]) out.push({ c: [TIKI.x, Y + 5.28, TIKI.z], h: [0.45, 0.33, 0.45], yaw, surf: "wood" });
   return out;
@@ -550,7 +551,7 @@ export const LOOT_SPOTS = (() => {
   chests.push([dx, lay.lv[0], dz, P.yaw(mid.sm) + Math.PI]);
   chests.push([TIKI.x, Y + 0.05, TIKI.z, 0.35]);
   // the pier's end platform — the dead end out on the water pays: a chest between the three bungalows' porches
-  { const k = LAYOUT.pier[2]; chests.push([k.x - Math.sin(k.yaw) * 1.2, k.y, k.z - Math.cos(k.yaw) * 1.2, k.yaw]); }
+  { const k = LAYOUT.pier[2]; chests.push([k.x - dmath.sin(k.yaw) * 1.2, k.y, k.z - dmath.cos(k.yaw) * 1.2, k.yaw]); }
   // every spot settled against the resort's own colliders (hotel spots inside columns / furniture, a roof spot over open
   // air) — slid to the nearest clear point on the same floor, or dropped
   const L = townLootSpots(INTERIOR_LOOT, { chests, floor, chestSep: 6 }), up = (q: number[]) => q[1] > Y + 0.6;
@@ -562,7 +563,7 @@ export const LOOT_SPOTS = (() => {
  *  hotel roof (landmark), the palm hill (garden) */
 export const PLACES: Array<{ kind: "plaza" | "landmark" | "garden"; name: string; x: number; z: number; poly?: V2[]; top?: number }> = (() => {
   const lay = hotelLayout(HOTEL), pf = pavFrame(lay), pc = pf.c, mid = [pc.ax + pc.dx * pf.W / 2, pc.az + pc.dz * pf.W / 2];
-  const hill: V2[] = []; for (let k = 0; k < 16; k++) hill.push([HILL.x + Math.cos(k * Math.PI / 8) * HILL.R, HILL.z + Math.sin(k * Math.PI / 8) * HILL.R]);
+  const hill: V2[] = []; for (let k = 0; k < 16; k++) hill.push([HILL.x + dmath.cos(k * Math.PI / 8) * HILL.R, HILL.z + dmath.sin(k * Math.PI / 8) * HILL.R]);
   return [
     { kind: "plaza", name: "Pool Terrace", x: POOL_C[0], z: POOL_C[1], poly: DECK },
     { kind: "landmark", name: "Banana sculpture", x: mid[0], z: mid[1], top: lay.pavilion.y + pf.H + PLINTH.top + 5.5 },

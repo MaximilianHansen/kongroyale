@@ -9,6 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { MongoClient, Binary, type Collection, type Document } from "mongodb";
+import { bundleDir, bundleWriter, parseBundle, type Bundle } from "./playtest-bundles";
 
 const URI = process.env.KR_MONGO_URI || "mongodb://127.0.0.1:27017";
 const DB = process.env.KR_MONGO_DB || "kong_royale";
@@ -22,7 +23,7 @@ export interface KongbotDoc extends Document {
   receipt?: string;
   num: number; id: string; status: string; message: string; createdAt: Date; receivedAt: Date;
   reporter: { name: string | null; clientId: string | null; sessionId: string | null; ipHash: string };
-  build: GitInfo | null; ctx: unknown; logs: unknown[]; trail: unknown[];
+  build: GitInfo | null; ctx: unknown; logs: unknown[]; trail: unknown[]; bundle?: Omit<Bundle, "replay"> | null;
   shot: Binary | null; shotMime: string | null; shotSize: number[] | null;
   notes: Array<{ at: Date; by: string; text: string }>; history: Array<{ at: Date; by: string; status: string; note?: string }>;
 }
@@ -37,6 +38,9 @@ export function kongbotDb(root: string) {
   let storageState: "connecting" | "database" | "server-queue" | "unavailable" = "connecting";
   let changedAt = new Date().toISOString();
   const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[kongbot]", ...a);
+  const bundleRoot = bundleDir(root, process.env.KR_PLAYTEST_BUNDLES ?? (process.env.npm_lifecycle_event === "server" ? "1" : undefined));
+  const bundles = bundleRoot ? bundleWriter(bundleRoot, log) : null;
+  if (bundles) log(`playtest bundles are written to ${bundles.dir}`);
   function state(next: typeof storageState) {
     if (next === storageState) return;
     storageState = next; changedAt = new Date().toISOString();
@@ -164,6 +168,9 @@ export function kongbotDb(root: string) {
     if (!b || typeof b !== "object" || Array.isArray(b)) { reply(res, 400, { ok: false, error: "report must be an object" }); return; }
     const message = String(b.message ?? "").trim().slice(0, 2000);
     if (message.length < 3) { reply(res, 400, { ok: false, error: "empty message" }); return; }
+    const parsed = b.bundle === undefined || b.bundle === null ? null : parseBundle(b.bundle);
+    if (parsed && !parsed.ok) { reply(res, 400, { ok: false, error: `bad bundle: ${parsed.error}` }); return; }
+    const bundle = parsed?.ok ? parsed.value : null;
 
     let shot: Buffer | null = null, shotMime: string | null = null;
     const m = typeof b.shot === "string" ? /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(b.shot) : null;
@@ -179,13 +186,22 @@ export function kongbotDb(root: string) {
       build: gitInfo(), ua: str(req.headers["user-agent"], 400),
       ctx: clean(b.ctx ?? null), logs: Array.isArray(b.logs) ? (clean(b.logs.slice(-1500)) as unknown[]) : [], trail: Array.isArray(b.trail) ? (clean(b.trail.slice(-400)) as unknown[]) : [],
       shot: shot ? new Binary(shot) : null, shotMime, shotSize: Array.isArray(b.shotSize) ? (b.shotSize as number[]).slice(0, 2) : null,
+      bundle: bundle ? { mark: bundle.mark, timeline: clean(bundle.timeline) as Bundle["timeline"], flags: bundle.flags } : null,
       notes: [], history: [{ at, by: "reporter", status: "new" }],
+    };
+    const saveBundle = (id: string) => {
+      if (!bundles || !bundle) return;
+      try {
+        const folder = bundles.write({ at, id, shot, shotMime, json: { id, message, receivedAt: at.toISOString(), reporter: { name: doc.reporter.name }, server: doc.build, ctx: doc.ctx, logs: doc.logs, trail: doc.trail, bundle } });
+        if (folder) log(`${id} bundle written to ${folder}`);
+      } catch (e) { log(`${id} bundle not written:`, e instanceof Error ? e.message : e); }
     };
     const where = ((doc.ctx as { game?: { player?: { poi?: { name?: string } } } } | null)?.game?.player?.poi?.name) ?? "title";
     if (await connect()) {
       try {
         const id = await store(doc, receipt);
         log(`${id} from ${doc.reporter.name ?? "?"} @ ${where}: ${message.slice(0, 120)}`);
+        saveBundle(id);
         reply(res, 200, { ok: true, id, storage: "database" });
         return;
       } catch { reports = null; lastFail = Date.now(); state("server-queue"); }
@@ -200,6 +216,7 @@ export function kongbotDb(root: string) {
       fs.renameSync(temporary, path.join(spool, f));
       state("server-queue");
       log(`spooled report from ${doc.reporter.name ?? "?"} @ ${where}: ${message.slice(0, 120)}`);
+      saveBundle(`LOCAL-${receipt.slice(0, 8)}`);
       reply(res, 200, { ok: true, id: `LOCAL-${receipt.slice(0, 8)}`, queued: true, storage: "server-queue" });
     } catch (e) { state("unavailable"); reply(res, 500, { ok: false, error: "could not store the report" }); log("spool failed:", e); }
   }

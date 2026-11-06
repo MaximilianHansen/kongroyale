@@ -16,6 +16,7 @@
 import type { Box, Surface } from "../world/colliders";
 import { wallPieces, type Opening } from "./town-kit";
 import type { InteriorRoom, RoomOpening } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 export interface HotelSpec {
   /** facade centreline samples, world XZ, west → east, ≈ 1 sample per 1–2 m (smooth) */
@@ -49,14 +50,14 @@ export interface PathFrame { p: V2; d: V2; n: V2 }
 export function pathFrame(path: Array<[number, number]>, i: number): PathFrame {
   const a = path[Math.max(0, i - 1)], b = path[Math.min(path.length - 1, i + 1)];
   let dx = b[0] - a[0], dz = b[1] - a[1];
-  const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+  const l = dmath.hypot(dx, dz) || 1; dx /= l; dz /= l;
   return { p: [path[i][0], path[i][1]], d: [dx, dz], n: [dz, -dx] };
 }
 
 /** total path length + cumulative arc length (m) */
 export function pathArc(path: Array<[number, number]>): number[] {
   const arc = [0];
-  for (let i = 1; i < path.length; i++) arc.push(arc[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+  for (let i = 1; i < path.length; i++) arc.push(arc[i - 1] + dmath.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
   return arc;
 }
 
@@ -68,7 +69,7 @@ export function pathAt(path: Array<[number, number]>, arc: number[], s: number):
   const t = (s - arc[i - 1]) / Math.max(1e-6, arc[i] - arc[i - 1]);
   const a = path[i - 1], b = path[i];
   const p: V2 = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-  let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+  let dx = b[0] - a[0], dz = b[1] - a[1]; const l = dmath.hypot(dx, dz) || 1; dx /= l; dz /= l;
   return { p, d: [dx, dz], n: [dz, -dx] };
 }
 
@@ -94,21 +95,21 @@ export class HotelPath {
     const i = lo, t = (s - arc[i - 1]) / Math.max(1e-6, arc[i] - arc[i - 1]);
     const a = pts[i - 1], b = pts[i];
     let nx = vn[i - 1][0] + (vn[i][0] - vn[i - 1][0]) * t, nz = vn[i - 1][1] + (vn[i][1] - vn[i - 1][1]) * t;
-    const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+    const l = dmath.hypot(nx, nz) || 1; nx /= l; nz /= l;
     return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], d: [-nz, nx], n: [nx, nz] };
   }
   /** world XZ at (s, v) */
   pt(s: number, v: number): V2 { const f = this.at(s); return [f.p[0] + f.n[0] * v, f.p[1] + f.n[1] * v]; }
   /** box/matrix yaw whose local +x runs along the tangent at s (local +z then points to the FRONT) */
-  yaw(s: number): number { const f = this.at(s); return Math.atan2(-f.d[1], f.d[0]); }
+  yaw(s: number): number { const f = this.at(s); return dmath.atan2(-f.d[1], f.d[0]); }
 }
 
 /** straight chord between (s0, v) and (s1, v). Local frame: +x along the chord, +z toward the FRONT (pool) */
 export interface Chord { ax: number; az: number; dx: number; dz: number; len: number; yaw: number; v: number }
 export function chordAt(P: HotelPath, s0: number, s1: number, v: number): Chord {
   const a = P.pt(s0, v), b = P.pt(s1, v);
-  let dx = b[0] - a[0], dz = b[1] - a[1]; const len = Math.hypot(dx, dz) || 1e-6; dx /= len; dz /= len;
-  return { ax: a[0], az: a[1], dx, dz, len, yaw: Math.atan2(-dz, dx), v };
+  let dx = b[0] - a[0], dz = b[1] - a[1]; const len = dmath.hypot(dx, dz) || 1e-6; dx /= len; dz /= len;
+  return { ax: a[0], az: a[1], dx, dz, len, yaw: dmath.atan2(-dz, dx), v };
 }
 /** point u metres along a chord, w metres toward the front */
 export function chordPt(c: Chord, u: number, w = 0): V2 { return [c.ax + c.dx * u - c.dz * w, c.az + c.dz * u + c.dx * w]; }
@@ -117,10 +118,10 @@ export function chordPt(c: Chord, u: number, w = 0): V2 { return [c.ax + c.dx * 
  *  — the first half bulges toward the front (the porthole wing turns to face the view camera), the second recedes —
  *  peak-to-peak 2·amp metres, ≈ 1 sample per metre */
 function serpentine(A: [number, number], B: [number, number], amp: number, n: number): Array<[number, number]> {
-  const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz), fx = -dz / L, fz = dx / L; // front = (−dz, dx)
+  const dx = B[0] - A[0], dz = B[1] - A[1], L = dmath.hypot(dx, dz), fx = -dz / L, fz = dx / L; // front = (−dz, dx)
   const out: Array<[number, number]> = [];
   for (let i = 0; i <= n; i++) {
-    const t = i / n, o = amp * Math.sin(t * Math.PI * 2) + 1.2 * (1 - Math.cos(t * Math.PI * 2)) / 2;
+    const t = i / n, o = amp * dmath.sin(t * Math.PI * 2) + 1.2 * (1 - dmath.cos(t * Math.PI * 2)) / 2;
     out.push([A[0] + dx * t + fx * o, A[1] + dz * t + fz * o]);
   }
   return out;
@@ -371,11 +372,11 @@ export function hotelLayout(h: HotelSpec = HOTEL): HotelLayout {
 
 /** a leaf hinged on a chord wall: chord-local hinge (u, z), turned by `th` (three RotY) then offset (ox, oz) */
 function leafBox(c: Chord, u: number, z: number, th: number, ox: number, oz: number, w: number, y0: number, h: number, t: number, glass: boolean): Box {
-  const cs = Math.cos(th), sn = Math.sin(th);
+  const cs = dmath.cos(th), sn = dmath.sin(th);
   const lu = u + ox * cs + oz * sn, lz = z - ox * sn + oz * cs;
   const [x, wz] = chordPt(c, lu, lz);
   const du = cs, dw = -sn, wx = c.dx * du - c.dz * dw, wzz = c.dz * du + c.dx * dw;
-  return { c: [x, y0 + h / 2, wz], h: [w / 2, h / 2, t / 2], yaw: Math.atan2(-wzz, wx), surf: glass ? "glass" : "wood", ...(glass ? { noShoot: true } : {}) };
+  return { c: [x, y0 + h / 2, wz], h: [w / 2, h / 2, t / 2], yaw: dmath.atan2(-wzz, wx), surf: glass ? "glass" : "wood", ...(glass ? { noShoot: true } : {}) };
 }
 /** french leaves swing 92° out onto the loggia, flat against nothing, square to the wall — at 62° the two
  *  0.68 m leaves pinched the 1.4 m opening to ~0.7 m (< the 0.84 m capsule) and sealed every loggia */
@@ -487,22 +488,22 @@ export const BANANAS: Array<[[number, number, number], [number, number, number],
 /** banana spine point (bulge +y) at t ∈ [0, 1], blossom end at the origin (client bananaGeo) */
 export function bananaSpine(len: number, bend: number, t: number): [number, number] {
   const R = len / bend, a = (t - 0.5) * bend;
-  return [R * Math.sin(a) + R * Math.sin(bend / 2), R * Math.cos(a) - R * Math.cos(bend / 2)];
+  return [R * dmath.sin(a) + R * dmath.sin(bend / 2), R * dmath.cos(a) - R * dmath.cos(bend / 2)];
 }
-export function bananaRadius(r: number, t: number): number { return r * (0.2 + 0.8 * Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, t * 0.96 + 0.02))), 0.5)); }
+export function bananaRadius(r: number, t: number): number { return r * (0.2 + 0.8 * dmath.pow(dmath.sin(Math.PI * Math.min(1, Math.max(0, t * 0.96 + 0.02))), 0.5)); }
 /** yaw (three RotY) that turns the bunch's broad side toward a world xz point */
 export function bunchYaw(f: PavFrame, face?: [number, number]): number {
   if (!face) return 0;
   const dx = face[0] - f.c.ax, dz = face[1] - f.c.az;
   const x = dx * f.c.dx + dz * f.c.dz - f.W / 2, z = -dx * f.c.dz + dz * f.c.dx;
-  return Math.atan2(x, z);
+  return dmath.atan2(x, z);
 }
 /** bunch-frame point → pavilion-local [x, y, z] */
 function bunchPt(f: PavFrame, yaw: number, p: [number, number, number]): [number, number, number] {
-  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const cs = dmath.cos(yaw), sn = dmath.sin(yaw);
   return [p[0] * cs + p[2] * sn, f.top + 0.35 + p[1], -p[0] * sn + p[2] * cs];
 }
-function nrm(v: number[]): [number, number, number] { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
+function nrm(v: number[]): [number, number, number] { const l = dmath.hypot3(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
 /** banana colliders: each banana as a chain of boxes along its spine (inscribed: 0.8 r across, 0.92 r up / down), so
  *  the lying ones are a climbable ramp of ≤ 0.3 m steps and the standing one's top is a < 2 m² cap */
 export function bananaBoxes(lay: HotelLayout, face?: [number, number]): Box[] {
@@ -514,13 +515,13 @@ export function bananaBoxes(lay: HotelLayout, face?: [number, number]): Box[] {
     for (let k = 0; k < K; k++) {
       const ta = (k + 0.08) / K, tb = (k + 0.92) / K, A = at(ta), B = at(tb), rr = bananaRadius(r, (ta + tb) / 2);
       if (rr < 0.3) continue;
-      const hx = B[0] - A[0], hz = B[2] - A[2], hl = Math.hypot(hx, hz);
+      const hx = B[0] - A[0], hz = B[2] - A[2], hl = dmath.hypot(hx, hz);
       const ux = hl > 1e-3 ? hx / hl : 1, uz = hl > 1e-3 ? hz / hl : 0;
       const mx = (A[0] + B[0]) / 2, mz = (A[2] + B[2]) / 2, ylo = Math.min(A[1], B[1]) - rr * 0.92, yhi = Math.max(A[1], B[1]) + rr * 0.92;
       const [wx, wz] = chordPt(f.c, mx + f.W / 2, mz);
       // pavilion-local direction → world
       const dxw = f.c.dx * ux - f.c.dz * uz, dzw = f.c.dz * ux + f.c.dx * uz;
-      out.push({ c: [wx, y0 + (ylo + yhi) / 2, wz], h: [hl / 2 + rr * 0.3, (yhi - ylo) / 2, rr * 0.8], yaw: Math.atan2(-dzw, dxw), surf: "wood" });
+      out.push({ c: [wx, y0 + (ylo + yhi) / 2, wz], h: [hl / 2 + rr * 0.3, (yhi - ylo) / 2, rr * 0.8], yaw: dmath.atan2(-dzw, dxw), surf: "wood" });
     }
   }
   return out;
@@ -585,7 +586,7 @@ export function hotelColliders(h: HotelSpec = HOTEL, face?: [number, number]): B
   }
   // stairs: one box per step (0.3 m thick tread block), landings, width measured at each step's depth
   for (const st of lay.steps) {
-    const vm = (st.v0 + st.v1) / 2, a = P.pt(st.sA, vm), b = P.pt(st.sB, vm), w = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const vm = (st.v0 + st.v1) / 2, a = P.pt(st.sA, vm), b = P.pt(st.sB, vm), w = dmath.hypot(b[0] - a[0], b[1] - a[1]);
     // (ground-floor flights + landing are SOLID to the floor like the drawn ones — 0.3 m treads left a sealed
     //  1.8 m crouch pocket under the landing)
     out.push(normalBox(P, st.s, w * 0.49, st.v0, st.v1, st.floor === 0 ? lay.lv[0] : st.top - 0.3, st.top, "stone"));

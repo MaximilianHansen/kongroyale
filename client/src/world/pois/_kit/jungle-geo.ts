@@ -163,7 +163,6 @@ export function rock(rx: number, ry: number, rz: number, o: RockOpts = {}): Geo 
     if (v.y < -fb) v.y = -fb - (v.y + fb) * 0.15;
     pos.setXYZ(i, v.x * rx, v.y * ry, v.z * rz);
   }
-  g = g.toNonIndexed();
   if (o.angular) { g.computeVertexNormals(); } else { g = mergeVertsSmooth(g); }
   boxUVs(g, 1);
   tint(g, o.tint ?? "#ffffff", 0.06);

@@ -10,6 +10,7 @@
 // drawn at every distance the town is.
 import * as THREE from "three";
 import type { WorldCtx } from "../../../engine/engine";
+import type { Pace } from "../_kit/pace";
 
 const MOD = 1.6;                 // module length (m), before the per-run stretch
 const H = 1.2;                   // body top (collider top 1.24 — the lumps reach it)
@@ -227,17 +228,19 @@ export class HedgeSet {
   }
   get count() { return this.mods.length; }
 
-  async build(ctx: WorldCtx, group: THREE.Group): Promise<void> {
+  async build(ctx: WorldCtx, group: THREE.Group, pace: Pace): Promise<void> {
     if (!this.mods.length) return;
-    const [map, nmap] = await Promise.all([
+    const [map, nmap] = await pace.wait(Promise.all([
       ctx.assets.texture("assets/pois/town/hedge-leaf.webp"),
       ctx.assets.texture("assets/pois/town/hedge-leaf-n.webp", { srgb: false }),
-    ]);
+    ]));
     const mat = hedgeMaterial(map, nmap);
-    await ctx.yield();
+    await pace.pause();
     // hi ≈ 420 tris a module (caps included), lo ≈ 70
-    const geos = [moduleGeo(10, tsamples(3, 4, 2), 1), moduleGeo(3, tsamples(1, 2, 1), 1)];
-    await ctx.yield();
+    const hi = moduleGeo(10, tsamples(3, 4, 2), 1);
+    await pace.pause();
+    const geos = [hi, moduleGeo(3, tsamples(1, 2, 1), 1)];
+    await pace.pause();
     const N = this.mods.length;
     const root = new THREE.Group();
     root.name = `${this.name}:hedges`;
@@ -261,6 +264,7 @@ export class HedgeSet {
       this.meshes.push(im);
       this.lists.push(new Int32Array(N));
     });
+    await pace.pause();
     group.add(root);
     this.update(ctx.camera as THREE.PerspectiveCamera, true);
     ctx.onUpdate(() => this.update(ctx.camera as THREE.PerspectiveCamera));
