@@ -219,7 +219,9 @@ export class FarMerge {
         if (tris > 0 && tris <= MAX_TRIS && g.attributes.position && mergeableMaterial(this.engine.renderer, mat)) {
           const sig = attrSig(g);
           if (sig) {
-            const key = `${mat.uuid}|${sig}|${o.castShadow ? 1 : 0}${o.receiveShadow ? 1 : 0}|${o.layers.mask}|${o.renderOrder}`;
+            // (the layers it draws with when uncut: a source the detail cull had cut right now would give its whole
+            // group a zero-mask proxy that never draws while the switch hides the source — cull.ts layersOf)
+            const key = `${mat.uuid}|${sig}|${o.castShadow ? 1 : 0}${o.receiveShadow ? 1 : 0}|${this.engine.cull.layersOf(o)}|${o.renderOrder}`;
             let arr = groups.get(key); if (!arr) groups.set(key, (arr = []));
             arr.push(m);
           }
@@ -251,7 +253,7 @@ export class FarMerge {
       if (meshes.length < 2) continue;
       // (the source's state as grouped — read before the merge, which yields)
       const src = meshes[0], mat = src.material as THREE.Material, name = `far:${p.id}:${mat.name || src.name}`;
-      const cast = src.castShadow, receive = src.receiveShadow, mask = src.layers.mask, order = src.renderOrder;
+      const cast = src.castShadow, receive = src.receiveShadow, mask = this.engine.cull.layersOf(src), order = src.renderOrder;
       // transparent proxies live at the POI centre (vertices relative to it): three sorts transparent draws by the
       // object origin, and the world origin would put a far POI's glass in front of / behind the wrong things
       const origin = mat.transparent ? new THREE.Vector3(p.cx, p.cy, p.cz) : null;

@@ -20,7 +20,9 @@ import { flag } from "../flags";
  * restore is a 0.3 s SCALE FADE about the mesh's bounding centre (onBeforeRender / onAfterRender — the module's own
  * matrices are never touched), the restore band is 22 % (was 13 %) plus 1.5 s before a faded-out mesh may come back
  * (no flapping at the boundary), and big meshes (r ≥ 4 m: buildings, POI modules) keep at least 0.83 × the Epic
- * distance on every view-distance setting (Low cuts small-object distance, not the skyline). */
+ * distance from Medium up (`bigMaxPx`: those settings cut small-object distance, not the skyline). Low cuts them by its
+ * own 4 px rule like everything else (0.6 × that distance); past a POI's far-merge switch its merged buildings draw
+ * as the proxy whatever the cull does (hlod.ts). */
 export const CULL_LODV = flag("lodv");
 /** with DITHER (engine/dither.ts) every fade DISSOLVES instead of scaling; a dissolve reads as a soft
  *  crossfade under TAA, so it runs a little longer than the scale fade (0.3 s) */
@@ -79,6 +81,9 @@ export class DetailCull {
   minPxT = 3;
   /** never cull nearer than this (m): no LOD pop anywhere near the player (none within 60 m) */
   minDist = 80;
+  /** (lodv) big meshes (r ≥ BIG_R m) stop drawing under min(minPx, bigMaxPx) projected radius: the default keeps the
+   *  skyline at ≥ 0.83 × the Epic distance; the Low view distance sets it to its own minPx (display.ts) */
+  bigMaxPx = BIG_MAXPX;
   /** the player's own vertical FOV (deg; the engine sets it from the video settings) — see CULL_FOVREF */
   fovRef = 72;
   /** tan(half the FOV the thresholds are computed for) */
@@ -530,7 +535,7 @@ export class DetailCull {
     this.camPrev.copy(cam.position);
     const tanH = this.tanFor(cam);
     const kO = heightPx / (2 * this.minPx * tanH), kT = heightPx / (2 * this.minPxT * tanH);
-    const minBig = Math.min(this.minPx, BIG_MAXPX), kB = heightPx / (2 * minBig * tanH), kBT = heightPx / (2 * Math.min(this.minPxT, BIG_MAXPX * 1.5) * tanH);
+    const minBig = Math.min(this.minPx, this.bigMaxPx), kB = heightPx / (2 * minBig * tanH), kBT = heightPx / (2 * Math.min(this.minPxT, this.bigMaxPx * 1.5) * tanH);
     const px = cam.position.x, py = cam.position.y, pz = cam.position.z;
     const f15 = this.frame & 15, md = this.minDist, step = dt / FADE_S;
     let n = 0;
@@ -611,5 +616,11 @@ export class DetailCull {
     if (on) for (const r of this.roots) this.stale.add(r);
   }
 
-  info() { return { roots: this.roots.length, items: this.items.length, culled: this.culled, released: this.released, minPx: this.minPx, minPxT: this.minPxT }; }
+  /** the layer mask `o` draws with when nothing is cut: its own, or the one saved while this cull has it cut (mask 0).
+   *  The far merge groups and masks its proxies by it — a source cut when its POI's proxy was built gave the proxy a zero
+   *  mask, and the proxy never drew while it gated the source off: the mesh was missing from the switch distance out to
+   *  its own cut distance */
+  layersOf(o: THREE.Object3D): number { const it = this.byObj.get(o); return it?.culled ? it.mask : o.layers.mask; }
+
+  info() { return { roots: this.roots.length, items: this.items.length, culled: this.culled, released: this.released, minPx: this.minPx, minPxT: this.minPxT, bigMaxPx: this.bigMaxPx }; }
 }
