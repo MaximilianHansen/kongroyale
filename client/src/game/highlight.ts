@@ -4,7 +4,9 @@
 //
 // Cost: the target's meshes drawn twice more (≤ MAX_PARTS draws), nothing when no prompt is up. Hull geometries (the
 // source's positions with smoothed normals, so hard-edged crates get a gap-free outline) are cached per source geometry
-// — built once per crate rarity / gun model, not per frame. Every frame only copies the source meshes' world matrices.
+// — built once per crate rarity / gun model, not per frame, and welded in idle time ahead of use (prewarmHull(s)): a
+// target whose hulls are not welded yet gets its outline a few frames late instead of a 20-40 ms weld on the frame you
+// look at it (hullsReady). Every frame only copies the source meshes' world matrices.
 import * as THREE from "three";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 
@@ -90,13 +92,64 @@ function flatPositions(a: THREE.BufferAttribute | THREE.InterleavedBufferAttribu
   for (let i = 0; i < n; i++) { out[i * 3] = a.getX(i); out[i * 3 + 1] = a.getY(i); out[i * 3 + 2] = a.getZ(i); }
   return new THREE.BufferAttribute(out, 3);
 }
+
+// Hulls waiting to be welded. A weld is 10-40 ms (a floor gun, a chest crate's ~17 k vertices) and a match start asks
+// for many while the main thread is rarely idle: with an idle callback per hull, their timeouts ran out together and
+// every weld ran back to back in one frame (~90 ms). Now one callback at a time welds one hull, and another only while
+// its idle period still has room for a weld as long as the last one. A hull an outline is waiting for goes first, on a
+// short timeout.
+const hullQueue: THREE.BufferGeometry[] = [];
+const hullQueued = new Set<THREE.BufferGeometry>();
+/** idle-callback timeouts (ms): background warming, and a hull an outline is waiting for */
+const HULL_BG_MS = 4000, HULL_SOON_MS = 150;
+// (a browser without requestIdleCallback, Safari: a timer, one weld each)
+const ric = (globalThis as unknown as { requestIdleCallback?: typeof requestIdleCallback }).requestIdleCallback;
+let bgPending = false, soonPending = false, weldMs = 0;
+function nextHull(): THREE.BufferGeometry | undefined {
+  for (let g = hullQueue.shift(); g; g = hullQueue.shift()) { hullQueued.delete(g); if (!hullCache.has(g)) return g; }
+  return undefined;
+}
+function pumpHulls(soon: boolean) {
+  // (a pending soon callback serves the background queue too; a pending background one is too slow for a soon hull)
+  if (soonPending || (!soon && bgPending)) return;
+  if (soon) soonPending = true; else bgPending = true;
+  const run = (d?: IdleDeadline) => {
+    if (soon) soonPending = false; else bgPending = false;
+    let g = nextHull();
+    while (g) {
+      const t = performance.now(); hullOf(g); weldMs = performance.now() - t;
+      g = d && !d.didTimeout && d.timeRemaining() > weldMs ? nextHull() : undefined;
+    }
+    if (hullQueue.length) pumpHulls(false);
+  };
+  if (ric) ric(run, { timeout: soon ? HULL_SOON_MS : HULL_BG_MS }); else setTimeout(run, soon ? 0 : 200);
+}
 /** the hull of `g` is built (an outline can show this frame without welding vertices on it) */
 export const hullReady = (g: THREE.BufferGeometry) => hullCache.has(g);
-/** build a hull ahead of time in an idle slice (chest crates: ~17 k vertices to weld — not on the frame you look at one) */
-export function prewarmHull(g: THREE.BufferGeometry | undefined) {
+/** weld a hull ahead of time in an idle slice, not on the frame an outline needs it. `soon`: an outline is waiting for
+ *  it (it jumps the queue and is welded within ~150 ms even while the main thread is busy) */
+export function prewarmHull(g: THREE.BufferGeometry | undefined, soon = false) {
   if (!g || hullCache.has(g)) return;
-  const ric = (globalThis as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
-  if (ric) ric(() => { hullOf(g); }, { timeout: 4000 }); else setTimeout(() => hullOf(g), 200);
+  if (!hullQueued.has(g)) { hullQueued.add(g); if (soon) hullQueue.unshift(g); else hullQueue.push(g); }
+  else if (soon && hullQueue[0] !== g) { const i = hullQueue.indexOf(g); hullQueue.copyWithin(1, 0, i); hullQueue[0] = g; }
+  pumpHulls(soon);
+}
+/** queue the hulls of every mesh an outline of `root` could draw: meshParts' filter, hidden parts included (a floor
+ *  item's model can be hidden while it is far) */
+export function prewarmHulls(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.geometry?.getAttribute("position") || (o as THREE.SkinnedMesh).isSkinnedMesh) return;
+    const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.Material | undefined;
+    if (mat && (mat.transparent || mat.blending === THREE.AdditiveBlending)) return;
+    prewarmHull(m.geometry);
+  });
+}
+/** every part's hull is welded; else the missing ones are asked for (soon) and the caller shows no outline this frame */
+export function hullsReady(parts: HlPart[], n: number): boolean {
+  let ready = true;
+  for (let i = 0; i < n; i++) if (!hullCache.has(parts[i].geometry)) { prewarmHull(parts[i].geometry, true); ready = false; }
+  return ready;
 }
 
 export class InteractHighlight {

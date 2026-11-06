@@ -2,9 +2,10 @@
 // (it slams up out of the ground with a dust puff), darkening and shaking as it takes hits, toppling apart when it breaks,
 // sinking away when it crumbles; and the placement GHOST while the crate wall is in your hands (the very coverPlace the
 // sim runs: green = fire sets it here, red = it does not fit). Pooled views (≤ 2 per kong), materials cloned per view so
-// one wall can darken on its own.
+// one wall can darken on its own. The crate-wall model is built once per page and shared: the ghost and every view are
+// clones of it (same geometry), and a match owns only its views' materials and the ghost's.
 import * as THREE from "three";
-import type { Scope } from "../engine/res/scope";
+import { resources, type Scope } from "../engine/res/scope";
 import { COVER, coverPlace, PLACED, type CoverSet } from "../../../shared/sim/cover";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { crateWall } from "../weapons/loot-lane";
@@ -16,27 +17,39 @@ const ghostMaterial = () => new THREE.MeshBasicMaterial({ color: 0x55ff77, trans
 /** the placement ghost's program for the session prewarm (game/render.ts renderPrefabs) */
 export function coverGhostPrefab(): THREE.Object3D { return new THREE.Mesh(new THREE.PlaneGeometry(0.01, 0.01), ghostMaterial()); }
 
+// The crate wall is ~80 ms of main thread to build, and every match built it again for the ghost at its start (and for
+// each new wall view). Built once per page instead, in the title's prefab warm-up (prewarmCrateWall) or else by the
+// first match; resources.root owns its geometry. The model itself never joins a scene (a clone carries its own
+// transform, visibility and materials), so nothing a match does to a clone reaches it.
+let wallModel: THREE.Group | null = null;
+function crateWallModel(): THREE.Group {
+  if (!wallModel) {
+    wallModel = crateWall(COVER.w, COVER.h, COVER.t).root;
+    const seen = new Set<THREE.BufferGeometry>();
+    wallModel.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !seen.has(m.geometry)) { seen.add(m.geometry); resources.root.geometry("geo.world", m.geometry); } });
+  }
+  return wallModel;
+}
+/** build the crate wall ahead of the first match (the model only: it is never drawn itself, and the ghost's program
+ *  is compiled with coverGhostPrefab) */
+export function prewarmCrateWall() { crateWallModel(); }
+
 export class CoverViews {
   private readonly views = new Map<number, View>();
   private pool: View[] = [];
   private readonly ghost: THREE.Group; private readonly ghostMat: THREE.MeshBasicMaterial;
   constructor(private readonly scene: THREE.Scene, private readonly world: StaticWorld, private readonly fx: { puff(p: THREE.Vector3, k: "dust"): void }, private readonly sound: (s: "up" | "hit" | "break" | "end", x: number, y: number, z: number) => void, private readonly res: Scope) {
     this.ghostMat = res.material(ghostMaterial());
-    this.ghost = this.owned(crateWall(COVER.w, COVER.h, COVER.t).root);
+    this.ghost = crateWallModel().clone(true);
     this.ghost.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = this.ghostMat; m.castShadow = false; m.receiveShadow = false; m.renderOrder = 7; } });
     this.ghost.name = "cover-ghost"; this.ghost.visible = false;
     scene.add(this.ghost);
     res.defer(() => { for (const v of [...this.views.values(), ...this.pool]) v.obj.removeFromParent(); this.views.clear(); this.pool.length = 0; this.ghost.removeFromParent(); });
   }
-  private owned<T extends THREE.Object3D>(root: T): T {
-    const seen = new Set<THREE.BufferGeometry>();
-    root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !seen.has(m.geometry)) { seen.add(m.geometry); this.res.geometry("geo.world", m.geometry); } });
-    return root;
-  }
   private grab(id: number): View {
     let v = this.pool.pop();
     if (!v) {
-      const obj = this.owned(crateWall(COVER.w, COVER.h, COVER.t).root), mats: THREE.MeshStandardMaterial[] = [], base: THREE.Color[] = [];
+      const obj = crateWallModel().clone(true), mats: THREE.MeshStandardMaterial[] = [], base: THREE.Color[] = [];
       obj.traverse((o) => { const m = o as THREE.Mesh; if (!m.isMesh) return; const c = this.res.material((m.material as THREE.MeshStandardMaterial).clone()); m.material = c; mats.push(c); base.push(c.color.clone()); m.castShadow = true; m.receiveShadow = true; });
       const g = new THREE.Group(); g.add(obj); g.name = "crate-wall";
       v = { id, obj: g, mats, base, t: 0, state: 0, hitT: -1, hp: COVER.hp, seed: 0 };
