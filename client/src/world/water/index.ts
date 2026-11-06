@@ -3,8 +3,10 @@
 // three passes of one geometry (shader.ts): a depth pre-pass, a MULTIPLY pass (dst *= per-channel transmission ×
 // caustics × reef × wet sand — the floor seen through the water without copying the framebuffer) and the main
 // MeshPhysicalMaterial pass (in-scatter, sky reflection, foam, glitter), premultiplied over. Per frame on the GPU: a
-// live ripple tile (≤ 40 Hz, wavetile.ts) and, only below the surface, the refracted-grid caustics + a scene-depth copy
-// for the underwater volume (grab.ts). Everything sleeps while an occlusion query says no water pixel is on screen.
+// live ripple tile (≤ 40 Hz, wavetile.ts), a copy of the opaque scene right before the water draws (grab.ts: depth for
+// the contact foam and the underwater volume, colour for refraction + screen-space reflections — depth only on the Low
+// tier) and, only below the surface, the refracted-grid caustics. Everything sleeps while an occlusion query says no
+// water pixel is on screen.
 // Publishes ctx.shared "water" (WaterApi, api.ts).
 import * as THREE from "three";
 import { WORLD, POIS } from "../../../../shared/world/map";
@@ -211,10 +213,14 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       if (on) mat.defines[k] = 1; else delete mat.defines[k];
       mat.needsUpdate = true;
     };
-    // scene-depth copy: only for the underwater volume pass (the surface itself needs no framebuffer copy)
+    // scene copy: the depth feeds the contact collars / clear submerged parts and the underwater volume pass, the colour
+    // the refraction + screen-space reflections. No colour on the Low tier (as THE MURK's tea there): the full-frame copy
+    // and the reflection march it enables were 1.7–2.8 ms of a GPU-bound 8K frame at the beach / shallows cameras
+    // (measured on an RX 7900 XTX). The floor is then multiplied straight behind (shader.ts keeps its sand cooling as a
+    // factor) and the sky mirrored
     const grab = new SceneGrab();
     const sceneOn = !flag("wnoscene");
-    grab.colour = sceneOn;
+    grab.colour = sceneOn && ctx.quality !== "low";
     grab.attach(mesh, (cam) => cam === ctx.camera);
     grab.attach(meshFar, (cam) => cam === ctx.camera);
     grab.attach(meshMid, (cam) => cam === ctx.camera);

@@ -3,7 +3,9 @@
 // SpeciesPool (big plants): every instance's world matrix is composed ONCE at add() time into a flat Float32Array and
 // indexed by a flat CSR grid (32 m cells). A refresh (camera moved / turned) walks only the cells in range, culls whole
 // cells against a widened frustum, then per instance picks LOD0 / LOD1 by distance and copies 16 floats. Beyond LOD1
-// the static impostor mesh (one quad per instance, baked once) takes over.
+// the static impostor mesh (one quad per instance, baked once) takes over. An instance outside the view is kept only
+// when it is within 40 m and its tier casts into the dynamic cascades: LOD0 stores those after the in-view instances
+// and its main-pass draw stops before them (only the shadow passes draw them); LOD1 keeps them in its casting prefix.
 //
 // DetailPool (grass, ferns, flowers, groundcover): instances live in per-16 m-cell blocks (pre-composed matrices,
 // sorted by a random thinning threshold) owned by the veg system; a refresh just copies whole blocks (TypedArray.set)
@@ -36,6 +38,12 @@ export const VEG_PREPASS = flag("vegpre");
  *  ~2.2 ×) and get it back on approach. Beyond SHADOW1_D the far map's impostor shadows cover. ?vegshadow1=0: off */
 export const SHADOW_LOD1 = flag("vegshadow1");
 const SHADOW1_D = 58;   // (the end of foliage-material uVegShadowBand — casting dissolves from 42 m)
+/** the in-view test pads the sphere of an instance within 40 m (m): a selection lags the camera by up to one refresh
+ *  step (veg index.ts re-selects every family once the camera is 2.5 m from where it last selected) + one frame, and
+ *  a few metres from the camera that move swings an instance through a wide angle (backing past a bush) */
+const VIEW_PAD = 4;
+/** sort-key offset (whole metres²) of an out-of-view LOD0 caster: it sorts after every in-view instance */
+const OUT_KEY = 2 ** 30;
 /** opaque LOD0 parts crossfade with their tier (?vegsolidfade=0 = the old no-discard LOD0 bark) */
 export const SOLID_FADE = flag("vegsolidfade");
 /** ?vegdbg=noshadow,noimp,nolod0,nolod1,nodetail — perf attribution switches */
@@ -113,6 +121,7 @@ class LodMeshes {
           im.onBeforeShadow = () => { if (im.userData.vegWarm) return; saved = im.count; im.count = Math.min(im.count, this.nShadow1); };
           im.onAfterShadow = () => { if (saved >= 0) { im.count = saved; saved = -1; } };
         }
+        if (lod === 0 && !detail) this.viewOnly(im);
         // atmos applies a scene-wide casting policy after build unless userData says otherwise; LOD sets change with the
         // camera, so they never go into atmos' static far map (the impostors stand in for them there)
         im.userData.castShadow = im.castShadow; im.userData.farShadow = false;
@@ -134,6 +143,7 @@ class LodMeshes {
           // before every colour draw of the scene (the terrain and POIs behind the leaves are then depth-rejected too)
           pm.renderOrder = -80 + im.renderOrder * 0.01;
           pm.count = 0; pm.visible = false;
+          if (lod === 0 && !detail) this.viewOnly(pm);
           pm.name = `veg:${sp.id}:${part.name}:lod${lod}:pre`;
           (lod === 0 ? this.lod0 : this.lod1).push(pm);
           scene.add(pm);
@@ -146,6 +156,15 @@ class LodMeshes {
   near0 = 0; near1 = 0;
   /** LOD1 instances (from the front of the near → far buffer) nearer than SHADOW1_D — the ones that cast */
   nShadow1 = 0;
+  /** LOD0 instances in view (the front of the buffer); the out-of-view casters after them are for the shadow passes */
+  nView0 = 0;
+
+  /** a LOD0 mesh's main-pass draw stops at nView0; its count (and so every shadow pass) keeps the whole buffer */
+  private viewOnly(m: THREE.InstancedMesh) {
+    let saved = -1;
+    m.onBeforeRender = () => { saved = m.count; m.count = Math.min(m.count, this.nView0); };
+    m.onAfterRender = () => { if (saved >= 0) { m.count = saved; saved = -1; } };
+  }
 
   begin() { this.n0 = 0; this.n1 = 0; }
 
@@ -272,6 +291,7 @@ export class PartGroup {
     copy(s1, k1, M.a1, M.c1, M.f1, 1);
     M.n0 = k0; M.n1 = k1;
     { const lim = (SHADOW1_D * SHADOW1_D + 1) * 1048576; let n = 0; while (n < k1 && s1[n] < lim) n++; M.nShadow1 = n; }
+    { const lim = OUT_KEY * 1048576; let n = 0; while (n < k0 && s0[n] < lim) n++; M.nView0 = n; }
     // (nearest SURFACE, roughly: centre distance minus half the bounding radius — a tree's centre is up in its crown)
     const near = (key: number) => { const lo = key % 1048576, slot = Math.floor(lo / 65536); return Math.max(0, Math.sqrt(Math.floor(key / 1048576)) - 0.5 * mem[slot].ctr[(lo - slot * 65536) * 4 + 3]); };
     M.setOrder(k0 ? near(s0[0]) : 999, k1 ? near(s1[0]) : 999);
@@ -481,6 +501,14 @@ export class SpeciesPool {
     const cs = this.cs, items = this.items, ctr = this.ctr;
     const tier = this.tier, prev = this.prev, tsw = this.tsw, seen = this.seen;
     let k0 = 0, k1 = 0, S0 = this.sel0, S1 = this.sel1;
+    // does a tier cast into the dynamic cascades (the video tier switches veg casting live)? Only then are its
+    // out-of-view near instances kept, for the shadow passes (Low casts no veg: nothing out of view is drawn)
+    let cast0 = false, cast1 = false;
+    for (let g = 0; g < this.groups.length; g++) {
+      const L = this.groups[g].meshes;
+      for (let m = 0; m < L.lod0.length; m++) if (L.lod0[m].castShadow) cast0 = true;
+      for (let m = 0; m < L.lod1.length; m++) if (L.lod1[m].castShadow) cast1 = true;
+    }
     for (let kz = kz0; kz <= kz1; kz++) for (let kx = kx0; kx <= kx1; kx++) {
       const k = kz * GRID_N + kx, s = cs[k], e = cs[k + 1];
       if (s === e) continue;
@@ -507,11 +535,17 @@ export class SpeciesPool {
         const t = tier[i], fading = now - tsw[i] < VEG_FADE_T, p = prev[i];
         const show0 = t === 0 || (fading && p === 0), show1 = t === 1 || (fading && p === 1);
         if (!show0 && !show1) continue;
-        if (!cellVis || (dist2 > 1600 && !sphereIn(P, ctr[o], ctr[o + 1], ctr[o + 2], ctr[o + 3]))) continue;
+        if (!cellVis) continue;
+        // in view: the widened frustum (within 40 m the sphere padded by VIEW_PAD). Out of view, an instance within
+        // 40 m stays for a tier that casts — LOD0 sorts it after every in-view instance (PartGroup.fill → nView0: the
+        // main pass stops before it), LOD1 keeps it near → far inside its casting prefix (drawn by both passes)
+        const near = dist2 <= 1600;
+        const vis = sphereIn(P, ctr[o], ctr[o + 1], ctr[o + 2], near ? ctr[o + 3] + VIEW_PAD : ctr[o + 3]);
+        if (!vis && !(near && ((show0 && cast0) || (show1 && cast1)))) continue;
         // sort key: whole-metre² distance in the high bits, instance index in the low 16 (near → far after sorting)
         const key = Math.floor(dist2) * 65536 + i;
-        if (show0) { if (k0 >= S0.length) S0 = this.sel0 = growKeys(S0); S0[k0++] = key; }
-        if (show1) { if (k1 >= S1.length) S1 = this.sel1 = growKeys(S1); S1[k1++] = key; }
+        if (show0 && (vis || cast0)) { if (k0 >= S0.length) S0 = this.sel0 = growKeys(S0); S0[k0++] = vis ? key : key + OUT_KEY * 65536; }
+        if (show1 && (vis || cast1)) { if (k1 >= S1.length) S1 = this.sel1 = growKeys(S1); S1[k1++] = key; }
       }
     }
     // instances that left the range (teleport / sprint past the ring) go back to their impostor; transitions that are
