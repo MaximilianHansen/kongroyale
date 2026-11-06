@@ -11,6 +11,7 @@ import { POIS } from "../world/map";
 import type { Climb } from "../sim/climb";
 import type { VegInstance } from "../world/veg-scatter";
 import { jungleTreeShape, treeRadius, ridgeAt, flangeAt, type TreeShape } from "../world/veg-scatter";
+import * as dmath from "../sim/dmath";
 
 /** perch look + collision, derived from its climb (kind 1) */
 export interface PerchDef {
@@ -28,8 +29,8 @@ const SLOT = 0.75, DECK_T = 0.2;
  *  gap over the ladder */
 export function perchFor(c: Climb): PerchDef {
   const ax = c.ax ?? c.x, az = c.az ?? c.z, rf = c.ar ?? 0.8, ux = c.nx, uz = c.nz, vx = -c.nz, vz = c.nx, y = c.y1;
-  const half = Math.hypot(c.x - ax, c.z - az);
-  const yaw = Math.atan2(uz, ux);
+  const half = dmath.hypot(c.x - ax, c.z - az);
+  const yaw = dmath.atan2(uz, ux);
   const planks: PerchDef["planks"] = [];
   // four boards round the trunk (a hole for the trunk in the middle), drawn as their colliders
   const add = (u0: number, u1: number, v0: number, v1: number, dark = false) => {
@@ -51,14 +52,14 @@ export function perchFor(c: Climb): PerchDef {
 export function perchBoxes(p: PerchDef): Box[] {
   const out: Box[] = p.planks.map((b) => ({ c: [b.x, b.y, b.z], h: [b.hx, b.hy, b.hz], yaw: b.yaw, surf: "wood" }));
   for (const [x0, z0, x1, z1] of p.rails) {
-    const L = Math.hypot(x1 - x0, z1 - z0);
-    out.push({ c: [(x0 + x1) / 2, p.y + 0.52, (z0 + z1) / 2], h: [L / 2 + 0.04, 0.52, 0.05], yaw: Math.atan2(z1 - z0, x1 - x0), surf: "wood" });
+    const L = dmath.hypot(x1 - x0, z1 - z0);
+    out.push({ c: [(x0 + x1) / 2, p.y + 0.52, (z0 + z1) / 2], h: [L / 2 + 0.04, 0.52, 0.05], yaw: dmath.atan2(z1 - z0, x1 - x0), surf: "wood" });
   }
   return out;
 }
 
 /** model → world (three.js yaw: model +X → (cos, −sin)) */
-const rotY = (x: number, z: number, yaw: number): [number, number] => { const c = Math.cos(yaw), s = Math.sin(yaw); return [x * c + z * s, -x * s + z * c]; };
+const rotY = (x: number, z: number, yaw: number): [number, number] => { const c = dmath.cos(yaw), s = dmath.sin(yaw); return [x * c + z * s, -x * s + z * c]; };
 
 /** a candidate climb on a drawn giant: the widest gap between its buttress roots, the ladder up the trunk there to the
  *  perch height. null = no gap a kong can stand in (the scatter fills narrow root pockets — see vegTrunkColliders) */
@@ -78,7 +79,7 @@ export function treeClimb(p: VegInstance, terrain: Terrain): Climb | null {
   let ax = 0, az = 0;
   for (let i = 1; i < s.pts.length; i++) { const a = s.pts[i - 1], b = s.pts[i]; if (b[1] >= yl) { const t = (yl - a[1]) / (b[1] - a[1]); ax = a[0] + (b[0] - a[0]) * t; az = a[2] + (b[2] - a[2]) * t; break; } }
   const [wax, waz] = rotY(ax * S, az * S, p.yaw);
-  const [nx, nz] = rotY(Math.cos(phi), -Math.sin(phi), p.yaw);
+  const [nx, nz] = rotY(dmath.cos(phi), -dmath.sin(phi), p.yaw);
   const half = 1.9 + 0.35 * S, axw = p.x + wax, azw = p.z + waz;
   const x = axw + nx * half, z = azw + nz * half, off = 0.5;
   const y0 = terrain.height(x + nx * off, z + nz * off), y1 = p.y + yl * S;
@@ -92,14 +93,14 @@ export function pickClimbTrees(plants: VegInstance[], terrain: Terrain): VegInst
   const giants = plants.filter((q) => q.kind === "jungle-tree" && q.variant % 5 === 2 && q.scale >= 0.95);
   const h = (q: VegInstance) => { let x = Math.imul(Math.round(q.x * 10) ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(Math.round(q.z * 10), 0xc2b2ae35); x ^= x >>> 13; return (x >>> 0) / 4294967296; };
   const out: VegInstance[] = [];
-  const far = (q: VegInstance, d: number) => out.every((o) => Math.hypot(o.x - q.x, o.z - q.z) >= d);
+  const far = (q: VegInstance, d: number) => out.every((o) => dmath.hypot(o.x - q.x, o.z - q.z) >= d);
   for (const poi of POIS) {
     if (poi.id === "lobby-islet") continue;
-    const ring = giants.filter((q) => { const d = Math.hypot(q.x - poi.x, q.z - poi.z); return d > poi.r * 0.45 && d < poi.r * 1.3; }).sort((a, b) => h(a) - h(b));
+    const ring = giants.filter((q) => { const d = dmath.hypot(q.x - poi.x, q.z - poi.z); return d > poi.r * 0.45 && d < poi.r * 1.3; }).sort((a, b) => h(a) - h(b));
     let n = 0;
     for (const q of ring) { if (n >= 2) break; if (far(q, 45)) { out.push(q); n++; } }
   }
-  const wild = giants.filter((q) => POIS.every((poi) => Math.hypot(q.x - poi.x, q.z - poi.z) > poi.r * 1.6)).sort((a, b) => h(a) - h(b));
+  const wild = giants.filter((q) => POIS.every((poi) => dmath.hypot(q.x - poi.x, q.z - poi.z) > poi.r * 1.6)).sort((a, b) => h(a) - h(b));
   let n = 0;
   for (const q of wild) { if (n >= 7) break; if (far(q, 240)) { out.push(q); n++; } }
   return out;

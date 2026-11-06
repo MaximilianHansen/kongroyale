@@ -25,7 +25,7 @@ export interface MurkMats {
 let cached: Promise<MurkMats> | null = null;
 export function murkMats(ctx: WorldCtx): Promise<MurkMats> {
   return (cached ??= (async () => {
-    await preloadTownTex(ctx.renderer);
+    await preloadTownTex(ctx.renderer, () => ctx.yield());
     const town = townMats(ctx.renderer);
     const load = (k: SetKey) => Promise.all([
       ctx.assets.texture(`assets/pois/murk/${k}-d.webp`),

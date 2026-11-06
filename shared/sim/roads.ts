@@ -9,6 +9,7 @@ import { toWorld } from "../pois/coast-kit";
 import { APRON, HGR, RWY, STRIP, TAXI } from "../pois/peel-strip";
 import { PLACES, STREETS } from "../pois/mango-market";
 import { ROADS } from "../pois/the-plantation";
+import * as dmath from "./dmath";
 
 type P2 = readonly [number, number];
 export function buildRoads(t: Terrain): Uint8Array {
@@ -34,7 +35,7 @@ export function buildRoads(t: Terrain): Uint8Array {
       const [ax, az] = pts[k], [bx, bz] = pts[k + 1], dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
       for (let i = col(Math.min(az, bz) - hw); i <= col(Math.max(az, bz) + hw); i++) for (let j = col(Math.min(ax, bx) - hw); j <= col(Math.max(ax, bx) + hw); j++) {
         const x = t.sampleX(j), z = t.sampleZ(i), u = Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / l2));
-        if ((x - ax - dx * u) ** 2 + (z - az - dz * u) ** 2 <= hw * hw) g[i * r + j] = b;
+        if (dmath.pow(x - ax - dx * u, 2) + dmath.pow(z - az - dz * u, 2) <= hw * hw) g[i * r + j] = b;
       }
     }
   };

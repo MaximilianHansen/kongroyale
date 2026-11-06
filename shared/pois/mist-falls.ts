@@ -6,6 +6,7 @@ import type { Box } from "../world/colliders";
 import baked from "./jungle-baked.json";
 import type { JungleBaked } from "./jungle-layout";
 import { fallsColliders, fallsClearings, FALLS, type Clearing } from "./jungle-falls";
+import * as dmath from "../sim/dmath";
 
 export const layout = (baked as unknown as JungleBaked).falls;
 export const colliders: Box[] = fallsColliders(layout);
@@ -19,6 +20,6 @@ export const LOOT_SPOTS: { chests: Array<[number, number, number, number]>; floo
   const L = layout.loot ?? { chests: [], floor: [] };
   // the payoff: the chest on the rock pillar BETWEEN the two falls (beside the hoist, reached over the high rope
   // bridge, exposed from every ledge) — always on, a Rare Chest (shared/sim/loot-spots.ts LOOT_SPOTS.hero)
-  let best = -1, bd = 6; L.chests.forEach((c, i) => { const d = Math.hypot(c[0] - FALLS.pillar.x, c[2] - FALLS.pillar.z); if (d < bd) { bd = d; best = i; } });
+  let best = -1, bd = 6; L.chests.forEach((c, i) => { const d = dmath.hypot(c[0] - FALLS.pillar.x, c[2] - FALLS.pillar.z); if (d < bd) { bd = d; best = i; } });
   return { ...L, hero: best >= 0 ? [best] : [] };
 })();

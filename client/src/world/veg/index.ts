@@ -312,6 +312,7 @@ class VegSystem implements VegApi {
   rootSink: Array<[number, number, number]> = [];
   /** VegApi: POIs dress their grounds with the same plants */
   plant(kind: PlantKind, transforms: THREE.Matrix4[]) {
+    if (this.ctx.rebuilding) return;
     const k = kind as VegKind;
     if (!(k in BUILDERS)) { console.warn(`veg.plant: unknown kind ${kind}`); return; }
     const pos = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(), fwd = new THREE.Vector3();

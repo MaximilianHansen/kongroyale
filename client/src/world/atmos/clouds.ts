@@ -18,6 +18,7 @@ import { bakeCloudVolume, makeDetailNoise, type CloudVolume } from "./cloud-bake
 import type { CloudSpec } from "./cloud-field";
 import type { Quality } from "../../engine/engine";
 import { flag } from "../../flags";
+import { onRestore } from "../../engine/res/restore";
 
 export { cloudField } from "./cloud-field";
 export type { CloudSpec } from "./cloud-field";
@@ -445,6 +446,7 @@ export class Clouds {
     sea.visible = false;
     this.seaShadow = sea;
     this.group.add(sea);
+    onRestore("bake", () => this.invalidate());
   }
 
   private volume(kind: CloudKind, v: number): CloudVolume {
