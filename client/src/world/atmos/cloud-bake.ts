@@ -4,6 +4,7 @@
 // this field, so silhouettes are exact at any distance and shading (normals, AO, self-shadow) comes from the SDF.
 import * as THREE from "three";
 import type { CloudProto } from "./cloud-shapes";
+import { bake } from "../../engine/res/restore";
 
 export interface CloudVolume {
   proto: CloudProto;
@@ -85,34 +86,37 @@ export function bakeCloudVolume(renderer: THREE.WebGLRenderer, proto: CloudProto
     data[i * 4] = s[i * 5]; data[i * 4 + 1] = s[i * 5 + 1]; data[i * 4 + 2] = s[i * 5 + 2]; data[i * 4 + 3] = s[i * 5 + 3];
     data[(n + i) * 4] = s[i * 5 + 4];
   }
-  const sphTex = new THREE.DataTexture(data, n, 2, THREE.RGBAFormat, THREE.FloatType);
-  sphTex.minFilter = sphTex.magFilter = THREE.NearestFilter; sphTex.needsUpdate = true;
-
-  const mat = new THREE.ShaderMaterial({
-    vertexShader: VERT, fragmentShader: FRAG, depthTest: false, depthWrite: false,
-    uniforms: {
-      uSph: { value: sphTex }, uCount: { value: n }, uBMin: { value: bmin }, uSize: { value: size },
-      uRes: { value: new THREE.Vector3(nx, ny, nz) }, uZ: { value: 0 }, uSeed: { value: proto.seed % 97 }, uNoise: { value: noise },
-    },
+  bake(() => {
+    const sphTex = new THREE.DataTexture(data, n, 2, THREE.RGBAFormat, THREE.FloatType);
+    sphTex.minFilter = sphTex.magFilter = THREE.NearestFilter; sphTex.needsUpdate = true;
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: VERT, fragmentShader: FRAG, depthTest: false, depthWrite: false,
+      uniforms: {
+        uSph: { value: sphTex }, uCount: { value: n }, uBMin: { value: bmin }, uSize: { value: size },
+        uRes: { value: new THREE.Vector3(nx, ny, nz) }, uZ: { value: 0 }, uSeed: { value: proto.seed % 97 }, uNoise: { value: noise },
+      },
+    });
+    if (!quad) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+      quad = new THREE.Mesh(g, mat);
+      quad.frustumCulled = false;
+    }
+    const prevMat = quad.material as THREE.Material;
+    quad.material = mat;
+    const prevTarget = renderer.getRenderTarget();
+    const prevAuto = renderer.autoClear;
+    renderer.autoClear = false;
+    for (let z = 0; z < nz; z++) {
+      mat.uniforms.uZ.value = z;
+      renderer.setRenderTarget(target, z);
+      renderer.render(quad, cam);
+    }
+    renderer.setRenderTarget(prevTarget);
+    renderer.autoClear = prevAuto;
+    if (prevMat !== mat) prevMat.dispose();
+    sphTex.dispose();
   });
-  if (!quad) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
-    quad = new THREE.Mesh(g, mat);
-    quad.frustumCulled = false;
-  }
-  quad.material = mat;
-  const prevTarget = renderer.getRenderTarget();
-  const prevAuto = renderer.autoClear;
-  renderer.autoClear = false;
-  for (let z = 0; z < nz; z++) {
-    mat.uniforms.uZ.value = z;
-    renderer.setRenderTarget(target, z);
-    renderer.render(quad, cam);
-  }
-  renderer.setRenderTarget(prevTarget);
-  renderer.autoClear = prevAuto;
-  mat.dispose(); sphTex.dispose();
   return { proto, texture: tex, target, bmin, bmax, res: [nx, ny, nz], voxel };
 }
 

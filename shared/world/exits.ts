@@ -11,6 +11,7 @@
 // `n` = the face's outward normal (horizontal, downhill / seaward). Sim box yaw: box +X → world (cos yaw, 0, sin yaw).
 import type { Box } from "./colliders";
 import { EXIT_LAYOUTS } from "./exits-layout";
+import * as dmath from "../sim/dmath";
 
 /** a terrain the layout reads (shared/world/terrain.ts Terrain satisfies it) */
 export interface ExitGround { height(x: number, z: number): number }
@@ -54,19 +55,19 @@ const MAX_JOG = 3.2;   // a flight may step at most this far in / out from the p
 
 function slopeDeg(t: ExitGround, x: number, z: number) {
   const e = 1, dx = (t.height(x + e, z) - t.height(x - e, z)) / (2 * e), dz = (t.height(x, z + e) - t.height(x, z - e)) / (2 * e);
-  return Math.atan(Math.hypot(dx, dz)) * 180 / Math.PI;
+  return dmath.atan(dmath.hypot(dx, dz)) * 180 / Math.PI;
 }
 
 /** the face's outward normal above (x, z): the mean downhill direction of the steep ground within 14 m uphill */
 function faceNormal(t: ExitGround, x: number, z: number): [number, number] {
   let gx = 0, gz = 0;
   for (let r = 2; r <= 16; r += 2) for (let a = 0; a < 16; a++) {
-    const px = x + Math.cos(a * Math.PI / 8) * r, pz = z + Math.sin(a * Math.PI / 8) * r;
+    const px = x + dmath.cos(a * Math.PI / 8) * r, pz = z + dmath.sin(a * Math.PI / 8) * r;
     const dx = (t.height(px + 1, pz) - t.height(px - 1, pz)) / 2, dz = (t.height(px, pz + 1) - t.height(px, pz - 1)) / 2;
-    const s = Math.hypot(dx, dz); if (s < 0.7) continue;   // only the steep ground (> 35°)
+    const s = dmath.hypot(dx, dz); if (s < 0.7) continue;   // only the steep ground (> 35°)
     gx -= dx / s; gz -= dz / s;
   }
-  const l = Math.hypot(gx, gz) || 1; return [gx / l, gz / l];
+  const l = dmath.hypot(gx, gz) || 1; return [gx / l, gz / l];
 }
 
 /** the rim above a site: the first ground ≥ 2 m above it, inland along the face's normal, flatter than RIM_SLOPE for 3 m */
@@ -90,7 +91,7 @@ export function buildExit(site: ExitSite, t: ExitGround): ExitLayout {
   }
   const w = site.w ?? W, hw = w / 2;
   const from: [number, number, number] = [site.x, t.height(site.x, site.z), site.z];
-  const fixedN = site.normalDeg !== undefined ? [Math.cos(site.normalDeg * Math.PI / 180), Math.sin(site.normalDeg * Math.PI / 180)] as [number, number] : null;
+  const fixedN = site.normalDeg !== undefined ? [dmath.cos(site.normalDeg * Math.PI / 180), dmath.sin(site.normalDeg * Math.PI / 180)] as [number, number] : null;
   const normalAt = (x: number, z: number) => fixedN ?? faceNormal(t, x, z);
   // the foot stands at the TOE of the slope, on gentle ground the low area walks onto: the site itself when it is ≤ 25°,
   // else the first such spot out from the face (+n) within 15 m
@@ -136,8 +137,8 @@ export function buildExit(site: ExitSite, t: ExitGround): ExitLayout {
       if (k) {
         // the face turns: follow its local normal, at most 30° per flight
         const [qx, qz] = normalAt(cx, cz); let vx = -qz * site.side, vz = qx * site.side;
-        const dot = vx * pux + vz * puz, crs = pux * vz - puz * vx, ang = Math.atan2(crs, dot), lim = Math.PI / 6;
-        const a = Math.max(-lim, Math.min(lim, ang)), ca = Math.cos(a), sa = Math.sin(a);
+        const dot = vx * pux + vz * puz, crs = pux * vz - puz * vx, ang = dmath.atan2(crs, dot), lim = Math.PI / 6;
+        const a = Math.max(-lim, Math.min(lim, ang)), ca = dmath.cos(a), sa = dmath.sin(a);
         vx = pux * ca - puz * sa; vz = pux * sa + puz * ca;
         ux = vx; uz = vz; nx = uz * site.side; nz = -ux * site.side;
       }
@@ -154,7 +155,7 @@ export function buildExit(site: ExitSite, t: ExitGround): ExitLayout {
         if (k) {
           // the way across the landing (the previous lane's end → this flight's foot, a capsule wide): no ground ABOVE the
           // deck on it — the deck itself may tuck into the rock at an inner corner, the kong's path never meets the face
-          const dl = Math.hypot(start, wo), ex = start / (dl || 1), ez = wo / (dl || 1);
+          const dl = dmath.hypot(start, wo), ex = start / (dl || 1), ez = wo / (dl || 1);
           for (let q = 0; q <= dl + 0.4; q += 0.3) for (const off of [-0.45, 0, 0.45]) { const [x, z] = P(ex * q - ez * off, ez * q + ex * off); if (t.height(x, z) > yb + 0.05) return false; }
         }
         return true;
@@ -199,7 +200,7 @@ export function buildExit(site: ExitSite, t: ExitGround): ExitLayout {
     // the ground just inland of the top must be walkable (or the stair tops out under a slide)
     { const [x, z] = P(LAND / 2, wIn - 1.2); if (slopeDeg(t, x, z) > 42) return { layout: fail("rim behind the top landing is a slide slope"), rimHere }; }
     const [tx, tz] = P(LAND / 2, wIn - 0.8);
-    const len = flights.reduce((a, f) => a + Math.hypot(f.steps * f.run, f.steps * f.rise), 0) + landings.reduce((a, l) => a + 2 * l.hu, 0) + (wOut - wIn);
+    const len = flights.reduce((a, f) => a + dmath.hypot(f.steps * f.run, f.steps * f.rise), 0) + landings.reduce((a, l) => a + 2 * l.hu, 0) + (wOut - wIn);
     return { layout: { id: site.id, ok: true, foot: [site.x, y0, site.z], top: [tx, yb, tz], from, flights, landings, climb, length: len }, rimHere };
   }
 }
@@ -211,7 +212,7 @@ function spanGaps(a: number, b: number, gaps: Array<[number, number]>): Array<[n
   return spans;
 }
 
-const yawOf = (dx: number, dz: number) => Math.atan2(dz, dx);   // sim box yaw whose +X points along (dx, dz)
+const yawOf = (dx: number, dz: number) => dmath.atan2(dz, dx);   // sim box yaw whose +X points along (dx, dz)
 
 /** colliders of one exit: one thin box per tread, one per landing deck, rail boxes (per tread, both sides; per landing
  *  edge span) — the sim has no pitched boxes, so every rail is a staircase of short boxes like the treads */

@@ -8,6 +8,7 @@
 // Excluded: the terrain surface (every beach would be foam), water, sky/clouds, and alpha-tested / transparent
 // materials (leaf cards would bake as solid blobs). Re-baked when the mesh count changes (async POI loads).
 import * as THREE from "three";
+import { contextEpoch, onRestore } from "../../engine/res/restore";
 
 /** proximity reach of the rings, in texels of the bake (4096² over the 2.4 km island → 0.586 m: 7 → 4.1 m) */
 const R = 7;
@@ -211,6 +212,10 @@ export class ObstacleBake {
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blurMat);
     this.quad.frustumCulled = false;
     this.quadScene.add(this.quad);
+    onRestore("bake", () => {
+      this.baked = new WeakMap(); this.batchedIds = new WeakMap(); this.cleared = false;
+      if (this.bakes > 0) this.bake(true);
+    });
   }
 
   /** the WIDE proximity read back to the CPU (RGBA8 rows, 1024² → 4 MB; R = proximity, ≈ 1 at a big object → 0 at ~16 m),
@@ -233,7 +238,7 @@ export class ObstacleBake {
     const r = this.renderer, gl = r.getContext() as WebGL2RenderingContext;
     if (typeof gl.fenceSync !== "function") return this.wideCells();
     const size = this.rtW2.width, n = size * size * 4;
-    const buf = gl.createBuffer();
+    const buf = gl.createBuffer(), epoch = contextEpoch();
     if (!buf) return this.wideCells();
     const prev = r.getRenderTarget();
     r.setRenderTarget(this.rtW2);
@@ -245,7 +250,8 @@ export class ObstacleBake {
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush();
     const t0 = performance.now();
-    while (sync && gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED && performance.now() - t0 < 5000) await new Promise((res) => setTimeout(res, 8));
+    while (sync && epoch === contextEpoch() && gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED && performance.now() - t0 < 5000) await new Promise((res) => setTimeout(res, 8));
+    if (gl.isContextLost() || epoch !== contextEpoch()) return null;
     if (sync) gl.deleteSync(sync);
     const cells = new Uint8Array(n);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);

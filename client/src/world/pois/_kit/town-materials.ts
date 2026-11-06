@@ -1,6 +1,8 @@
 // poi-town material set: one PBR material per surface family, all vertex-colour tinted, so a whole POI merges into
 // ~a dozen draw calls. `TownBins` = the GeoBins a POI fills, then `buildBins` adds the merged meshes to a group.
 import { Coplanar } from "./coplanar";
+import type { CoStats } from "./coplanar-solve";
+import { ctxPace, PACE_CHECK_MS, type Pace } from "./pace";
 import * as THREE from "three";
 import { GeoBin } from "./town-geo";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -310,6 +312,7 @@ function fadeProxyMaterial(m: THREE.Material, u: { value: number }) {
   m.customProgramCacheKey = () => `${k0}|town-proxy-xfade1`;
 }
 const _c4 = new THREE.Vector4(1, 1, 1, 1);
+const _bb = new THREE.Box3(), _bs = new THREE.Sphere();
 
 let shadowOnly: THREE.ShaderMaterial | null = null;
 /** the invisible material of the shadow-proxy batches: in the MAIN pass every vertex is thrown outside the clip volume
@@ -468,7 +471,13 @@ export class TownLod {
 
   build(ctx: WorldCtx, group: THREE.Group): number { const o = { n: 0 }; for (const _ of this.steps(ctx, group, o)) void _; return o.n; }
   /** the same build, time-sliced (ctx.yield between LOD units / batches — no main-thread task > 50 ms) */
-  async buildAsync(ctx: WorldCtx, group: THREE.Group): Promise<number> { const o = { n: 0 }; for (const _ of this.steps(ctx, group, o)) { void _; await ctx.yield(); } return o.n; }
+  async buildAsync(ctx: WorldCtx, group: THREE.Group, pace: Pace = ctxPace(ctx)): Promise<number> {
+    if (this.co.boxes.length) { this.logCo(await this.co.resolveAsync(pace, PACE_CHECK_MS)); await pace.pause(); }
+    const o = { n: 0 };
+    for (const _ of this.steps(ctx, group, o)) { void _; await pace.pause(); }
+    return o.n;
+  }
+  private logCo(r: CoStats) { if (r.moved && flag("codebug")) console.info(`[${this.prefix}] coplanar: ${r.boxes} boxes, ${r.pairs} coplanar pairs, ${r.moved} faces moved (${r.ms} ms, longest pass ${r.maxPass} ms)`); }
   private *steps(ctx: WorldCtx, group: THREE.Group, out: { n: number }): Generator<void> {
     // 1. every non-empty (item, tier, bin) → one geometry, grouped by (material, casts)
     type Entry = { it: LodItem; tier: Tier; g: THREE.BufferGeometry };
@@ -477,11 +486,10 @@ export class TownLod {
     const posOnly = (g: THREE.BufferGeometry) => { const o = new THREE.BufferGeometry(); o.setAttribute("position", g.attributes.position); o.setIndex(g.index); return o; };
     // the coplanar resolver first: it moves box faces inside the bins' buffers, before they become geometries
     if (this.co.boxes.length) {
-      const it = this.co.steps(); let st = it.next(); while (!st.done) { yield; st = it.next(); }
-      const r = st.value; if (r.moved && flag("codebug")) console.info(`[${this.prefix}] coplanar: ${r.boxes} boxes, ${r.pairs} coplanar pairs, ${r.moved} faces moved (${r.ms} ms, longest pass ${r.maxPass} ms)`);
+      const it = this.co.steps(PACE_CHECK_MS); let st = it.next(); while (!st.done) { yield; st = it.next(); }
+      this.logCo(st.value);
       yield;
     }
-    let tS1 = performance.now();
     for (const it of this.items.values()) {
       box.makeEmpty();
       const shadowParts: THREE.BufferGeometry[] = [];
@@ -491,7 +499,7 @@ export class TownLod {
       for (const tier of TIERS) {
         const bins = it.bins[tier]; if (!bins) continue;
         for (const [name, b] of Object.entries(bins) as Array<[BinName, GeoBin]>) {
-          if (performance.now() - tS1 > 18) { yield; tS1 = performance.now(); }
+          yield;
           const g = b.buildGeometry(); if (!g) continue;
           if (tier === "shadow") { g.computeBoundingBox(); box.union(g.boundingBox!); shadowParts.push(posOnly(g)); continue; }
           const n = g.attributes.position.count, ni = g.index!.count;
@@ -529,7 +537,7 @@ export class TownLod {
       yield;
     }
     // 2. one BatchedMesh per group; each entry = one geometry + one instance (identity matrix: geometry is in world space)
-    let n = 0, tSlice = performance.now();
+    let n = 0;
     for (const grp of groups.values()) {
       const bm = new THREE.BatchedMesh(grp.list.length, grp.verts, grp.idx, grp.mat);
       bm.name = `${this.prefix}:${grp.name}${grp.cast ? "" : ":nc"}`;
@@ -544,9 +552,10 @@ export class TownLod {
       if (TOWN_XFADE && grp.name !== ("shadow" as BinName)) fadeMaterial(grp.mat);
       for (const e of grp.list) {
         // (a time slice inside a big batch too — the plaster batch alone is a 60 ms task)
-        if (performance.now() - tSlice > 18) { yield; tSlice = performance.now(); }
+        yield;
         const gid = bm.addGeometry(e.g);
         const iid = bm.addInstance(gid);
+        bm.getBoundingBoxAt(gid, _bb); bm.getBoundingSphereAt(gid, _bs);
         bm.setVisibleAt(iid, false);
         e.it.ids[e.tier].push([bm, iid, grp.cast, e.g.index!.count / 3]);
       }

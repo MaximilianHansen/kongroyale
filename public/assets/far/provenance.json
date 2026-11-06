@@ -1,0 +1,5 @@
+{
+  "source": "Baked by tools/world/bake-far.mts from this repository's own POI modules (client/src/world/pois/<id>/): merged, vertex-clustered geometry with each material's colour baked into vertex colours.",
+  "licence": "MIT (the project's own work, see LICENSE)",
+  "regenerate": "npx tsx tools/world/bake-far.mts --url <prod build> [--only id,id]"
+}

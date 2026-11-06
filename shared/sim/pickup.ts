@@ -15,6 +15,7 @@ import { ECON, PICKUP_DIST } from "./const";
 import { IK, type Item } from "./loot";
 import { lootReachable } from "./loot-spots";
 import type { StaticWorld } from "./world";
+import * as dmath from "./dmath";
 
 /** rad of look angle one metre of distance is worth (≈1.1°): of two items nearly under the crosshair, the nearer wins */
 const DIST_W = 0.02;
@@ -26,7 +27,7 @@ const NEAR_EXTRA = 0.45, NEAR_IN = 0.6, NEAR_OUT = 1.7;
 
 /** a Banana Stand within its shop reach of (x, y, z) — the client's SHOP prompt rule (render.ts fillHud) */
 export function standNear(stands: ReadonlyArray<{ x: number; y: number; z: number }>, x: number, y: number, z: number): boolean {
-  for (const s of stands) if (Math.hypot(s.x - x, s.z - z) < ECON.standReach + 0.65 && Math.abs(s.y - y) < 2.5) return true;
+  for (const s of stands) if (dmath.hypot(s.x - x, s.z - z) < ECON.standReach + 0.65 && Math.abs(s.y - y) < 2.5) return true;
   return false;
 }
 
@@ -37,12 +38,12 @@ export function aimedItem(items: Iterable<Item>, px: number, py: number, pz: num
   let best: Item | null = null, bestS = Infinity;
   for (const it of items) {
     if (it.taken || (!range && it.kind !== IK.Weapon && it.kind !== IK.Consumable)) continue;
-    const d = Math.hypot(it.x - px, it.z - pz, (it.y - py) * 0.6);
+    const d = dmath.hypot3(it.x - px, it.z - pz, (it.y - py) * 0.6);
     if (d >= PICKUP_DIST + 0.5) continue;
     // the look angle to the item's centre (it lies on the floor: ~15 cm up)
-    const vx = it.x - px, vy = it.y + 0.15 - eye, vz = it.z - pz, l = Math.hypot(vx, vy, vz) || 1;
-    const c = (vx * dx + vy * dy + vz * dz) / l, ang = Math.acos(c > 1 ? 1 : c < -1 ? -1 : c);
-    const hd = Math.hypot(vx, vz), cone = near ? PICK_CONE + NEAR_EXTRA * Math.max(0, Math.min(1, (NEAR_OUT - hd) / (NEAR_OUT - NEAR_IN))) : PICK_CONE;
+    const vx = it.x - px, vy = it.y + 0.15 - eye, vz = it.z - pz, l = dmath.hypot3(vx, vy, vz) || 1;
+    const c = (vx * dx + vy * dy + vz * dz) / l, ang = dmath.acos(c > 1 ? 1 : c < -1 ? -1 : c);
+    const hd = dmath.hypot(vx, vz), cone = near ? PICK_CONE + NEAR_EXTRA * Math.max(0, Math.min(1, (NEAR_OUT - hd) / (NEAR_OUT - NEAR_IN))) : PICK_CONE;
     if (ang > cone && !range) continue;
     const sc = ang + d * DIST_W;
     if (sc > bestS || (sc === bestS && best !== null && it.id > best.id)) continue;

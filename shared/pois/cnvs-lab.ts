@@ -12,6 +12,7 @@
 import type { Box, Surface } from "../world/colliders";
 import { containerBox, type ContainerColor } from "./harbor-kit";
 import { furnishRoom, itemRect, type InteriorRoom, type InteriorStyle, type RoomRole, type RoomOpening, type RoomFinish, type LootSlots } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 // (F0 = G + 0.24: a floor 0.25–0.45 m above the terrain makes the reachability scan emit a duplicate, unreachable node per
 //  lattice point)
@@ -161,7 +162,7 @@ export const STAIRS: StairSpec[] = [
 
 export const HELI = { u: 9, v: 18, a: 9, top: 35.6 };
 /** the big dish: turntable on P's roof, pivot, radius, facing (azimuth from +u toward +v, elevation) */
-export const DISH = { u: 43.8, v: -24.2, turnR: 2.0, turnTop: L2 + 1.2, pivotY: 48.2, R: 7.6, az: Math.atan2(0.62, -0.78), elev: 0.62 };
+export const DISH = { u: 43.8, v: -24.2, turnR: 2.0, turnTop: L2 + 1.2, pivotY: 48.2, R: 7.6, az: dmath.atan2(0.62, -0.78), elev: 0.62 };
 /** the antenna mast (lattice, not climbable) */
 export const MAST = { u: 3.8, v: -34.2, half: 1.8, h: 31 };
 /** chain-link fence: the compound rectangle and its openings (gates open, breaches torn) */
@@ -373,7 +374,7 @@ export const BOULDERS: Array<[number, number, number, number]> = ([
  *  the baked ground */
 export function treeY(t: { u: number; v: number; y?: number }): number {
   if (t.y !== undefined) return t.y;
-  if (PROPS.some((p) => p.k === "planter" && Math.hypot(p.u - t.u, p.v - t.v) < 0.5)) return G + 0.62;
+  if (PROPS.some((p) => p.k === "planter" && dmath.hypot(p.u - t.u, p.v - t.v) < 0.5)) return G + 0.62;
   return groundAt(t.u, t.v);
 }
 /** each boulder's yaw (sim convention) — the collider box and the drawn rock share it */
@@ -425,7 +426,7 @@ export function rockLobes(): RockLobe[] {
     out.push({ u: +u.toFixed(2), v: +v.toFixed(2), a, b, yaw, top, cap, taper, n: k < 0 ? 2.5 : 2.6, seed, N: k < 0 ? (Math.max(a, b) > 1.35 ? 14 : 12) : Math.max(18, Math.min(44, Math.round(2 * Math.PI * Math.max(a, b) / 1.45))), foot, footHi, k, falls });
   };
   ROCKS.forEach((r, k) => {
-    const H = r.top - G, L = Math.hypot(r.u, r.v), f = [-r.u / L, -r.v / L], p = [-f[1], f[0]];
+    const H = r.top - G, L = dmath.hypot(r.u, r.v), f = [-r.u / L, -r.v / L], p = [-f[1], f[0]];
     // the west massif: two slender falls pour off its main lobe's face toward the view camera (its shoulders stand
     // behind it), a third off the south member's east face
     const west = k === 8;
@@ -475,22 +476,22 @@ export function lobeShape(L: RockLobe, all: RockLobe[] = rockLobes()): LobeShape
   const N = L.N, phi = new Float64Array(N), base = new Float64Array(N), tap = new Float64Array(N), capH = new Float64Array(N);
   const rs = (i: number) => lhash(L.seed, i, 7);
   const amp = [0, 0, 0.1, 0.075, 0.05, 0.035].map((a, k) => a * (0.6 + 0.7 * rs(k))), ph = amp.map((_, k) => rs(k + 10) * Math.PI * 2);
-  const fallD = (q: number) => { let m = 1; for (const f of L.falls ?? []) { const d = Math.abs(Math.atan2(Math.sin(q - f), Math.cos(q - f))); m = Math.min(m, Math.max(0, (d - 0.2) / 0.25)); } return m; };
+  const fallD = (q: number) => { let m = 1; for (const f of L.falls ?? []) { const d = Math.abs(dmath.atan2(dmath.sin(q - f), dmath.cos(q - f))); m = Math.min(m, Math.max(0, (d - 0.2) / 0.25)); } return m; };
   for (let j = 0; j < N; j++) {
     const th = (j / N) * Math.PI * 2, q = th + L.yaw;
     phi[j] = q;
-    const e = (L.a * L.b) / Math.hypot(L.b * Math.cos(th), L.a * Math.sin(th));
-    let m = 1; for (let k = 2; k < amp.length; k++) m += amp[k] * Math.cos(k * th + ph[k]);
+    const e = (L.a * L.b) / dmath.hypot(L.b * dmath.cos(th), L.a * dmath.sin(th));
+    let m = 1; for (let k = 2; k < amp.length; k++) m += amp[k] * dmath.cos(k * th + ph[k]);
     const fd = fallD(q);
     base[j] = e * m * (1 + (lhash(L.seed, j, 3) - 0.5) * 0.07 * fd);
     tap[j] = L.taper * (0.6 + 0.8 * lhash(L.seed, j, 4)) * fd;
-    capH[j] = L.cap * (1 + 0.16 * Math.cos(th + ph[2]) + 0.07 * Math.cos(2 * th + ph[3]));
+    capH[j] = L.cap * (1 + 0.16 * dmath.cos(th + ph[2]) + 0.07 * dmath.cos(2 * th + ph[3]));
   }
   // strata steps (massifs; ≥ 4 m over the highest foot, ≥ 1.5 m under the shoulder): an inward rounded step
   // reach bands: the foot, and the crowns of every lobe whose footprint comes within 6 m (a kong stands there)
   const bands: Array<[number, number]> = [[L.foot - 1, L.footHi + 2.9]];
   const rmax = Math.max(L.a, L.b) * 1.2;
-  for (const o of all) if (o !== L && Math.hypot(o.u - L.u, o.v - L.v) < rmax + Math.max(o.a, o.b) * 1.2 + 6) bands.push([o.top - o.cap * 0.75 - 0.5, o.top + 2.9]);
+  for (const o of all) if (o !== L && dmath.hypot(o.u - L.u, o.v - L.v) < rmax + Math.max(o.a, o.b) * 1.2 + 6) bands.push([o.top - o.cap * 0.75 - 0.5, o.top + 2.9]);
   const reach = (ya: number, yb: number) => bands.some(([lo, hi]) => yb > lo && ya < hi);
   const steps: Array<{ y: number; d: Float64Array }> = [];
   if (L.k >= 0) {
@@ -499,7 +500,7 @@ export function lobeShape(L: RockLobe, all: RockLobe[] = rockLobes()): LobeShape
       const y = y0 + (y1 - y0) * (s + 0.5 + (rs(30 + s) - 0.5) * 0.5) / n, dep = 0.16 + 0.12 * rs(40 + s), kk = 1 + Math.floor(rs(50 + s) * 3), p0 = rs(60 + s) * 6.28;
       if (reach(y - 0.5, y + 0.5)) continue;     // (a step inside a reach band would need 4 cm rows)
       // (≤ 0.28 m deep: never a ledge a capsule can stand on — two lobes' ledges met in a 1 m² trap)
-      const d = new Float64Array(N); for (let j = 0; j < N; j++) d[j] = dep * (0.35 + 0.65 * (0.5 + 0.5 * Math.cos(kk * (j / N) * Math.PI * 2 + p0))) * fallD(phi[j]);
+      const d = new Float64Array(N); for (let j = 0; j < N; j++) d[j] = dep * (0.35 + 0.65 * (0.5 + 0.5 * dmath.cos(kk * (j / N) * Math.PI * 2 + p0))) * fallD(phi[j]);
       steps.push({ y, d });
     }
   }
@@ -508,10 +509,10 @@ export function lobeShape(L: RockLobe, all: RockLobe[] = rockLobes()): LobeShape
     const t = Math.min(1, Math.max(0, (y - L.foot) / span));
     for (let j = 0; j < N; j++) {
       if (y >= L.top) { out[o + j] = 0; continue; }
-      let w = base[j] * (1 - tap[j] * Math.pow(t, 1.6));
+      let w = base[j] * (1 - tap[j] * dmath.pow(t, 1.6));
       for (const s of steps) { const x = Math.min(1, Math.max(0, (y - s.y + 0.35) / 0.7)); w -= s.d[j] * x * x * (3 - 2 * x); }
       const yc = L.top - capH[j];
-      if (y > yc) { const qq = (y - yc) / capH[j]; w *= Math.pow(Math.max(0, 1 - Math.pow(qq, n)), 1 / n); }
+      if (y > yc) { const qq = (y - yc) / capH[j]; w *= dmath.pow(Math.max(0, 1 - dmath.pow(qq, n)), 1 / n); }
       out[o + j] = Math.max(0, w);
     }
   };
@@ -561,10 +562,10 @@ export function lobeBoxes(sh: LobeShape): Part[] {
     const yb = rows[i], o = i * N;
     let dmin = Infinity;
     const P: Array<[number, number]> = [];
-    for (let j = 0; j < N; j++) P.push([L.u + R[o + j] * Math.cos(phi[j]), L.v + R[o + j] * Math.sin(phi[j])]);
+    for (let j = 0; j < N; j++) P.push([L.u + R[o + j] * dmath.cos(phi[j]), L.v + R[o + j] * dmath.sin(phi[j])]);
     const ch: Array<{ m: [number, number]; n: [number, number]; d: number; len: number }> = [];
     for (let j = 0; j < N; j++) {
-      const p = P[j], q = P[(j + 1) % N], eu = q[0] - p[0], ev = q[1] - p[1], len = Math.hypot(eu, ev);
+      const p = P[j], q = P[(j + 1) % N], eu = q[0] - p[0], ev = q[1] - p[1], len = dmath.hypot(eu, ev);
       if (len < 0.05) continue;
       let nu = ev / len, nv = -eu / len;
       const m: [number, number] = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
@@ -577,7 +578,7 @@ export function lobeBoxes(sh: LobeShape): Part[] {
     if (dmin > (L.k < 0 ? 0.45 : 0.6) && cs > core + (L.k < 0 ? 0.15 : 0.4)) { core = cs; out.push({ c: [L.u, (cBot + yb) / 2, L.v], h: [cs, (yb - cBot) / 2, cs], yaw: L.yaw, mat: "prop", kind: "prop", surf: "stone", mod: "rock" }); }
     for (const c of ch) {
       const D = core > 0 ? Math.max(0.6, c.d - core + 0.35) : c.d + 0.05;
-      out.push({ c: [c.m[0] - c.n[0] * D / 2, (cBot + yb) / 2, c.m[1] - c.n[1] * D / 2], h: [D / 2, (yb - cBot) / 2, c.len / 2 + 0.015], yaw: Math.atan2(c.n[1], c.n[0]), mat: "prop", kind: "prop", surf: "stone", mod: "rock" });
+      out.push({ c: [c.m[0] - c.n[0] * D / 2, (cBot + yb) / 2, c.m[1] - c.n[1] * D / 2], h: [D / 2, (yb - cBot) / 2, c.len / 2 + 0.015], yaw: dmath.atan2(c.n[1], c.n[0]), mat: "prop", kind: "prop", surf: "stone", mod: "rock" });
     }
   }
   return out;
@@ -587,17 +588,17 @@ export function lobeBoxes(sh: LobeShape): Part[] {
 export function rockCrownAt(u: number, v: number): number | null {
   let best: number | null = null;
   for (const L of rockLobes()) {
-    const du = u - L.u, dv = v - L.v, r = Math.hypot(du, dv);
+    const du = u - L.u, dv = v - L.v, r = dmath.hypot(du, dv);
     if (r > Math.max(L.a, L.b) * 1.3) continue;
     const sh = lobeShape(L), N = L.N;
     // the ring chord the ray (angle) crosses: vertices j, j+1
-    let q = Math.atan2(dv, du) - L.yaw; q = ((q % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    let q = dmath.atan2(dv, du) - L.yaw; q = ((q % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
     const jf = (q / (2 * Math.PI)) * N, j = Math.floor(jf) % N, j1 = (j + 1) % N;
     const at = (row: number) => {
       const r0 = sh.R[row * N + j], r1 = sh.R[row * N + j1], a0 = sh.phi[j], a1 = a0 + (2 * Math.PI) / N, a = a0 + (jf - Math.floor(jf)) * (2 * Math.PI) / N;
       // radius along angle a of the chord between (r0, a0) and (r1, a1)
-      const x0 = r0 * Math.cos(a0), y0 = r0 * Math.sin(a0), x1 = r1 * Math.cos(a1), y1 = r1 * Math.sin(a1);
-      const ex = x1 - x0, ey = y1 - y0, ca = Math.cos(a), sa = Math.sin(a), den = ca * ey - sa * ex;
+      const x0 = r0 * dmath.cos(a0), y0 = r0 * dmath.sin(a0), x1 = r1 * dmath.cos(a1), y1 = r1 * dmath.sin(a1);
+      const ex = x1 - x0, ey = y1 - y0, ca = dmath.cos(a), sa = dmath.sin(a), den = ca * ey - sa * ex;
       return Math.abs(den) < 1e-9 ? Math.min(r0, r1) : (x0 * ey - y0 * ex) / den;
     };
     let y: number | null = null;
@@ -625,11 +626,11 @@ for (const L of rockLobes()) {
   const sh = lobeShape(L), N = L.N, pool = MASSIF_POOLS.length;
   let pu = 0, pv = 0;
   L.falls.forEach((f, fi) => {
-    let j = 0, bd = 9; for (let k = 0; k < N; k++) { const d = Math.abs(Math.atan2(Math.sin(sh.phi[k] - f), Math.cos(sh.phi[k] - f))); if (d < bd) { bd = d; j = k; } }
+    let j = 0, bd = 9; for (let k = 0; k < N; k++) { const d = Math.abs(dmath.atan2(dmath.sin(sh.phi[k] - f), dmath.cos(sh.phi[k] - f))); if (d < bd) { bd = d; j = k; } }
     // the wall radius at the vertex + the highest row whose radius is still ≥ wall − 0.35 (the lip on the shoulder)
     const wall = sh.R[N + j];
     let ti = 1; for (let i = 1; i < sh.rows.length; i++) if (sh.R[i * N + j] >= wall - 0.35) ti = i;
-    const c = Math.cos(sh.phi[j]), s = Math.sin(sh.phi[j]), rr = sh.R[ti * N + j];
+    const c = dmath.cos(sh.phi[j]), s = dmath.sin(sh.phi[j]), rr = sh.R[ti * N + j];
     MASSIF_FALLS.push({ u: L.u + c * rr, v: L.v + s * rr, top: sh.rows[ti], bottom: G + 0.2, w: fi === 0 ? 2.4 : 1.8, dir: [c, s], wall, pool });
     pu += L.u + c * (wall + 4); pv += L.v + s * (wall + 4);
   });
@@ -670,13 +671,13 @@ export const TREES: Array<{ k: "palm" | "palm-leaning" | "jungle-tree"; u: numbe
         if (Math.abs(u - (-8 - v * 0.12)) < 9 && (v > 30 || v < -34)) continue;
         if (v > 34 && u > -6 && u < 40) continue;
         // the view lane to the waterfall stays open
-        { const t = Math.max(0, Math.min(1, ((u + 46) * -12 + (v + 44) * -26) / (12 * 12 + 26 * 26))); if (Math.hypot(u - (-46 - 12 * t), v - (-44 - 26 * t)) < 9) continue; }
+        { const t = Math.max(0, Math.min(1, ((u + 46) * -12 + (v + 44) * -26) / (12 * 12 + 26 * 26))); if (dmath.hypot(u - (-46 - 12 * t), v - (-44 - 26 * t)) < 9) continue; }
         out.push({ k: palmsOnly ? (k < 0.6 ? "palm" : "palm-leaning") : k < 0.45 ? "palm" : k < 0.7 ? "palm-leaning" : "jungle-tree", u, v, s: 0.75 + rnd() * 0.45, yaw: rnd() * 6.28 });
       }
     };
     ring(-66, -48, -40, 40, 16); ring(60, 70, -40, 38, 10); ring(-50, 60, -58, -42, 7, true); ring(-50, -8, 38, 56, 8);
     // (the trunk colliders stand on G: keep them on the flat pad)
-    return out.filter((t) => Math.hypot(t.u, t.v) < 67 && !ROCKS.some((r) => Math.abs(t.u - r.u) < r.w / 2 + 2 && Math.abs(t.v - r.v) < r.d / 2 + 2));
+    return out.filter((t) => dmath.hypot(t.u, t.v) < 67 && !ROCKS.some((r) => Math.abs(t.u - r.u) < r.w / 2 + 2 && Math.abs(t.v - r.v) < r.d / 2 + 2));
   })(),
 ];
 
@@ -808,12 +809,12 @@ function moduleParts(m: ModuleSpec, out: Part[]) {
   }
   for (const [cu, cv, su, sv] of [[r.u0, r.v0, -1, -1], [r.u1, r.v0, 1, -1], [r.u0, r.v1, -1, 1], [r.u1, r.v1, 1, 1]]) {
     const R = CORNER_R, Cu = cu - su * R, Cv = cv - sv * R, D = 0.25;
-    const at = (f: number): [number, number] => [Cu + R * su * Math.sin(f), Cv + R * sv * Math.cos(f)];
+    const at = (f: number): [number, number] => [Cu + R * su * dmath.sin(f), Cv + R * sv * dmath.cos(f)];
     for (const [f0, f1] of [[0, Math.PI / 4], [Math.PI / 4, Math.PI / 2]]) {
-      const A = at(f0), B = at(f1), du = B[0] - A[0], dv = B[1] - A[1], L = Math.hypot(du, dv);
+      const A = at(f0), B = at(f1), du = B[0] - A[0], dv = B[1] - A[1], L = dmath.hypot(du, dv);
       let nu = -dv / L, nv = du / L; const mu = (A[0] + B[0]) / 2, mv = (A[1] + B[1]) / 2;
       if (nu * (Cu - mu) + nv * (Cv - mv) < 0) { nu = -nu; nv = -nv; }    // inward (toward the arc centre)
-      out.push({ c: [mu + nu * D / 2, m.floor + (H + 0.3) / 2, mv + nv * D / 2], h: [L / 2 + 0.06, (H + 0.3) / 2, D / 2], yaw: Math.atan2(dv, du), mat: "skin", kind: "wall", surf, mod: m.id });
+      out.push({ c: [mu + nu * D / 2, m.floor + (H + 0.3) / 2, mv + nv * D / 2], h: [L / 2 + 0.06, (H + 0.3) / 2, D / 2], yaw: dmath.atan2(dv, du), mat: "skin", kind: "wall", surf, mod: m.id });
     }
   }
   // (parity) the door frames' jambs stand 0.07 m proud of the wall face (shell.ts): collide them too, so a ray
@@ -935,7 +936,7 @@ function stairParts(st: ResolvedStair, out: Part[], rails: RailRun[], srails: St
 }
 
 function heliParts(out: Part[]) {
-  const { u, v, a, top } = HELI, s = a * Math.tan(Math.PI / 8);
+  const { u, v, a, top } = HELI, s = a * dmath.tan(Math.PI / 8);
   out.push(box("heli", u - a, u + a, G - 0.2, top, v - s, v + s, { kind: "heli", surf: "concrete" }));
   out.push(box("heli", u - s, u + s, G - 0.2, top, v - a, v + a, { kind: "heli", surf: "concrete" }));
   for (const yaw of [Math.PI / 4, -Math.PI / 4]) out.push({ c: [u, (G - 0.2 + top) / 2, v], h: [a, (top - G + 0.2) / 2, s], yaw, mat: "heli", kind: "heli", surf: "concrete" });
@@ -945,7 +946,7 @@ function dishParts(out: Part[]) {
   const D = DISH;
   // turntable drum + yoke arms (the bowl itself floats ≥ 41.4 m, above every head on the roof)
   out.push(box("steel", D.u - D.turnR * 0.92, D.u + D.turnR * 0.92, L2, D.turnTop, D.v - D.turnR * 0.92, D.v + D.turnR * 0.92, { kind: "dish", surf: "metal" }));
-  const ca = Math.cos(D.az), sa = Math.sin(D.az);
+  const ca = dmath.cos(D.az), sa = dmath.sin(D.az);
   for (const sgn of [-1, 1]) {
     const pu = D.u - sa * 1.6 * sgn, pv = D.v + ca * 1.6 * sgn;
     out.push(box("steel", pu - 0.3, pu + 0.3, D.turnTop, D.pivotY + 0.4, pv - 0.3, pv + 0.3, { kind: "dish", surf: "metal" }));
@@ -981,10 +982,10 @@ export function gateLeaves(): Array<{ hinge: [number, number]; yaw: number; len:
     if (g.s === "n" || g.s === "s") {
       const v = g.s === "n" ? FENCE.v[0] : FENCE.v[1];
       // leaves open nearly perpendicular to the fence (toward the inside)
-      out.push({ hinge: [g.a, v], yaw: Math.atan2(inward * 0.985, 0.17), len }, { hinge: [g.b, v], yaw: Math.atan2(inward * 0.985, -0.17), len });
+      out.push({ hinge: [g.a, v], yaw: dmath.atan2(inward * 0.985, 0.17), len }, { hinge: [g.b, v], yaw: dmath.atan2(inward * 0.985, -0.17), len });
     } else {
       const u = g.s === "w" ? FENCE.u[0] : FENCE.u[1];
-      out.push({ hinge: [u, g.a], yaw: Math.atan2(0.17, inward * 0.985), len }, { hinge: [u, g.b], yaw: Math.atan2(-0.17, inward * 0.985), len });
+      out.push({ hinge: [u, g.a], yaw: dmath.atan2(0.17, inward * 0.985), len }, { hinge: [u, g.b], yaw: dmath.atan2(-0.17, inward * 0.985), len });
     }
   }
   return out;
@@ -1151,11 +1152,11 @@ export function labLayout(): LabLayout {
   heliParts(parts); dishParts(parts); mastParts(parts); propParts(parts);
   const fence = fenceRuns();
   for (const f of fence) {
-    const du = f.b[0] - f.a[0], dv = f.b[1] - f.a[1], L = Math.hypot(du, dv);
-    parts.push({ c: [(f.a[0] + f.b[0]) / 2, G - 0.1 + (FENCE.h + 0.1) / 2, (f.a[1] + f.b[1]) / 2], h: [L / 2, (FENCE.h + 0.1) / 2, 0.06], yaw: Math.atan2(dv, du), mat: "fence", kind: "fence", surf: "metal", noShoot: true });
+    const du = f.b[0] - f.a[0], dv = f.b[1] - f.a[1], L = dmath.hypot(du, dv);
+    parts.push({ c: [(f.a[0] + f.b[0]) / 2, G - 0.1 + (FENCE.h + 0.1) / 2, (f.a[1] + f.b[1]) / 2], h: [L / 2, (FENCE.h + 0.1) / 2, 0.06], yaw: dmath.atan2(dv, du), mat: "fence", kind: "fence", surf: "metal", noShoot: true });
   }
   for (const g of gateLeaves()) {
-    const cu = g.hinge[0] + Math.cos(g.yaw) * g.len / 2, cv = g.hinge[1] + Math.sin(g.yaw) * g.len / 2;
+    const cu = g.hinge[0] + dmath.cos(g.yaw) * g.len / 2, cv = g.hinge[1] + dmath.sin(g.yaw) * g.len / 2;
     parts.push({ c: [cu, G + 1.15, cv], h: [g.len / 2, 1.1, 0.06], yaw: g.yaw, mat: "fence", kind: "fence", surf: "metal", noShoot: true });
   }
   _layout = { parts, rails, stairRails: srails, stairs: RS, fence };
@@ -1243,7 +1244,7 @@ export const INTERIOR_LOOT: LootSlots = { chests: ROOM_LAYOUTS.flatMap((l) => l.
  *  (LOOT_HOT) lights up to `chests` of them a storey (≥ 6 m apart), so every lab, the server hall and the control room
  *  hold chests every match, not one per building */
 const HOT_CHEST_SLOTS: Array<[number, number, number, number]> = INTERIOR_ROOMS.flatMap((r, ri) => {
-  const L = ROOM_LAYOUTS[ri], hw = r.w / 2, hd = r.d / 2, c = Math.cos(r.yaw), sn = Math.sin(r.yaw);
+  const L = ROOM_LAYOUTS[ri], hw = r.w / 2, hd = r.d / 2, c = dmath.cos(r.yaw), sn = dmath.sin(r.yaw);
   const rects = L.items.filter((it) => it.col).map((it) => { const q = itemRect(it); return [q.x0 - 0.45, q.z0 - 0.45, q.x1 + 0.45, q.z1 + 0.45]; });
   for (const k of r.keepOut ?? []) { const q = Array.isArray(k) ? k : k.r; rects.push([q[0] - 0.3, q[1] - 0.3, q[2] + 0.3, q[3] + 0.3]); }
   const out: Array<[number, number, number, number]> = [], took: Array<[number, number]> = [];
@@ -1256,7 +1257,7 @@ const HOT_CHEST_SLOTS: Array<[number, number, number, number]> = INTERIOR_ROOMS.
       const lz = side === 1 || side === 3 ? u : side === 0 ? hd - 0.5 : -hd + 0.5;
       if (r.openings.some((o) => o.side === side && o.kind !== "window" && Math.abs(u - o.at) < o.w / 2 + 0.7)) continue;
       if (rects.some((q) => lx > q[0] && lx < q[2] && lz > q[1] && lz < q[3])) continue;
-      if (took.some((t) => Math.hypot(t[0] - lx, t[1] - lz) < 2.6)) continue;
+      if (took.some((t) => dmath.hypot(t[0] - lx, t[1] - lz) < 2.6)) continue;
       took.push([lx, lz]);
       out.push([+(r.x + lx * c + lz * sn).toFixed(2), r.y, +(r.z - lx * sn + lz * c).toFixed(2), +(r.yaw + SIDE_YAW[side]).toFixed(3)]);
     }
@@ -1266,9 +1267,9 @@ const HOT_CHEST_SLOTS: Array<[number, number, number, number]> = INTERIOR_ROOMS.
 /** floor loot ON the work surfaces — desks, lab benches, the workbench: the front-left quarter of the top
  *  (monitors / clutter sit at the back), world [x, y = the top, z] — a player checks the benches in a lab */
 const SURFACE_LOOT: Array<[number, number, number]> = INTERIOR_ROOMS.flatMap((r, ri) => {
-  const c = Math.cos(r.yaw), sn = Math.sin(r.yaw);
+  const c = dmath.cos(r.yaw), sn = dmath.sin(r.yaw);
   return ROOM_LAYOUTS[ri].items.filter((it) => it.col && (it.kind === "desk" || it.kind === "lab-bench" || it.kind === "workbench")).map((it) => {
-    const ic = Math.cos(it.yaw), is = Math.sin(it.yaw), ax = -it.w * 0.28, az = it.d * 0.18;   // item local → room local
+    const ic = dmath.cos(it.yaw), is = dmath.sin(it.yaw), ax = -it.w * 0.28, az = it.d * 0.18;   // item local → room local
     const lx = it.x + ax * ic + az * is, lz = it.z - ax * is + az * ic;
     return [+(r.x + lx * c + lz * sn).toFixed(2), +(r.y + it.y + it.h).toFixed(3), +(r.z - lx * sn + lz * c).toFixed(2)] as [number, number, number];
   });
@@ -1332,7 +1333,7 @@ export const LOOT_SPOTS: { chests: [number, number, number, number][]; floor: [n
   // rooms: the kit's slots replace the designed ones on room floors; the designed ones elsewhere stay (roofs, decks, landmark)
   const out = { chests: chests.filter((c) => !inRoom(c[0], c[1], c[2])), floor: floor.filter((f) => !inRoom(f[0], f[1], f[2])) };
   const all = [...out.chests.map((c) => [c[0], c[1], c[2]]), ...out.floor];
-  const free = (p: number[]) => { const ok = !all.some((q) => Math.abs(q[1] - p[1]) < 1.5 && Math.hypot(q[0] - p[0], q[2] - p[2]) < 1.5); if (ok) all.push(p); return ok; };
+  const free = (p: number[]) => { const ok = !all.some((q) => Math.abs(q[1] - p[1]) < 1.5 && dmath.hypot(q[0] - p[0], q[2] - p[2]) < 1.5); if (ok) all.push(p); return ok; };
   return { chests: [...out.chests, ...INTERIOR_LOOT.chests.filter((c) => free(c)), ...HOT_CHEST_SLOTS.filter((c) => free(c))], floor: [...out.floor, ...SURFACE_LOOT.filter((f) => free(f)), ...INTERIOR_LOOT.floor.filter((f) => free(f))] };
 })();
 

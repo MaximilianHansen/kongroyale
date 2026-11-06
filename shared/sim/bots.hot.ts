@@ -9,6 +9,7 @@ import { makeHit } from "./world";
 import type { Match } from "./match";
 import { CONSUMABLES, WEAPONS } from "../world/map";
 import { S, type BotBrain } from "./bots";
+import * as dmath from "./dmath";
 
 const HIT = makeHit();
 /** seconds after a player's touchdown before bots start shooting at them (unless that player shoots first) */
@@ -26,8 +27,8 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   if (p.st === PS.Plane) { inp.buttons = m.planeT >= b.jumpAt ? B.DROP : 0; inp.yaw = p.yaw; return; }
   if (!alive(p)) { inp.buttons = 0; inp.mx = inp.mz = 0; b.enemy = -1; return; }
   if (p.st === PS.Freefall || p.st === PS.Glide) {
-    const dx = b.tx - p.x, dz = b.tz - p.z, dist = Math.hypot(dx, dz);
-    inp.yaw = Math.atan2(-dx, -dz);
+    const dx = b.tx - p.x, dz = b.tz - p.z, dist = dmath.hypot(dx, dz);
+    inp.yaw = dmath.atan2(-dx, -dz);
     const agl = p.y - Math.max(0, m.world.ground(p.x, p.z));
     // freefall carries ≈ 0.42 m sideways per metre of drop, the glider ≈ 2.7:
     // a target farther than freefall + the auto-opened glider reach → open the glider now, like a player would
@@ -52,8 +53,8 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   }
   if (b.landedAt < 0) b.landedAt = m.time;
   // ---- ground
-  const inStorm = Math.hypot(p.x - m.storm.cx, p.z - m.storm.cz) > m.storm.r - 12;
-  const nextOutside = Math.hypot(p.x - m.storm.tx, p.z - m.storm.tz) > m.storm.tr - 25;
+  const inStorm = dmath.hypot(p.x - m.storm.cx, p.z - m.storm.cz) > m.storm.r - 12;
+  const nextOutside = dmath.hypot(p.x - m.storm.tx, p.z - m.storm.tz) > m.storm.tr - 25;
   // enemy scan: a ~200° field of view (360° up close), line of sight, every 9 ticks
   b.enemySeenT += dt;
   // (no enemy yet: every 3rd tick — 50 ms is far below a reaction time, and a line-of-sight ray per player per bot per
@@ -61,7 +62,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   if (((m.tick + p.id) % 9) === 0 || (b.enemy < 0 && ((m.tick + p.id) % 3) === 0)) {
     // late fights retain awareness: circle closure changes the stakes, not eyesight
     let best = -1, bd = 205 * (0.7 + 0.3 * b.skill);
-    const ey = eyeY(p), fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+    const ey = eyeY(p), fx = -dmath.sin(p.yaw), fz = -dmath.cos(p.yaw);
     for (const q of m.players) {
       if (q === p || q.team === p.team || !alive(q) || q.st === PS.Plane || q.st === PS.Dead) continue;
       // nobody can fire back from the sky: players on their FIRST drop are never shot in the air (else humans
@@ -71,7 +72,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
       // landing grace: a kong that touched down moments ago is still grabbing a gun (4 s; 8 s while it has none) —
       // unless it shoots us first (onHurt sets b.enemy)
       if (!air && b.enemy !== q.id && m.time - m.dropLandT[q.id] < (hasUsableWeapon(q) ? LANDING_GRACE_S : LANDING_GRACE_S * 2)) continue;
-      const dx = q.x - p.x, dz = q.z - p.z, d = Math.hypot(dx, dz); if (d > (air ? Math.min(bd, 110) : bd)) continue;
+      const dx = q.x - p.x, dz = q.z - p.z, d = dmath.hypot(dx, dz); if (d > (air ? Math.min(bd, 110) : bd)) continue;
       if (d > 30 && (dx * fx + dz * fz) / (d || 1) < -0.17) continue;           // behind us: unseen
       if (!m.world.clear(p.x, ey, p.z, q.x, q.y + PLAYER_H * 0.7, q.z)) continue;
       bd = d; best = q.id;
@@ -87,7 +88,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   // not pick long fights or go hunting (that is how bots upgrade instead of spraying pistols all match)
   const geared = hasWeapon && bestWeaponValue(p) >= 2;
   const eP = b.enemy >= 0 ? m.players[b.enemy] : null;
-  const engage = !!eP && hasWeapon && (geared || b.hurtT < 4 || Math.hypot(eP.x - p.x, eP.z - p.z) < 45);
+  const engage = !!eP && hasWeapon && (geared || b.hurtT < 4 || dmath.hypot(eP.x - p.x, eP.z - p.z) < 45);
   // on a squadmate's tuk-tuk: no legs to think about
   if (p.st === PS.Ride) { ride(m, p, b, inp, dt, w, engage); return; }
   b.boardVeh = engage ? -1 : taxiFor(m, p, b, dt);
@@ -107,7 +108,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   // seek — gunfire (above) is the only evidence of where someone is; sight (the scan) does the rest
   if ((b.state === S.Loot || b.state === S.Roam) && geared && vit > 70 && m.phase === 2 && b.landedAt >= 0 && m.time - b.landedAt > 35 && ((m.tick + p.id) % 60) === 0 && b.rng.next() < b.aggro * 0.55) {
     const a = b.rng.next() * Math.PI * 2, radius = Math.min(m.storm.tr * 0.65, 60 + b.rng.next() * 120);
-    const x = m.storm.tx + Math.cos(a) * radius, z = m.storm.tz + Math.sin(a) * radius;
+    const x = m.storm.tx + dmath.cos(a) * radius, z = m.storm.tz + dmath.sin(a) * radius;
     if (m.world.ground(x, z) > 1) { b.state = S.Hunt; b.tx = x; b.tz = z; b.roamT = 12; }
   }
 
@@ -118,21 +119,21 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
       if (q === p || q.team !== p.team || !alive(q) || (q.st !== PS.Ground && q.st !== PS.Ride)) continue;   // (a squadmate who drives off is still the one to follow)
       if (!lead || q.id < lead.id) lead = q;
       const qb = m.brains[q.id];
-      if (hasWeapon && vit > 50 && qb && qb.enemy >= 0 && Math.hypot(q.x - p.x, q.z - p.z) < 170) fightMate = q;
+      if (hasWeapon && vit > 50 && qb && qb.enemy >= 0 && dmath.hypot(q.x - p.x, q.z - p.z) < 170) fightMate = q;
     }
     if (fightMate) { const e = m.players[m.brains[fightMate.id]!.enemy]; b.state = S.Hunt; b.tx = e.x; b.tz = e.z; b.roamT = 10; }
     // only with a usable gun: an unarmed bot is put back to LOOT on its next think (state selection above) — else
     // it flips Hunt ↔ Loot every 0.5 s, walking to the lead's door then back to the loot, and never moves
-    else if (hasWeapon && lead && lead.id < p.id && Math.hypot(lead.x - p.x, lead.z - p.z) > (bestWeaponValue(p) >= 2 ? 60 : 150)) { b.state = S.Hunt; b.tx = lead.x + (b.rng.next() - 0.5) * 16; b.tz = lead.z + (b.rng.next() - 0.5) * 16; b.roamT = 8; }
+    else if (hasWeapon && lead && lead.id < p.id && dmath.hypot(lead.x - p.x, lead.z - p.z) > (bestWeaponValue(p) >= 2 ? 60 : 150)) { b.state = S.Hunt; b.tx = lead.x + (b.rng.next() - 0.5) * 16; b.tz = lead.z + (b.rng.next() - 0.5) * 16; b.roamT = 8; }
   }
 
   // A thinned final field searches the next safe centre instead of touring unopened chests.
   // The destination is public storm information, never an unseen opponent's position.
   const closingDuel = m.phase === 2 && !m.resurgenceOn && squadsIn(m) <= 3;
   if (closingDuel && geared && !engage && b.state !== S.Heal && b.state !== S.Rotate) {
-    if (b.state !== S.Hunt || b.roamT <= 0 || Math.hypot(b.tx - m.storm.tx, b.tz - m.storm.tz) > m.storm.tr * 0.2) {
+    if (b.state !== S.Hunt || b.roamT <= 0 || dmath.hypot(b.tx - m.storm.tx, b.tz - m.storm.tz) > m.storm.tr * 0.2) {
       const a = b.rng.next() * Math.PI * 2, r = Math.min(30, m.storm.tr * 0.15);
-      b.tx = m.storm.tx + Math.cos(a) * r; b.tz = m.storm.tz + Math.sin(a) * r; b.roamT = 6;
+      b.tx = m.storm.tx + dmath.cos(a) * r; b.tz = m.storm.tz + dmath.sin(a) * r; b.roamT = 6;
     }
     b.state = S.Hunt; b.lootChest = b.lootItem = -1;
   }
@@ -140,7 +141,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   // chests are the dopamine: a bot that is roaming / hunting pops any closed chest within 40 m of it on the way
   if ((b.state === S.Roam || b.state === S.Hunt) && b.enemy < 0 && !closingDuel && ((m.tick + p.id) % 30) === 0 && !inStorm) {
     let bc = -1, bd = 40 * 40;
-    for (const c of m.chests) { if (c.opened || (c.box && !lowAmmo(p))) continue; const d = (c.x - p.x) ** 2 + (c.z - p.z) ** 2; if (d < bd && Math.abs(c.y - p.y) < 2.5 && !gaveUpOn(b, c.id)) { bd = d; bc = c.id; } }
+    for (const c of m.chests) { if (c.opened || (c.box && !lowAmmo(p))) continue; const d = dmath.pow(c.x - p.x, 2) + dmath.pow(c.z - p.z, 2); if (d < bd && Math.abs(c.y - p.y) < 2.5 && !gaveUpOn(b, c.id)) { bd = d; bc = c.id; } }
     if (bc >= 0) { b.state = S.Loot; b.lootChest = bc; b.lootItem = -1; b.lootT = 0; b.nearT = 0; }
   }
   inp.buttons &= ~(B.FIRE | B.SCOPE | B.CROUCH | B.SPRINT);
@@ -152,18 +153,18 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
     case S.Rotate: {
       // a rotation that has made no net progress for 10 s heads for the public centre instead of the nearest edge
       if (b.idleT > 10) { b.tx = m.storm.tx; b.tz = m.storm.tz; }
-      else { const a = Math.atan2(p.z - m.storm.tz, p.x - m.storm.tx); b.tx = m.storm.tx + Math.cos(a) * m.storm.tr * 0.45; b.tz = m.storm.tz + Math.sin(a) * m.storm.tr * 0.45; }
+      else { const a = dmath.atan2(p.z - m.storm.tz, p.x - m.storm.tx); b.tx = m.storm.tx + dmath.cos(a) * m.storm.tr * 0.45; b.tz = m.storm.tz + dmath.sin(a) * m.storm.tr * 0.45; }
       moveTo(m, p, b, inp, b.tx, b.tz, true); break;
     }
-    case S.Hunt: { b.roamT -= dt; const d = Math.hypot(b.tx - p.x, b.tz - p.z); if (d < 12 || b.roamT <= 0) { b.state = S.Loot; } moveTo(m, p, b, inp, b.tx, b.tz, d > 20); break; }
+    case S.Hunt: { b.roamT -= dt; const d = dmath.hypot(b.tx - p.x, b.tz - p.z); if (d < 12 || b.roamT <= 0) { b.state = S.Loot; } moveTo(m, p, b, inp, b.tx, b.tz, d > 20); break; }
     case S.Loot: loot(m, p, b, inp, dt); break;
     default: roam(m, p, b, inp, dt);
   }
   // net progress (2 m): centimetres of wall rocking never reset it
-  if (Math.hypot(p.x - b.progressX, p.z - b.progressZ) > 2) { b.progressX = p.x; b.progressZ = p.z; b.idleT = 0; }
+  if (dmath.hypot(p.x - b.progressX, p.z - b.progressZ) > 2) { b.progressX = p.x; b.progressZ = p.z; b.idleT = 0; }
   b.idleT += dt;
   // stuck detection
-  const moved = Math.hypot(p.x - b.lastX, p.z - b.lastZ);
+  const moved = dmath.hypot(p.x - b.lastX, p.z - b.lastZ);
   if (moved < 0.15 * dt * 20 && (inp.mx !== 0 || inp.mz !== 0)) { b.stuckT += dt; if (b.stuckT > 0.8) { inp.buttons |= B.JUMP; b.turnBias = (b.rng.next() - 0.5) * 2.4; if (b.stuckT > 2.5) { b.stuckT = 0; if (b.state === S.Loot && (b.lootChest >= 0 || b.lootItem >= 0)) giveUp(b, "stuck"); b.lootChest = -1; b.lootItem = -1; b.roamT = 0; b.hasCover = false; } } }
   else b.stuckT = Math.max(0, b.stuckT - dt);
   b.lastX = p.x; b.lastZ = p.z;
@@ -181,14 +182,14 @@ function unstick(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
   if ((b.ringT += dt) < 5) return;
   b.ringT = 0;
   const k = b.ringN % 4, old = (b.ringN + 1) % 4;              // the slot written 15 s ago (once 4 are in)
-  const stuck = b.ringN >= 3 && b.detourT <= 0 && Math.hypot(p.x - b.ringX[old], p.z - b.ringZ[old]) < 6
-    && Math.hypot(b.tx - p.x, b.tz - p.z) > 10 && (inp.mx !== 0 || inp.mz !== 0);
+  const stuck = b.ringN >= 3 && b.detourT <= 0 && dmath.hypot(p.x - b.ringX[old], p.z - b.ringZ[old]) < 6
+    && dmath.hypot(b.tx - p.x, b.tz - p.z) > 10 && (inp.mx !== 0 || inp.mz !== 0);
   b.ringX[k] = p.x; b.ringZ[k] = p.z; b.ringN++;
   if (!stuck) { if (b.ringN > 6) b.detourFails = 0; return; }
-  const tx = b.tx - p.x, tz = b.tz - p.z, tl = Math.hypot(tx, tz) || 1, f = b.detourFails;
+  const tx = b.tx - p.x, tz = b.tz - p.z, tl = dmath.hypot(tx, tz) || 1, f = b.detourFails;
   let best = -1e9, bx = 0, bz = 0, ba = 0;
   for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2 + b.rng.next() * 0.4, fx = Math.cos(a), fz = Math.sin(a);
+    const a = (i / 12) * Math.PI * 2 + b.rng.next() * 0.4, fx = dmath.cos(a), fz = dmath.sin(a);
     m.world.raycast(p.x, p.y + 1.2, p.z, fx * 4, 0, fz * 4, 1, HIT, false); if (HIT.hit) continue;
     let ok = true, prev = Math.max(0, p.y);
     for (let s2 = 4; s2 <= 24 && ok; s2 += 4) { const g = m.world.ground(p.x + fx * s2, p.z + fz * s2); if (g < 0.5 || g - prev > 3.4 || g < prev - 9) ok = false; prev = g; }
@@ -227,12 +228,12 @@ function carriesAmmo(p: Player, ammo: string): boolean { for (const s of p.slots
 function warmup(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
   inp.buttons &= ~(B.FIRE | B.SCOPE | B.CROUCH | B.SPRINT);
   b.roamT -= dt;
-  const d = Math.hypot(b.tx - p.x, b.tz - p.z);
+  const d = dmath.hypot(b.tx - p.x, b.tz - p.z);
   if (b.roamT <= 0 || d > 90) {
     // a fresh spot near where we stand (spawns are spread over the open sand), never someone else's
     for (let k = 0; k < 10; k++) {
       const a = b.rng.next() * Math.PI * 2, r = 5 + b.rng.next() * 16;
-      const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+      const x = p.x + dmath.cos(a) * r, z = p.z + dmath.sin(a) * r;
       if (m.world.ground(x, z) > 0.4 && Math.abs(m.world.ground(x, z) - p.y) < 2.5) { b.tx = x; b.tz = z; break; }
     }
     b.roamT = 2.5 + b.rng.next() * 5; b.healT = b.rng.next() < 0.45 ? 0.8 + b.rng.next() * 2.2 : 0;   // healT = pause first
@@ -264,22 +265,22 @@ function taxiFor(m: Match, p: Player, b: BotBrain, dt: number): number {
   for (const v of m.vehs.list) {
     if (!v.live || v.kind !== VKind.Tuk || v.st !== VS.Ok || (v.flags & VF.BURN) || v.seats[0] < 0 || (v.seats[1] >= 0 && v.seats[2] >= 0)) continue;
     const d = m.players[v.seats[0]]; if (!d || d.bot || d.team !== p.team) continue;
-    const dist = Math.hypot(v.x - p.x, v.z - p.z); if (dist > TAXI_CALL || Math.abs(v.y - p.y) > 6) continue;
+    const dist = dmath.hypot(v.x - p.x, v.z - p.z); if (dist > TAXI_CALL || Math.abs(v.y - p.y) > 6) continue;
     if (v.flags & VF.HORN) b.taxiT = TAXI_CALL_S;
-    if (dist < bd && (b.taxiT > 0 || (dist < TAXI_NEAR && Math.hypot(v.vx, v.vz) < TAXI_SLOW))) { bd = dist; best = v.id; }
+    if (dist < bd && (b.taxiT > 0 || (dist < TAXI_NEAR && dmath.hypot(v.vx, v.vz) < TAXI_SLOW))) { bd = dist; best = v.id; }
   }
   return best;
 }
 /** run to the bench's nearer flank and climb on (E under the crosshair — Match.useVehicle) */
 function board(m: Match, p: Player, b: BotBrain, inp: Input) {
-  const v = m.vehs.list[b.boardVeh], sy = Math.sin(v.yaw), cy = Math.cos(v.yaw);
+  const v = m.vehs.list[b.boardVeh], sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw);
   // body frame → world: right = (cy, −sy), back = (sy, cy); the bench is 0.74 m behind the middle
   const side = (p.x - v.x) * cy - (p.z - v.z) * sy >= 0 ? 1 : -1;
   const tx = v.x + cy * side * 1.7 + sy * 0.7, tz = v.z - sy * side * 1.7 + cy * 0.7;
-  const d = Math.hypot(tx - p.x, tz - p.z);
+  const d = dmath.hypot(tx - p.x, tz - p.z);
   if (footDist(v, p.x, p.z) < TUK.REACH - 0.25) {
     const dx = v.x + sy * 0.7 - p.x, dz = v.z + cy * 0.7 - p.z;
-    inp.mx = inp.mz = 0; inp.yaw = Math.atan2(-dx, -dz); inp.pitch = Math.atan2(v.y + 0.9 - eyeY(p), Math.max(0.6, Math.hypot(dx, dz)));
+    inp.mx = inp.mz = 0; inp.yaw = dmath.atan2(-dx, -dz); inp.pitch = dmath.atan2(v.y + 0.9 - eyeY(p), Math.max(0.6, dmath.hypot(dx, dz)));
     if (((m.tick / 9) | 0) % 2 === 0) inp.buttons |= B.USE;
     return;
   }
@@ -299,8 +300,8 @@ function ride(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retur
   if (engage && w) { b.state = S.Fight; fight(m, p, b, inp, dt, w); inp.mx = inp.mz = 0; inp.buttons &= ~(B.CROUCH | B.SPRINT | B.JUMP | B.USE); }
   else {
     b.state = S.Roam;
-    const want = (v ? v.yaw : p.yaw) + (p.seat === 1 ? 1 : -1) * 0.95 + Math.sin(m.time * 0.6 + b.id * 1.7) * 0.55;
-    const k = 1 - Math.exp(-dt * 4);
+    const want = (v ? v.yaw : p.yaw) + (p.seat === 1 ? 1 : -1) * 0.95 + dmath.sin(m.time * 0.6 + b.id * 1.7) * 0.55;
+    const k = 1 - dmath.exp(-dt * 4);
     inp.yaw = p.yaw + wrap(want - p.yaw) * k; inp.pitch = p.pitch * (1 - k);
     const s = p.slots[p.active];
     if (w && s.kind === SK.Weapon && s.mag < w.mag * 0.5 && p.reloadT <= 0) inp.buttons |= B.RELOAD;
@@ -312,7 +313,7 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
   const e = m.players[b.enemy]; if (!e || !alive(e) || e.team === p.team) { b.enemy = -1; b.hasCover = false; return; }
   b.reactT -= dt; b.engagedT += dt;
   let dx = e.x - p.x, dz = e.z - p.z;
-  const dist = Math.hypot(dx, dz);
+  const dist = dmath.hypot(dx, dz);
   let aimH = b.headAim ? (e.crouch ? 1.1 : 1.62) : (e.crouch ? 0.8 : 1.15);
   const pj = w?.projectile;
   if (pj) {
@@ -328,11 +329,11 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
   const bestSlot = pickWeaponSlot(p, dist); if (bestSlot >= 0 && bestSlot !== p.active) inp.slot = bestSlot;
   // aim error: settles (exp decay) onto a slow per-bot drift around the target whose size is the skill floor — a
   // crosshair that wanders off and back like a hand, not per-tick jitter; moving makes it worse
-  const settle = Math.exp(-dt * (1.6 + 2.2 * b.skill));
-  const floor = (0.008 + (1 - b.skill) * 0.018 + (Math.hypot(p.vx, p.vz) > 1 ? 0.005 : 0)) * BOT_DIFFICULTY[b.difficulty].aimError;
-  b.errYaw = b.errYaw * settle + Math.sin(m.time * 1.7 + b.id * 2.3) * floor * (1 - settle);
-  b.errPitch = b.errPitch * settle + Math.sin(m.time * 1.3 + b.id * 1.9) * floor * 0.65 * (1 - settle);
-  const tgtYaw = Math.atan2(-dx, -dz), tgtPitch = Math.atan2(dy, dist);
+  const settle = dmath.exp(-dt * (1.6 + 2.2 * b.skill));
+  const floor = (0.008 + (1 - b.skill) * 0.018 + (dmath.hypot(p.vx, p.vz) > 1 ? 0.005 : 0)) * BOT_DIFFICULTY[b.difficulty].aimError;
+  b.errYaw = b.errYaw * settle + dmath.sin(m.time * 1.7 + b.id * 2.3) * floor * (1 - settle);
+  b.errPitch = b.errPitch * settle + dmath.sin(m.time * 1.3 + b.id * 1.9) * floor * 0.65 * (1 - settle);
+  const tgtYaw = dmath.atan2(-dx, -dz), tgtPitch = dmath.atan2(dy, dist);
   // the scope sway a player fights is on the bots' crosshair too — strongest right after scoping
   // in and after each bolt; the trigger waits until the sway carries the crosshair back onto the body (onTarget below)
   let swY = 0, swP = 0;
@@ -343,11 +344,11 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
   } else b.scopedAt = -1;
   const wantYaw = tgtYaw + b.errYaw + swY, wantPitch = tgtPitch + b.errPitch + swP;
   // smooth turn (humans do not snap)
-  const turn = 1 - Math.exp(-dt * (9 + 12 * b.skill));
+  const turn = 1 - dmath.exp(-dt * (9 + 12 * b.skill));
   b.aimYaw = p.yaw + wrap(wantYaw - p.yaw) * turn; b.aimPitch = p.pitch + (wantPitch - p.pitch) * turn;
   inp.yaw = b.aimYaw; inp.pitch = b.aimPitch;
   // pull the trigger once the crosshair is roughly on the body (tolerance = the target's angular half-width + slop)
-  const tol = Math.atan2(0.5, Math.max(1, dist)) + 0.02 + (1 - b.skill) * 0.03;
+  const tol = dmath.atan2(0.5, Math.max(1, dist)) + 0.02 + (1 - b.skill) * 0.03;
   const onTarget = Math.abs(wrap(tgtYaw - b.aimYaw)) < tol && Math.abs(tgtPitch - b.aimPitch) < tol * 1.6;
   const s = p.slots[p.active];
   const vit = p.hp + p.shield, evit = e.hp + e.shield;
@@ -381,7 +382,7 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
   if ((hurt || reloading) && !b.hasCover && b.coverT <= 0) { findCover(m, p, e, b); b.coverT = 0.8; }
   b.coverT -= dt;
   if ((hurt || reloading) && b.hasCover) {
-    const cd = Math.hypot(b.coverX - p.x, b.coverZ - p.z);
+    const cd = dmath.hypot(b.coverX - p.x, b.coverZ - p.z);
     if (cd > 1.2) { moveToward(p, inp, b.coverX, b.coverZ, true); inp.yaw = b.aimYaw; avoidHazards(m, p, inp); return; }
     inp.mx = 0; inp.mz = 0; inp.buttons |= B.CROUCH;
     // out of sight + hurt: heal (the heal state takes over once the enemy loses us)
@@ -403,11 +404,11 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
 /** a spot 5-14 m away that breaks line of sight to the enemy (8 probes, reused registers) */
 function findCover(m: Match, p: Player, e: Player, b: BotBrain) {
   b.hasCover = false;
-  const base = Math.atan2(p.z - e.z, p.x - e.x);
+  const base = dmath.atan2(p.z - e.z, p.x - e.x);
   let best = 1e9;
   for (let i = 0; i < 8; i++) {
     const a = base + (i - 3.5) * 0.55, r = 5 + (i % 3) * 4.5;
-    const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r, g = m.world.ground(x, z);
+    const x = p.x + dmath.cos(a) * r, z = p.z + dmath.sin(a) * r, g = m.world.ground(x, z);
     if (g < 0.3 || Math.abs(g - p.y) > 4) continue;
     if (m.world.clear(x, g + 1.2, z, e.x, e.y + 1.4, e.z)) continue;           // still exposed
     m.world.raycast(p.x, p.y + 0.9, p.z, x - p.x, 0, z - p.z, 1, HIT, false);    // reachable in a straight line?
@@ -465,7 +466,7 @@ function nearestRecoveryWeapon(m: Match, p: Player): Item | null {
   let best: Item | null = null, bd = PICKUP_DIST + 0.5;
   for (const it of m.items) {
     if (it.taken || it.kind !== IK.Weapon) continue;
-    const d = Math.hypot(it.x - p.x, it.z - p.z, (it.y - p.y) * 0.6);
+    const d = dmath.hypot3(it.x - p.x, it.z - p.z, (it.y - p.y) * 0.6);
     if (d < bd && lootReachable(m.world, p.x, p.y, p.z, it.x, it.y, it.z)) { bd = d; best = it; }
   }
   return best;
@@ -562,12 +563,12 @@ function loot(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
       if (c.opened || (c.box && !ammoLow)) continue;
       const d = Math.abs(c.x - p.x) + Math.abs(c.z - p.z); if (d > bestCost * 1.5) continue;
       const dy = Math.abs(c.y - p.y); if (dy > dyMax || gaveUpOn(b, c.id) || perched(m, p, c.x, c.y, c.z)) continue;
-      let cost = Math.hypot(c.x - p.x, c.z - p.z) * (c.box ? 1.4 : armed ? 1 : 0.9) + dy * 4;
+      let cost = dmath.hypot(c.x - p.x, c.z - p.z) * (c.box ? 1.4 : armed ? 1 : 0.9) + dy * 4;
       if (cost < bestCost && claimedByOther(m, c.id, p.id)) cost = cost * 2.5 + 20;   // someone is already on it
       if (cost < bestCost) { bestCost = cost; bc = c.id; bi = -1; }
     }
     for (const it of m.items) {
-      if (it.taken || ((recoveryDiscarded(b, it.id) && it.dropper === p.id) || (exhausted && it.dropper === p.id && Math.hypot(it.x - p.x, it.z - p.z) <= PICKUP_DIST + 1))) continue;
+      if (it.taken || ((recoveryDiscarded(b, it.id) && it.dropper === p.id) || (exhausted && it.dropper === p.id && dmath.hypot(it.x - p.x, it.z - p.z) <= PICKUP_DIST + 1))) continue;
       const d0 = Math.abs(it.x - p.x) + Math.abs(it.z - p.z); if (d0 > bestCost * 1.5) continue;
       let wgt = 1;
       if (it.kind === IK.Weapon) { if (exhausted ? recoveryWeaponSlot(p, it) < 0 : armed && !wantsWeapon(p, it.sub, it.rarity)) continue; wgt = armed ? (full ? 1.1 : 1.3) : 0.55; }
@@ -576,7 +577,7 @@ function loot(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
       else if (it.kind === IK.Ammo) { if ((!armed && !exhausted) || !carriesAmmo(p, AMMO_IDX[it.sub])) continue; wgt = AMMO_IDX[it.sub] === heldAmmo || AMMO_IDX[it.sub] === "rockets" ? 1.3 : 1.7; }
       else { if (full || (p.hp >= MAX_HP && p.shield >= 100)) continue; wgt = 1.2; }
       const dy = Math.abs(it.y - p.y); if (dy > dyMax || gaveUpOn(b, -1 - it.id) || perched(m, p, it.x, it.y, it.z)) continue;
-      let cost = Math.hypot(it.x - p.x, it.z - p.z) * wgt + dy * 4;
+      let cost = dmath.hypot(it.x - p.x, it.z - p.z) * wgt + dy * 4;
       if (cost < bestCost && claimedByOther(m, -1 - it.id, p.id)) cost = cost * 2.5 + 20;
       if (cost < bestCost) { bestCost = cost; bi = it.id; bc = -1; }
     }
@@ -601,19 +602,19 @@ function loot(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
     const nav = lootSpots(m.world).nav, tc = navCellAt(nav, gx, gy, gz);
     if (tc >= 0) { b.pathN = navPath(nav, p.x, p.y, p.z, tc, b.path, m.world.terrain); if (!b.pathN) { giveUp(b, "noPath"); return; } }
   }
-  const d = Math.hypot(tx - p.x, tz - p.z), dg = Math.hypot(gx - p.x, gz - p.z);
+  const d = dmath.hypot(tx - p.x, tz - p.z), dg = dmath.hypot(gx - p.x, gz - p.z);
   const close = (d < 1.9 || dg < 0.7) && Math.abs(ty - p.y) < 1.4 && lootReachable(m.world, p.x, p.y, p.z, tx, ty, tz);
   // right next to it but it cannot be used from here (the far side of a wall, the floor below) and the
   // stand place is not being reached: drop it after 1.5 s instead of parking there
   if (!close && d < 2.8 && dg > 0.7) { if ((b.blockedT += dt) > 1.5) { giveUp(b, "blocked"); return; } } else b.blockedT = 0;
   // no progress for 4 s (circling at a wall, a ledge it cannot climb): try something else
-  const walk = b.pathI < b.pathN ? (b.pathN - b.pathI) * 1.25 + Math.hypot(b.path[b.pathI * 3] - p.x, b.path[b.pathI * 3 + 2] - p.z) : dg + Math.abs(gy - p.y);
+  const walk = b.pathI < b.pathN ? (b.pathN - b.pathI) * 1.25 + dmath.hypot(b.path[b.pathI * 3] - p.x, b.path[b.pathI * 3 + 2] - p.z) : dg + Math.abs(gy - p.y);
   if (walk < b.bestD - 0.75) { b.bestD = walk; b.progT = 0; } else if (!close && (b.progT += dt) > 4) { giveUp(b, "noProgress"); return; }
   if (!close && b.pathI < b.pathN) { b.nearT = 0; followPath(m, p, b, inp); return; }
   if (!close) {
     // the last metres to the stand place: straight at it (probing steering would swerve off a wall beside it)
     b.nearT = 0;
-    if (dg < 3.5) { inp.yaw = Math.atan2(-(gx - p.x), -(gz - p.z)); inp.pitch = 0; inp.mz = 1; inp.mx = 0; if (gy - p.y > 0.45 && dg < 1.6) inp.buttons |= B.JUMP; }
+    if (dg < 3.5) { inp.yaw = dmath.atan2(-(gx - p.x), -(gz - p.z)); inp.pitch = 0; inp.mz = 1; inp.mx = 0; if (gy - p.y > 0.45 && dg < 1.6) inp.buttons |= B.JUMP; }
     else moveTo(m, p, b, inp, gx, gz, dg > 12);
     return;
   }
@@ -650,7 +651,7 @@ function loot(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
         }
       }
     }
-    inp.yaw = Math.atan2(-(tx - p.x), -(tz - p.z)); inp.pitch = -0.4;
+    inp.yaw = dmath.atan2(-(tx - p.x), -(tz - p.z)); inp.pitch = -0.4;
     if (b.nearT > 2.5) giveUp(b, "nearNoOpen");
   }
 }
@@ -660,24 +661,24 @@ function followPath(m: Match, p: Player, b: BotBrain, inp: Input) {
   const P = b.path;
   while (b.pathI < b.pathN) {
     const i = b.pathI * 3;
-    if (Math.hypot(P[i] - p.x, P[i + 2] - p.z) < 0.6 && Math.abs(P[i + 1] - p.y) < 1.2) b.pathI++; else break;
+    if (dmath.hypot(P[i] - p.x, P[i + 2] - p.z) < 0.6 && Math.abs(P[i + 1] - p.y) < 1.2) b.pathI++; else break;
   }
   // skip ahead along a clear straight line: same level, two knee-high rays at the capsule's edges, floor under the
   // middle and the end of the shortcut (never across a stairwell or off a balcony)
   for (let k = 0; k < 8 && b.pathI + 1 < b.pathN; k++) {
     const j = (b.pathI + 1) * 3;
     if (Math.abs(P[j + 1] - p.y) > 0.3 || Math.abs(P[b.pathI * 3 + 1] - p.y) > 0.3) break;
-    const dx = P[j] - p.x, dz = P[j + 2] - p.z, l = Math.hypot(dx, dz) || 1, ox = -dz / l * 0.34, oz = dx / l * 0.34;
+    const dx = P[j] - p.x, dz = P[j + 2] - p.z, l = dmath.hypot(dx, dz) || 1, ox = -dz / l * 0.34, oz = dx / l * 0.34;
     m.world.raycast(p.x + ox, p.y + 0.45, p.z + oz, dx, 0, dz, 1, HIT, false); if (HIT.hit) break;
     m.world.raycast(p.x - ox, p.y + 0.45, p.z - oz, dx, 0, dz, 1, HIT, false); if (HIT.hit) break;
     m.world.raycast(p.x + dx * 0.5, p.y + 0.4, p.z + dz * 0.5, 0, -1, 0, 1.0, HIT, false); if (!HIT.hit) break;
     b.pathI++;
   }
   if (b.pathI >= b.pathN) return;
-  const i = b.pathI * 3, wx = P[i], wy = P[i + 1], wz = P[i + 2], d = Math.hypot(wx - p.x, wz - p.z);
+  const i = b.pathI * 3, wx = P[i], wy = P[i + 1], wz = P[i + 2], d = dmath.hypot(wx - p.x, wz - p.z);
   // an outdoor leg (to a door's outside point, still a few metres away): the usual steering with probes
   if (d > 3 && navCellAt(lootSpots(m.world).nav, p.x, p.y, p.z) < 0) { moveTo(m, p, b, inp, wx, wz, d > 12); return; }
-  inp.yaw = Math.atan2(-(wx - p.x), -(wz - p.z)); inp.pitch = 0; inp.mz = 1; inp.mx = 0;
+  inp.yaw = dmath.atan2(-(wx - p.x), -(wz - p.z)); inp.pitch = 0; inp.mz = 1; inp.mx = 0;
   if (wy - p.y > 0.45 && d < 1.6) inp.buttons |= B.JUMP;       // a tall step / ledge on the route
   inp.buttons &= ~B.SPRINT; if (d > 5) inp.buttons |= B.SPRINT;
 }
@@ -685,23 +686,23 @@ function roam(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
   b.roamT -= dt;
   // an unarmed bot never just wanders: it looks for a weapon again every second on the way
   if (m.phase === 2 && ((m.tick + p.id) % 30) === 0 && !(hasUsableWeapon(p) && bestWeaponValue(p) >= 2)) { b.state = S.Loot; b.lootChest = -1; b.lootItem = -1; }
-  const d = Math.hypot(b.tx - p.x, b.tz - p.z);
+  const d = dmath.hypot(b.tx - p.x, b.tz - p.z);
   if (!m.resurgenceOn && m.phase === 2) {
     // endgame: watch briefly from a spot inside the next circle, then peek from a different angle — a quiet final never
     // becomes an indefinite crouch (holds capped at 4 s)
-    const far = Math.hypot(b.tx - m.storm.tx, b.tz - m.storm.tz) > m.storm.tr * 0.7;
+    const far = dmath.hypot(b.tx - m.storm.tx, b.tz - m.storm.tz) > m.storm.tr * 0.7;
     if (d < 5) b.holdT += dt; else b.holdT = 0;
     if (b.roamT <= 0 || far || b.holdT > 4) {
       const minMove = Math.min(8, m.storm.tr * 0.4);
       for (let k = 0; k < 8; k++) {
         const a = b.rng.next() * Math.PI * 2, r = (0.3 + b.rng.next() * 0.3) * m.storm.tr;
-        const x = m.storm.tx + Math.cos(a) * r, z = m.storm.tz + Math.sin(a) * r;
-        if (Math.hypot(x - p.x, z - p.z) < minMove || m.world.ground(x, z) <= 0.8) continue;
+        const x = m.storm.tx + dmath.cos(a) * r, z = m.storm.tz + dmath.sin(a) * r;
+        if (dmath.hypot(x - p.x, z - p.z) < minMove || m.world.ground(x, z) <= 0.8) continue;
         b.tx = x; b.tz = z; break;
       }
       b.roamT = 5 + b.rng.next() * 5; b.holdT = 0;
     }
-    const distance = Math.hypot(b.tx - p.x, b.tz - p.z);
+    const distance = dmath.hypot(b.tx - p.x, b.tz - p.z);
     if (distance < 5) { inp.mx = 0; inp.mz = 0; inp.buttons |= B.CROUCH; inp.yaw += 0.7 * dt * (b.id & 1 ? 1 : -1); return; }
     moveTo(m, p, b, inp, b.tx, b.tz, distance > 30);
     return;
@@ -711,8 +712,8 @@ function roam(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
     let ok = false;
     for (let k = 0; k < 8 && !ok; k++) {
       if (b.rng.next() < 0.6) { const q = POIS[b.rng.int(POIS.length - 1)]; b.tx = q.x + (b.rng.next() - 0.5) * q.r; b.tz = q.z + (b.rng.next() - 0.5) * q.r; }
-      else { const a = b.rng.next() * Math.PI * 2, r = 50 + b.rng.next() * 140; b.tx = p.x + Math.cos(a) * r; b.tz = p.z + Math.sin(a) * r; }
-      ok = Math.hypot(b.tx - m.storm.tx, b.tz - m.storm.tz) < m.storm.tr * 0.85 && m.world.ground(b.tx, b.tz) > 1;
+      else { const a = b.rng.next() * Math.PI * 2, r = 50 + b.rng.next() * 140; b.tx = p.x + dmath.cos(a) * r; b.tz = p.z + dmath.sin(a) * r; }
+      ok = dmath.hypot(b.tx - m.storm.tx, b.tz - m.storm.tz) < m.storm.tr * 0.85 && m.world.ground(b.tx, b.tz) > 1;
     }
     if (!ok) { b.tx = m.storm.tx; b.tz = m.storm.tz; }
     b.roamT = 10 + b.rng.next() * 12;
@@ -723,8 +724,8 @@ function roam(m: Match, p: Player, b: BotBrain, inp: Input, dt: number) {
 
 function moveToward(p: Player, inp: Input, tx: number, tz: number, sprint: boolean) {
   // world-space wish direction → input axes relative to the current yaw
-  const dx = tx - p.x, dz = tz - p.z, l = Math.hypot(dx, dz) || 1;
-  const sy = Math.sin(inp.yaw), cy = Math.cos(inp.yaw);
+  const dx = tx - p.x, dz = tz - p.z, l = dmath.hypot(dx, dz) || 1;
+  const sy = dmath.sin(inp.yaw), cy = dmath.cos(inp.yaw);
   // forward = (-sy, -cy), right = (cy, -sy)
   inp.mz = (dx * -sy + dz * -cy) / l; inp.mx = (dx * cy + dz * -sy) / l;
   if (sprint && inp.mz > 0.5) inp.buttons |= B.SPRINT;
@@ -754,24 +755,24 @@ function moveTo(m: Match, p: Player, b: BotBrain, inp: Input, tx: number, tz: nu
       }
     }
   }
-  let dx = tx - p.x, dz = tz - p.z, dist = Math.hypot(dx, dz);
+  let dx = tx - p.x, dz = tz - p.z, dist = dmath.hypot(dx, dz);
   if (dist < 0.5) { inp.mx = inp.mz = 0; return; }
   // swimming: every probe below reads "water ahead" — head for the nearest shore first (toward the target when tied)
   if ((p.swim || p.y < 0) && dist > 3) {
     let best = -1, bs = Infinity;
     for (let k = 0; k < 16; k++) {
-      const a = k / 16 * Math.PI * 2, fx = Math.cos(a), fz = Math.sin(a);
+      const a = k / 16 * Math.PI * 2, fx = dmath.cos(a), fz = dmath.sin(a);
       for (const r of SHORE_R) if (m.world.ground(p.x + fx * r, p.z + fz * r) > 0.5) { const sc = r - 6 * (fx * dx + fz * dz) / dist; if (sc < bs) { bs = sc; best = k; } break; }
     }
-    if (best >= 0) { const a = best / 16 * Math.PI * 2; dx = Math.cos(a); dz = Math.sin(a); inp.yaw = Math.atan2(-dx, -dz); inp.pitch = 0; inp.mz = 1; inp.mx = 0; inp.buttons |= B.SPRINT; return; }
+    if (best >= 0) { const a = best / 16 * Math.PI * 2; dx = dmath.cos(a); dz = dmath.sin(a); inp.yaw = dmath.atan2(-dx, -dz); inp.pitch = 0; inp.mz = 1; inp.mx = 0; inp.buttons |= B.SPRINT; return; }
   }
-  const heading = Math.atan2(-dx, -dz) + b.turnBias;
+  const heading = dmath.atan2(-dx, -dz) + b.turnBias;
   b.turnBias *= 0.9;
   const ey = p.y + 0.9;
   let chosen = heading, blocked = true;
   for (let oi = 0; oi < OFFSETS.length; oi++) {
     const o = OFFSETS[oi];
-    const h = heading + o, fx = -Math.sin(h), fz = -Math.cos(h);
+    const h = heading + o, fx = -dmath.sin(h), fz = -dmath.cos(h);
     const probe = 3.2;
     m.world.raycast(p.x, ey, p.z, fx * probe, 0, fz * probe, 1, HIT, false);
     if (HIT.hit) { // low obstacle? probe from higher
@@ -791,16 +792,16 @@ function moveTo(m: Match, p: Player, b: BotBrain, inp: Input, tx: number, tz: nu
   if (blocked) { chosen = heading + Math.PI * 0.5 * (b.rng.next() < 0.5 ? 1 : -1); inp.buttons |= B.JUMP; }
   inp.yaw = chosen; inp.pitch = 0; inp.mz = 1; inp.mx = 0;
   if (sprint) inp.buttons |= B.SPRINT; else inp.buttons &= ~B.SPRINT;
-  const ax = p.x - Math.sin(chosen) * 1.5, az = p.z - Math.cos(chosen) * 1.5;
+  const ax = p.x - dmath.sin(chosen) * 1.5, az = p.z - dmath.cos(chosen) * 1.5;
   if (m.world.ground(ax, az) > p.y + 0.8) inp.buttons |= B.JUMP;
 }
 const OFFSETS = [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.4, -2.4];
 function avoidHazards(m: Match, p: Player, inp: Input) {
-  const sy = Math.sin(inp.yaw), cy = Math.cos(inp.yaw);
-  const mx = inp.mx, mz = inp.mz; const l = Math.hypot(mx, mz) || 1;
+  const sy = dmath.sin(inp.yaw), cy = dmath.cos(inp.yaw);
+  const mx = inp.mx, mz = inp.mz; const l = dmath.hypot(mx, mz) || 1;
   const wx = (mz * -sy + mx * cy) / l, wz = (mz * -cy + mx * -sy) / l;
   const g = m.world.ground(p.x + wx * 3, p.z + wz * 3);
   if (g < 0.2 || g < p.y - 6) { inp.mx = -inp.mx; inp.mz = -inp.mz * 0.5; }
 }
 const wrap = (a: number) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; };
-export function pointLineDist(px: number, pz: number, x0: number, z0: number, dx: number, dz: number) { const t = (px - x0) * dx + (pz - z0) * dz; return Math.hypot(px - (x0 + dx * t), pz - (z0 + dz * t)); }
+export function pointLineDist(px: number, pz: number, x0: number, z0: number, dx: number, dz: number) { const t = (px - x0) * dx + (pz - z0) * dz; return dmath.hypot(px - (x0 + dx * t), pz - (z0 + dz * t)); }

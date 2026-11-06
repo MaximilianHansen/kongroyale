@@ -8,6 +8,7 @@
 // removes walls with EV.Cover / EV.CoverHit / EV.CoverEnd; the client mirrors the set and predicts against it.
 import { PLAYER_R, SLOPE_LIMIT } from "./const";
 import { makeHit, surfaceIndex, type Hit, type StaticWorld } from "./world";
+import * as dmath from "./dmath";
 
 /** width (along the wall), height, thickness, hit points, life (s), walls per kong (the oldest crumbles), how far in
  * front it goes, how many on the island at once */
@@ -50,7 +51,7 @@ export class CoverSet {
       const ex = cx - dx * tc, ey = cy - dy * tc, ez = cz - dz * tc;
       if (ex * ex + ey * ey + ez * ez > (w.w * w.w + w.h * w.h + w.t * w.t) * 0.26) continue;
       // slabs in the wall's frame (x along it, z through it)
-      const c = Math.cos(w.yaw), s = Math.sin(w.yaw);
+      const c = dmath.cos(w.yaw), s = dmath.sin(w.yaw);
       const rx = ox - w.x, rz = oz - w.z;
       const lox = rx * c - rz * s, loz = rx * s + rz * c, loy = oy - (w.y + w.h / 2);
       const ldx = dx * c - dz * s, ldz = dx * s + dz * c;
@@ -84,7 +85,7 @@ export function pushCover(set: CoverSet, p: { x: number; y: number; z: number; v
     if (dx * dx + dz * dz > (w.w * w.w + w.t * w.t) * 0.25 + 1.2) continue;
     const top = w.y + w.h;
     if (p.y >= top || p.y + h <= w.y + 0.05) continue;
-    const c = Math.cos(w.yaw), s = Math.sin(w.yaw);
+    const c = dmath.cos(w.yaw), s = dmath.sin(w.yaw);
     const lx = dx * c - dz * s, lz = dx * s + dz * c;
     const ox = Math.abs(lx) - w.w / 2 - PLAYER_R, oz = Math.abs(lz) - w.t / 2 - PLAYER_R;
     if (ox >= 0 || oz >= 0) continue;
@@ -105,7 +106,7 @@ const PH = makeHit();
  * not on top of another wall. Writes [x, y, z, yaw] into PLACED; false = it does not fit there. */
 export const PLACED = new Float64Array(4);
 export function coverPlace(world: StaticWorld, x: number, y: number, z: number, yaw: number): boolean {
-  const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  const fx = -dmath.sin(yaw), fz = -dmath.cos(yaw), rx = dmath.cos(yaw), rz = -dmath.sin(yaw);
   const cx = x + fx * COVER.reach, cz = z + fz * COVER.reach;
   PLACED[0] = cx; PLACED[1] = y; PLACED[2] = cz; PLACED[3] = yaw;
   world.raycast(x, y + 1.0, z, cx - x, 0, cz - z, 1, PH, false); if (PH.hit) return false;
@@ -121,6 +122,6 @@ export function coverPlace(world: StaticWorld, x: number, y: number, z: number, 
   for (const h of [0.35, 1.0]) for (const e of [-1, 1]) { world.raycast(cx, fy + h, cz, fx * e, 0, fz * e, COVER.t / 2 + 0.05, PH, false); if (PH.hit) return false; }
   world.raycast(cx, fy + 0.4, cz, 0, 1, 0, COVER.h, PH, false); if (PH.hit) return false;
   const set = world.cover;
-  if (set) for (const w of set.list) if (w.live && Math.hypot(w.x - cx, w.z - cz) < 1.6 + (w.perm ? w.w / 2 : 0) && Math.abs(w.y - fy) < w.h) return false;
+  if (set) for (const w of set.list) if (w.live && dmath.hypot(w.x - cx, w.z - cz) < 1.6 + (w.perm ? w.w / 2 : 0) && Math.abs(w.y - fy) < w.h) return false;
   return true;
 }

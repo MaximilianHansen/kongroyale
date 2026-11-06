@@ -2,6 +2,7 @@
 // Item silhouettes and simulation boxes share InteriorItem / itemColliders.
 import {FINISH,itemColliders,type InteriorItem,type InteriorLayout,type InteriorRoom,type ItemKind} from './interior-kit';
 import {bx,kitRoom,toWorld,wall,type Frame,type Piece} from './coast-kit';
+import * as dmath from "../sim/dmath";
 export const KEEPER_ZONES=[
  {id:'keeper-cottage-living-kitchen',x:-2.125,z:0,w:7.05,d:7.3,role:'living' as const},
  {id:'keeper-cottage-bedroom',x:3.625,z:-2.125,w:4.05,d:3.05,role:'bedroom' as const},
@@ -12,7 +13,7 @@ export function keeperPartitions(floor:number,h:number):Piece[]{
  ...wall('cot:partition',1.5,-3.65,1.5,3.65,floor,h,.2,[{u:1.65,w:1.5,y0:0,h:2.7},{u:5.45,w:1.5,y0:0,h:2.7}],{surf:'wood'}),
  bx('cot:partition',1.6,floor,-.6,5.65,floor+h,-.4,{surf:'wood'}),
  ...[-5.05,-2,1.25].map(x=>bx('cot:porch-post',x-.08,floor,6.2,x+.08,floor+2.75,6.36,{surf:'wood'})),
- {k:'cot:awning',c:[-1.9,floor+3.1,5.3],h:[3.55,.03,1.5],pitch:Math.atan2(.55,2.7),surf:'metal'},
+ {k:'cot:awning',c:[-1.9,floor+3.1,5.3],h:[3.55,.03,1.5],pitch:dmath.atan2(.55,2.7),surf:'metal'},
  // Outside the stair and both entry corridors. The porch bench has real supports/seat/back.
  bx('cot:bench',-4.65,floor,4.23,-4.5,floor+.43,4.8,{surf:'wood'}),
  bx('cot:bench',-2.8,floor,4.23,-2.65,floor+.43,4.8,{surf:'wood'}),
@@ -75,10 +76,10 @@ function footprintStats(room:InteriorRoom,items:InteriorItem[]):InteriorLayout['
  for(let i=0;i<blocked.length;i++){
  const [x,z]=point(i);
  if(Math.abs(x)>room.w/2-R||Math.abs(z)>room.d/2-R){blocked[i]=1;continue;}
- blocked[i]=Number(items.some(it=>{if(!it.col||it.y>.3)return false;const c=Math.cos(it.yaw),s=Math.sin(it.yaw),dx=x-it.x,dz=z-it.z;return Math.abs(dx*c-dz*s)<it.w/2+R&&Math.abs(dx*s+dz*c)<it.d/2+R;})||(room.keepOut??[]).some(k=>{const a=Array.isArray(k)?k:k.r;return x>a[0]-R&&x<a[2]+R&&z>a[1]-R&&z<a[3]+R;}));
+ blocked[i]=Number(items.some(it=>{if(!it.col||it.y>.3)return false;const c=dmath.cos(it.yaw),s=dmath.sin(it.yaw),dx=x-it.x,dz=z-it.z;return Math.abs(dx*c-dz*s)<it.w/2+R&&Math.abs(dx*s+dz*c)<it.d/2+R;})||(room.keepOut??[]).some(k=>{const a=Array.isArray(k)?k:k.r;return x>a[0]-R&&x<a[2]+R&&z>a[1]-R&&z<a[3]+R;}));
  }
  const doors=room.openings.filter(o=>o.kind==='door'||o.kind==='gap').map(o=>o.side===0?[o.at,room.d/2-R-.15]:o.side===2?[o.at,-room.d/2+R+.15]:o.side===1?[room.w/2-R-.15,o.at]:[-room.w/2+R+.15,o.at]);
- const nearest=([x,z]:number[])=>{let got=-1,best=Infinity;for(let i=0;i<blocked.length;i++)if(!blocked[i]){const [px,pz]=point(i),d=Math.hypot(px-x,pz-z);if(d<best){best=d;got=i;}}return got;};
+ const nearest=([x,z]:number[])=>{let got=-1,best=Infinity;for(let i=0;i<blocked.length;i++)if(!blocked[i]){const [px,pz]=point(i),d=dmath.hypot(px-x,pz-z);if(d<best){best=d;got=i;}}return got;};
  const anchors=doors.map(nearest),q:number[]=[];
  if(anchors[0]>=0){reach[anchors[0]]=1;q.push(anchors[0]);}
  for(let head=0;head<q.length;head++){const i=q[head];for(const [dx,dz]of [[1,0],[-1,0],[0,1],[0,-1]]){const ix=i%nx+dx,iz=Math.floor(i/nx)+dz,j=iz*nx+ix;if(ix<0||ix>=nx||iz<0||iz>=nz||blocked[j]||reach[j])continue;reach[j]=1;q.push(j);}}
@@ -86,7 +87,7 @@ function footprintStats(room:InteriorRoom,items:InteriorItem[]):InteriorLayout['
 }
 /** Hollow dormer: the roof has two thin slope sheets; no solid triangular rear cap can hang into the attic. */
 export function keeperDormerPieces(eave:number,hd:number,pitch:number,dx:number,dw:number):Piece[]{
- const zf=hd-1,yb=eave+(hd-zf)*Math.tan(pitch)-.2,dh=2.1,back=1.9;
+ const zf=hd-1,yb=eave+(hd-zf)*dmath.tan(pitch)-.2,dh=2.1,back=1.9;
  const out:Piece[]=[];
  for(const sign of [-1,1])out.push(bx('cot:dormer-shell',dx+sign*(dw/2-.06)-.06,yb,zf-back,dx+sign*(dw/2-.06)+.06,yb+dh,zf,{surf:'wood'}));
  out.push(bx('cot:dormer-shell',dx-dw/2,yb+dh-.12,zf-back,dx+dw/2,yb+dh,zf,{surf:'wood'}));
@@ -100,12 +101,12 @@ export function keeperDormerPieces(eave:number,hd:number,pitch:number,dx:number,
  // top (+150 mm above that plane) broke through the outside valley corners.
  // A slope-cut timber cap contacts the roof; eight body blocks overlap its
  // underside by at most22 mm, forming a closed bearing above the flat ceiling.
- const cpMain=Math.cos(pitch),spMain=Math.sin(pitch),capHalf=.025;
+ const cpMain=dmath.cos(pitch),spMain=dmath.sin(pitch),capHalf=.025;
  // keeperMainRoof's actual substrate centre includes its signed normal
  // offset. Use that emitted plane, rather than the nominal roof height.
- const mainRun=hd+.6,mainY=eave+(hd-mainRun/2)*Math.tan(pitch)+.1*cpMain;
+ const mainRun=hd+.6,mainY=eave+(hd-mainRun/2)*dmath.tan(pitch)+.1*cpMain;
  const mainZ=mainRun/2-.1*spMain;
- const roofUnder=(z:number)=>mainY+(mainZ-z)*Math.tan(pitch)-.1/cpMain;
+ const roofUnder=(z:number)=>mainY+(mainZ-z)*dmath.tan(pitch)-.1/cpMain;
  out.push({k:'cot:dormer-header',c:[dx,roofUnder(rear)-capHalf*cpMain,rear-capHalf*spMain],
    h:[dw/2,capHalf,.12/cpMain],pitch,surf:'wood'});
  for(let i=0;i<8;i++){
@@ -115,16 +116,16 @@ export function keeperDormerPieces(eave:number,hd:number,pitch:number,dx:number,
  }
  // The bearing's flat top touches the lowest roof underside over its width.
  // Raising it a fixed .25 m pierced the exterior tile face at the cheek eave.
- const cheekRun=(dw+.3)/2,cheekCos=Math.cos(Math.atan2(1.05,cheekRun));
+ const cheekRun=(dw+.3)/2,cheekCos=dmath.cos(dmath.atan2(1.05,cheekRun));
  const cheekTop=yb+dh+1.05*(1-(dw/2)/cheekRun)-.06/cheekCos;
  for(const sign of [-1,1])out.push(bx('cot:dormer-header',dx+sign*(dw/2-.06)-.06,yb+dh-.06,rear,dx+sign*(dw/2-.06)+.06,cheekTop,zf,{surf:'wood'}));
  // A real valley is V-shaped in plan. Rectangular sheets cross BELOW the main roof
  // at their rear outer corners. Every shared/drawn strip stops outside that plane.
- const run=(dw+.3)/2,rise=1.05,angle=Math.atan2(rise,run),cp=Math.cos(angle),roofZ1=zf+.345,n=8;
+ const run=(dw+.3)/2,rise=1.05,angle=dmath.atan2(rise,run),cp=dmath.cos(angle),roofZ1=zf+.345,n=8;
  for(const sign of [-1,1])for(let i=0;i<n;i++){
    const d0=run*i/n,d1=run*(i+1)/n,dm=(d0+d1)/2;
    const underside=yb+dh+rise*(1-d1/run)-.06/cp;
-   const roofZ0=hd-(underside-eave-.2*Math.cos(pitch))/Math.tan(pitch)+.01;
+   const roofZ0=hd-(underside-eave-.2*dmath.cos(pitch))/dmath.tan(pitch)+.01;
    out.push({k:'cot:dormer-roof',c:[dx+sign*dm,yb+dh+rise*(1-dm/run),(roofZ0+roofZ1)/2],h:[(roofZ1-roofZ0)/2,.06,(d1-d0)/cp/2],yaw:Math.PI/2,pitch:sign*angle,surf:'wood'});
  }
  return out;
@@ -141,32 +142,32 @@ export function keeperRoofVerge(hl: number) {
 }
 /** Main roof patches share one slope plane and a real rectangular dormer opening. */
 export function keeperMainRoof(eave:number,hd:number,hl:number,pitch:number,dx:number,dw:number):Piece[]{
- const run=hd+.6,len=run/Math.cos(pitch)+.3,cy=eave+(hd-run/2)*Math.tan(pitch);
+ const run=hd+.6,len=run/dmath.cos(pitch)+.3,cy=eave+(hd-run/2)*dmath.tan(pitch);
  const out:Piece[]=[],edge=keeperRoofVerge(hl).edge;
  // Flat metal bears on pan crests; its underside meets the highest clay lap.
  const flashLift=.1+KEEPER_ROOF_CLAY.baseGap+2*KEEPER_ROOF_CLAY.relief+KEEPER_ROOF_CLAY.lap+.025;
  for(const sign of [-1,1]){
- const a=sign*pitch,sp=Math.sin(a),cp=Math.cos(a),baseY=cy+.1*cp,baseZ=sign*run/2-.1*sp;
+ const a=sign*pitch,sp=dmath.sin(a),cp=dmath.cos(a),baseY=cy+.1*cp,baseZ=sign*run/2-.1*sp;
  const patch=(x0:number,x1:number,t0:number,t1:number,k='cot:roof',th=.1,lift=0)=>{const mid=(t0+t1)/2;out.push({k,c:[(x0+x1)/2,baseY-sp*mid+cp*lift,baseZ+cp*mid+sp*lift],h:[(x1-x0)/2,th,(t1-t0)/2],pitch:a,surf:k==='cot:flash'?'metal':'wood'});};
  if(sign<0){patch(-edge,edge,-len/2,len/2);continue;}
  const x0=dx-dw/2+.06,x1=dx+dw/2-.06,t0=(1.1-baseZ)/cp,t1=(3.12-baseZ)/cp;
  patch(-edge,x0,-len/2,len/2);patch(x1,edge,-len/2,len/2);
  // Keep the main roof underneath the same stepped V valley where a rectangular
  // cut would expose the ceiling outside. Each column meets its dormer strip.
- const drun=(dw+.3)/2,drise=1.05,dcp=Math.cos(Math.atan2(drise,drun)),dtop=eave+Math.tan(pitch)-.2+2.1+drise;
+ const drun=(dw+.3)/2,drise=1.05,dcp=dmath.cos(dmath.atan2(drise,drun)),dtop=eave+dmath.tan(pitch)-.2+2.1+drise;
  for(const ds of [-1,1])for(let i=0;i<8;i++){
    const d0=drun*i/8,d1=drun*(i+1)/8;
    const ax=Math.max(x0,ds<0?dx-d1:dx+d0),bx=Math.min(x1,ds<0?dx-d0:dx+d1);
    if(bx<=ax)continue;
    const low=dtop-drise*d1/drun-.06/dcp;
-   const z0=Math.max(1.1,hd-(low-eave-.2*Math.cos(pitch))/Math.tan(pitch)+.01),rt=(z0-baseZ)/cp;
+   const z0=Math.max(1.1,hd-(low-eave-.2*dmath.cos(pitch))/dmath.tan(pitch)+.01),rt=(z0-baseZ)/cp;
    patch(ax,bx,-len/2,rt);patch(ax,bx,t1,len/2);
    patch(ax,bx,rt-.07,rt+.07,'cot:flash',.025,flashLift);
  }
  // Side aprons bear on exterior clay and meet the OUTER plaster cheek, never
  // straddling its 120 mm wall. Terminate at the real main-metal/cheek-top
  // intersection: a full roof-cut run leaves an exposed fin behind the dormer.
- const cheekTop=eave+Math.tan(pitch)-.2+2.1;
+ const cheekTop=eave+dmath.tan(pitch)-.2+2.1;
  const sideThickness=.004,sideLift=flashLift-.025+sideThickness;
  // The uphill top corner includes the slab thickness; solve in slope space.
  const sideT0=(baseY+cp*(sideLift+sideThickness)-cheekTop)/sp;

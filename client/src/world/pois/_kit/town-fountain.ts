@@ -11,6 +11,7 @@ import type { TownBins, TownMats } from "./town-materials";
 import { M, col, chamferBoxGeo, cylGeo, latheGeo, discGeo, boxProjectUV, type ColorFn } from "./town-geo";
 import { poolWaterMaterial, animateWater } from "./town-water";
 import { buildGorillaStatue } from "./town-statue";
+import { ctxPace, type Pace } from "./pace";
 import { fountainDims, type FountainDims } from "../../../../../shared/pois/town-fountain";
 
 export interface FountainOpts { R?: number /* outer radius of the basin wall, default 4.2 */; statueHeight?: number /* default 3.4 */; statueYaw?: number }
@@ -240,7 +241,7 @@ function foamSquare(half: number, y: number, wdt: number, pos: number[], uv: num
 /** full fountain at `at` (origin = plaza floor at the fountain centre): step ring, basin, water (+ animated jets),
  *  rim planters, pedestal, statue. Geometry into bins; water/jets/statue meshes into `extra`. `at` should be a
  *  translation (orientation of the square pedestal / pier / statue comes from `o.statueYaw`, like the colliders). */
-export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats, at: THREE.Matrix4, extra: THREE.Object3D[], rng: () => number, o: FountainOpts = {}): Promise<FountainInfo> {
+export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats, at: THREE.Matrix4, extra: THREE.Object3D[], rng: () => number, o: FountainOpts = {}, pace: Pace = ctxPace(ctx)): Promise<FountainInfo> {
   void mats;
   const d = fountainDims(o);
   const yaw = d.statueYaw;
@@ -262,6 +263,7 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
     if (wetY > 0 && ly < wetY + 0.12 && Math.hypot(x - base.x, z - base.z) < wetR) { out.multiplyScalar(0.68 + 0.32 * smooth(wetY - 0.3, wetY + 0.12, ly)); out.lerp(mossDark, 0.35 * smooth(wetY + 0.12, wetY - 0.05, ly) * (0.5 + n)); }
   };
 
+  await pace.pause();
   // ---- outer step ring: 24 bevelled blocks with 1 cm joints
   {
     const n = Math.max(12, Math.round(2 * Math.PI * d.stepR / 1.25)), gap = 0.012;
@@ -270,10 +272,12 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
       const hj = (rng() - 0.5) * 0.012;
       const g = sweepBlock(rectProfile(d.R - 0.12, d.stepR, -0.02, d.stepH + hj, 0.03), a0, a1, 0.025);
       bins.trim.add(g, at, stoneA.clone().multiplyScalar(0.9 + rng() * 0.18), weather(0.1, 0.5));
+      await pace.pause();
     }
     // dark joint filler under the blocks
     bins.stone.add(latheGeo([[d.R - 0.1, 0.0], [d.stepR - 0.02, 0.0], [d.stepR - 0.02, d.stepH - 0.02], [d.R - 0.1, d.stepH - 0.02]], 64), at, col("#4a4239"));
   }
+  await pace.pause();
   // ---- basin wall: bevelled blocks, inner face runs down to the pool floor
   {
     const n = Math.max(12, Math.round(2 * Math.PI * d.R / 1.35)), gap = 0.012;
@@ -281,9 +285,11 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
       const a0 = (i + 0.5) * 2 * Math.PI / n + gap / d.R, a1 = (i + 1.5) * 2 * Math.PI / n - gap / d.R;
       const g = sweepBlock(rectProfile(d.innerR, d.R, 0.0, d.copY0 + 0.01, 0.03), a0, a1, 0.028);
       bins.trim.add(g, at, stoneB.clone().multiplyScalar(0.88 + rng() * 0.2), weather(d.stepH + 0.05, 1.0, d.waterY, d.innerR + 0.04));
+      await pace.pause();
     }
     bins.stone.add(latheGeo([[d.innerR + 0.02, 0.0], [d.R - 0.02, 0.0], [d.R - 0.02, d.copY0], [d.innerR + 0.02, d.copY0]], 64), at, col("#3e382f"));
   }
+  await pace.pause();
   // ---- rounded bullnose coping (mossy grey-green), joints offset from the wall's
   {
     const n = Math.max(10, Math.round(2 * Math.PI * d.R / 1.6)), gap = 0.01;
@@ -295,8 +301,10 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
         out.multiplyScalar(0.88 + 0.22 * n2);
         out.lerp(n1 > 0.55 ? moss : mossDark, sat((n1 - 0.45) * 2.2) * 0.45);
       });
+      await pace.pause();
     }
   }
+  await pace.pause();
   // ---- pool floor (tiled, pale aqua) + a few coins
   bins.paving.add(discGeo(d.innerR + 0.02, 64, 0.8), at.clone().multiply(M(0, d.floorY, 0)), col("#8fd0cb"), (x, y, z, b, out) => {
     const r = Math.hypot(x - base.x, z - base.z); out.multiplyScalar(0.75 + 0.25 * smooth(d.innerR, d.innerR - 0.6, r));
@@ -306,6 +314,7 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
     bins.metal.add(cylGeo(0.035, 0.035, 0.006, 8), at.clone().multiply(M(Math.cos(a) * r, d.floorY + 0.004, Math.sin(a) * r, rng() * 6, (rng() - 0.5) * 0.3)), col(rng() < 0.7 ? "#d8b04a" : "#b8b8b0"));
   }
 
+  await pace.pause();
   // ---- pedestal: plinth in the water, collar, 3-course masonry shaft, two-step cornice, statue plinth
   {
     const P = (x: number, y: number, z: number, ry = 0) => rot.clone().multiply(M(x, y, z, ry));
@@ -345,6 +354,7 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
     }
   }
 
+  await pace.pause();
   // ---- front planter pier (statue's facing direction) + rim planters
   {
     const pw = d.pier.w, pd = d.pier.d;
@@ -359,6 +369,7 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
     });
   }
 
+  await pace.pause();
   // ---- water surface
   // bright turquoise, stronger ripple normals + a glossier surface so the sky and the sun glint break up on it
   const water = poolWaterMaterial("#2fd0da", 0.78);
@@ -368,6 +379,7 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
   wmesh.receiveShadow = true; wmesh.name = "fountain:water";
   extra.push(wmesh);
 
+  await pace.pause();
   // ---- jets (4 arcing streams from bronze nozzles near the rim + 4 pedestal spouts) and foam
   {
     const pos: number[] = [], uv: number[] = [], idx: number[] = [];
@@ -418,8 +430,9 @@ export async function addFountain(ctx: WorldCtx, bins: TownBins, mats: TownMats,
     ctx.onUpdate((_dt, t) => { tex.offset.x = -t * 1.6; animateWater([water], t); });
   }
 
+  await pace.pause();
   // ---- the statue
-  const statue = await buildGorillaStatue(ctx, d.statueHeight);
+  const statue = await buildGorillaStatue(ctx, d.statueHeight, pace);
   statue.applyMatrix4(rot.clone().multiply(M(0, d.top.y1, 0)));
   extra.push(statue);
 
