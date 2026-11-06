@@ -4,6 +4,7 @@
 // (early-z rejects everything the world covers).
 import * as THREE from "three";
 import { ATMOS_PARS, type AtmosUniforms } from "./glsl";
+import { onRestore } from "../../engine/res/restore";
 
 const VERT = /* glsl */ `
 varying vec3 vDir;
@@ -208,6 +209,7 @@ export class SkyDome {
       m.defines = { ...(m.defines ?? {}), SKY_BAKED: 1, SKY_EL0: SKY_EL0.toFixed(3) };
       m.uniforms.uSkyBake = { value: t };
       m.needsUpdate = true;
+      onRestore("bake", () => this.bake(renderer, u, w, h));
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));

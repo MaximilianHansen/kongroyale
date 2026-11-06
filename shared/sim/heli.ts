@@ -33,6 +33,7 @@
 import { GRAVITY, PLAYER_R, WATER_LEVEL, qpos } from "./const";
 import { makeHit, type StaticWorld } from "./world";
 import { HELI_HOOKS, RIDE_ST, SPEC, VE, VF, VKind, VS, vehBasis, type Vehicle, type VehSpec } from "./vehicle";
+import * as dmath from "./dmath";
 
 export const HELI = {
   HP: 1000,
@@ -154,7 +155,7 @@ function under(world: StaticWorld, x: number, y: number, z: number): number {
 /** the ground under the four skid corners as it stands (yaw, y) → SK: the height the skids rest at (the highest
  * corner, so a skid never sinks into a step), the slope under them */
 function skids(v: Vehicle, world: StaticWorld) {
-  const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), fx = -sy, fz = -cy, rx = cy, rz = -sy;
+  const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), fx = -sy, fz = -cy, rx = cy, rz = -sy;
   const X = HELI.SKID_X, Z = HELI.SKID_Z;
   const hFL = under(world, v.x + fx * Z - rx * X, v.y, v.z + fz * Z - rz * X); const surf = USURF;
   const hFR = under(world, v.x + fx * Z + rx * X, v.y, v.z + fz * Z + rz * X);
@@ -162,8 +163,8 @@ function skids(v: Vehicle, world: StaticWorld) {
   const hBR = under(world, v.x - fx * Z + rx * X, v.y, v.z - fz * Z + rz * X);
   const f = (hFL + hFR) * 0.5, b = (hBL + hBR) * 0.5, l = (hFL + hBL) * 0.5, r = (hFR + hBR) * 0.5;
   SK[0] = Math.max(hFL, hFR, hBL, hBR);
-  SK[1] = Math.max(-1.1, Math.min(1.1, Math.atan2(f - b, 2 * Z)));
-  SK[2] = Math.max(-1.1, Math.min(1.1, Math.atan2(r - l, 2 * X)));
+  SK[1] = Math.max(-1.1, Math.min(1.1, dmath.atan2(f - b, 2 * Z)));
+  SK[2] = Math.max(-1.1, Math.min(1.1, dmath.atan2(r - l, 2 * X)));
   SK[3] = surf;
   // over the sea the skids meet the water, which is level — not the seabed's slope under it (else a slow touchdown on
   // the sea over a sloping seabed would count as a landing on a cliff)
@@ -213,7 +214,7 @@ export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: numbe
   // thin air under the ceiling: the climb fades out over its last CEIL_SOFT m (it hovers there)
   if (coll > 0 && v.y > HELI.CEIL - HELI.CEIL_SOFT) coll *= Math.max(0, (HELI.CEIL - v.y) / HELI.CEIL_SOFT);
   // ---- attitude: in the air the stick tilts it, on the ground it sits on the slope
-  const k = 1 - Math.exp(-HELI.ATT_RATE * dt);
+  const k = 1 - dmath.exp(-HELI.ATT_RATE * dt);
   if (v.air) {
     // (alone: the nose dips as the lift goes)
     const tp = pilot ? -thr * HELI.PITCH_MAX : alone ? -HELI.NO_PILOT_NOSE * (1 - L) : 0, tr = pilot ? -str * HELI.ROLL_MAX : 0;
@@ -221,16 +222,16 @@ export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: numbe
   } else { v.gPitch += (SK[1] - v.gPitch) * k; v.gRoll += (SK[2] - v.gRoll) * k; }
   // ---- heading: the yaw rate chases the pilot's look (shortest way round), builds and dies with a lag
   const wantRate = pilot && (v.air || L > 0.5) ? Math.max(-HELI.YAW_MAX, Math.min(HELI.YAW_MAX, wrapPi(yawCmd - v.yaw) * HELI.YAW_K)) * (v.air ? 1 : 0.5) : 0;
-  v.tipV += (wantRate - v.tipV) * (1 - Math.exp(-HELI.YAW_RATE * dt));
+  v.tipV += (wantRate - v.tipV) * (1 - dmath.exp(-HELI.YAW_RATE * dt));
   if (Math.abs(v.tipV) > 1e-5) v.yaw = wrapPi(v.yaw + v.tipV * dt);
-  const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), fx = -sy, fz = -cy, rx = cy, rz = -sy;
+  const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw), fx = -sy, fz = -cy, rx = cy, rz = -sy;
   // ---- the rotor's push: along the tilt, scaled by how much lift there is
   const thrust = L * (1 + coll * (HELI.CLIMB_ACC / GRAVITY));
   if (v.air) {
-    const TK = HELI.TILT_ACC / Math.sin(HELI.PITCH_MAX);
-    const af = -Math.sin(v.gPitch) * TK * L, al = -Math.sin(v.gRoll) * TK * L;
+    const TK = HELI.TILT_ACC / dmath.sin(HELI.PITCH_MAX);
+    const af = -dmath.sin(v.gPitch) * TK * L, al = -dmath.sin(v.gRoll) * TK * L;
     v.vx += (fx * af + rx * al) * dt; v.vz += (fz * af + rz * al) * dt;
-    const vh = Math.hypot(v.vx, v.vz), d = Math.min(0.95, (HELI.DRAG * vh + HELI.LIN) * dt);
+    const vh = dmath.hypot(v.vx, v.vz), d = Math.min(0.95, (HELI.DRAG * vh + HELI.LIN) * dt);
     v.vx -= v.vx * d; v.vz -= v.vz * d;
     // (a pilot's hands hold the hover; nobody at the stick, nothing does)
     const damp = pilot ? HELI.HOVER_DAMP * (1 - Math.abs(coll)) * L : 0;
@@ -243,11 +244,11 @@ export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: numbe
     let f = HELI.GROUND_FRICTION * dt;
     if (Math.max(Math.abs(SK[1]), Math.abs(SK[2])) > HELI.SLOPE_MAX) {
       // downhill: the tail when the nose is up the slope, the left side when the right one is
-      const g = GRAVITY * dt, sp = Math.sin(SK[1]), sr = Math.sin(SK[2]);
+      const g = GRAVITY * dt, sp = dmath.sin(SK[1]), sr = dmath.sin(SK[2]);
       v.vx -= (fx * sp + rx * sr) * g; v.vz -= (fz * sp + rz * sr) * g;
       f = HELI.SLIDE_FRICTION * dt;
     }
-    const vh = Math.hypot(v.vx, v.vz);
+    const vh = dmath.hypot(v.vx, v.vz);
     if (vh <= f) { v.vx = 0; v.vz = 0; } else { const q = 1 - f / vh; v.vx *= q; v.vz *= q; }
     v.vy = 0;
     if (thrust > 1.001) { v.air = true; v.vy = 0.4; }
@@ -263,16 +264,16 @@ export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: numbe
 let SETTLE = false;
 /** integrate, collide the cabin and the tail with the world, meet the ground */
 function move(v: Vehicle, world: StaticWorld, dt: number) {
-  const x0 = v.x, z0 = v.z, sy0 = Math.sin(v.yaw), cy0 = Math.cos(v.yaw);
+  const x0 = v.x, z0 = v.z, sy0 = dmath.sin(v.yaw), cy0 = dmath.cos(v.yaw);
   v.x += v.vx * dt; v.z += v.vz * dt;
   let impact = 0;
   for (let c = 0; c < HELI.CIRCLES.length; c++) {
     const off = HELI.CIRCLES[c][0], r = HELI.CIRCLES[c][1];
-    const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw);
+    const sy = dmath.sin(v.yaw), cy = dmath.cos(v.yaw);
     const cx = v.x + sy * off, cz = v.z + cy * off, by = v.y + 0.3;
     world.velY = 0; world.wallHit = false; world.headBump = false;
     world.resolveMove(cx, by, cz, cx - (x0 + sy0 * off), 0, cz - (z0 + cy0 * off), r, c < 2 ? HELI.CAP_H - 0.3 : 1.6, false);
-    const px = world.P[0] - cx, pz = world.P[2] - cz, pl = Math.hypot(px, pz);
+    const px = world.P[0] - cx, pz = world.P[2] - cz, pl = dmath.hypot(px, pz);
     if (pl < 1e-7) continue;
     v.x += px; v.z += pz;
     const nx = px / pl, nz = pz / pl, vn = v.vx * nx + v.vz * nz;
@@ -301,7 +302,7 @@ function move(v: Vehicle, world: StaticWorld, dt: number) {
     if (v.y > HELI.CEIL) { v.y = HELI.CEIL; if (v.vy > 0) v.vy = 0; }
     if (v.y <= yG) {
       // touchdown: how hard, how fast sideways, how tilted, how steep — the rules above
-      const hit = -v.vy, hs = Math.hypot(v.vx, v.vz), tilt = Math.max(Math.abs(v.gPitch - SK[1]), Math.abs(v.gRoll - SK[2])), slope = Math.max(Math.abs(SK[1]), Math.abs(SK[2]));
+      const hit = -v.vy, hs = dmath.hypot(v.vx, v.vz), tilt = Math.max(Math.abs(v.gPitch - SK[1]), Math.abs(v.gRoll - SK[2])), slope = Math.max(Math.abs(SK[1]), Math.abs(SK[2]));
       v.y = yG; v.vy = 0; v.air = false;
       if (v.flags & VF.BURN) { v.evt |= VE.TIP; if (hit > v.crashV) v.crashV = hit; }
       else if (hit > HELI.FATAL_LAND_V || hs > HELI.FATAL_SLIDE_V || tilt > HELI.ROLL_TILT) { v.evt |= VE.TIP | VE.LAND; if (hit > v.crashV) v.crashV = hit; }
@@ -309,7 +310,7 @@ function move(v: Vehicle, world: StaticWorld, dt: number) {
         // a rough landing — set down crooked, or onto a slope it cannot stand on (it slides off: stepHeli): it
         // bangs down, hurt by how fast it came in (the match charges LAND_DMG per m/s of crashV over LAND_V, so crashV
         // carries that damage); only a fast one is the end
-        const sev = Math.hypot(hit, hs);
+        const sev = dmath.hypot(hit, hs);
         if (sev > HELI.ROUGH_V) { v.evt |= VE.TIP | VE.LAND; if (hit > v.crashV) v.crashV = hit; }
         else { v.evt |= VE.LAND; const cv = HELI.LAND_V + (HELI.ROUGH_DMG + HELI.ROUGH_DMG_V * sev) / HELI.LAND_DMG; if (cv > v.crashV) v.crashV = cv; }
       }
@@ -319,7 +320,7 @@ function move(v: Vehicle, world: StaticWorld, dt: number) {
   } else {
     // on the skids it follows the ground; on a slope too steep to stand on it slides (stepHeli) — fast, it goes over
     if (yG > v.y + 0.6) { v.air = true; } else v.y = yG;
-    if (Math.max(Math.abs(SK[1]), Math.abs(SK[2])) > HELI.SLOPE_MAX && Math.hypot(v.vx, v.vz) > HELI.FATAL_SLIDE_V) v.evt |= VE.TIP;
+    if (Math.max(Math.abs(SK[1]), Math.abs(SK[2])) > HELI.SLOPE_MAX && dmath.hypot(v.vx, v.vz) > HELI.FATAL_SLIDE_V) v.evt |= VE.TIP;
   }
   if (!v.air && WATER_LEVEL - v.y > HELI.SINK) { v.st = VS.Sunk; v.evt |= VE.SUNK; v.vx = v.vz = 0; v.vy = 0; v.tipV = 0; }
 }
@@ -444,9 +445,9 @@ const P6 = new Float64Array(6), GA = new Float64Array(4);
  * yaw / pitch into out[2], out[3] (out[0], out[1] = a, e) */
 export function gunWorld(a: number, e: number, P: ArrayLike<number>, out: Float64Array): Float64Array {
   vehBasis(P[3], P[4], P[5], GM);
-  const ce = Math.cos(e), bx = -Math.cos(a) * ce, by = Math.sin(e), bz = -Math.sin(a) * ce;
+  const ce = dmath.cos(e), bx = -dmath.cos(a) * ce, by = dmath.sin(e), bz = -dmath.sin(a) * ce;
   const wx = GM[0] * bx + GM[1] * by + GM[2] * bz, wy = GM[3] * bx + GM[4] * by + GM[5] * bz, wz = GM[6] * bx + GM[7] * by + GM[8] * bz;
-  out[0] = a; out[1] = e; out[2] = Math.atan2(-wx, -wz); out[3] = Math.asin(wy > 1 ? 1 : wy < -1 ? -1 : wy);
+  out[0] = a; out[1] = e; out[2] = dmath.atan2(-wx, -wz); out[3] = dmath.asin(wy > 1 ? 1 : wy < -1 ? -1 : wy);
   return out;
 }
 /**
@@ -457,10 +458,10 @@ export function gunWorld(a: number, e: number, P: ArrayLike<number>, out: Float6
  */
 export function gunAngles(aimYaw: number, aimPitch: number, P: ArrayLike<number>, out: Float64Array): Float64Array {
   vehBasis(P[3], P[4], P[5], GM);
-  const cp = Math.cos(aimPitch), lx = -Math.sin(aimYaw) * cp, ly = Math.sin(aimPitch), lz = -Math.cos(aimYaw) * cp;
+  const cp = dmath.cos(aimPitch), lx = -dmath.sin(aimYaw) * cp, ly = dmath.sin(aimPitch), lz = -dmath.cos(aimYaw) * cp;
   // into the body frame (the inverse of a rotation is its transpose)
   const bx = GM[0] * lx + GM[3] * ly + GM[6] * lz, by = GM[1] * lx + GM[4] * ly + GM[7] * lz, bz = GM[2] * lx + GM[5] * ly + GM[8] * lz;
-  let a = Math.atan2(-bz, -bx), e = Math.asin(by > 1 ? 1 : by < -1 ? -1 : by);
+  let a = dmath.atan2(-bz, -bx), e = dmath.asin(by > 1 ? 1 : by < -1 ? -1 : by);
   const A = HELI.GUN_ARC_YAW;
   if (a > A) a = A; else if (a < -A) a = -A;
   if (e > HELI.GUN_PITCH_MAX) e = HELI.GUN_PITCH_MAX; else if (e < HELI.GUN_PITCH_MIN) e = HELI.GUN_PITCH_MIN;
@@ -487,12 +488,12 @@ export function findHelipad(world: StaticWorld, ax: number, az: number, reach: n
   for (let ring = 0; ring * 3 <= reach; ring++) {
     const r = ring * 3, n = ring === 0 ? 1 : Math.max(8, Math.round((TAU * r) / 3.5));
     for (let k = 0; k < n; k++) {
-      const a = yawHint + (k / n) * TAU, x = ax + Math.cos(a) * r, z = az + Math.sin(a) * r, y = T.height(x, z);
+      const a = yawHint + (k / n) * TAU, x = ax + dmath.cos(a) * r, z = az + dmath.sin(a) * r, y = T.height(x, z);
       if (y < 1.5 || T.normal(x, z, N3)[1] < 0.985) continue;
       if (taken.some(([tx, tz]) => (tx - x) * (tx - x) + (tz - z) * (tz - z) < 14 * 14)) continue;
       let ok = true;
       for (let i = 0; i < 12 && ok; i++) {
-        const b = (i / 12) * TAU, dx = Math.cos(b), dz = Math.sin(b);
+        const b = (i / 12) * TAU, dx = dmath.cos(b), dz = dmath.sin(b);
         for (const q of [0.4, 0.75, 1]) if (Math.abs(T.height(x + dx * R * q, z + dz * R * q) - y) > 0.5) ok = false;
         for (const h of [0.6, 2.0, 3.4]) { world.raycast(x, y + h, z, dx, 0, dz, R, GH, false); if (GH.hit) ok = false; }
       }
@@ -501,7 +502,7 @@ export function findHelipad(world: StaticWorld, ax: number, az: number, reach: n
       // nose toward the most room (a 24 m probe at cabin height, 16 headings, the hint first)
       let bestYaw = yawHint, bestFree = -1;
       for (let h = 0; h < 16; h++) {
-        const yaw = yawHint + (h / 16) * TAU, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+        const yaw = yawHint + (h / 16) * TAU, fx = -dmath.sin(yaw), fz = -dmath.cos(yaw);
         let free = 24;
         for (const hy of [1.2, 3.0]) { world.raycast(x, y + hy, z, fx, 0, fz, 24, GH, false); if (GH.hit && GH.t < free) free = GH.t; }
         if (free > bestFree + 0.05) { bestFree = free; bestYaw = yaw; }

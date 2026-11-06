@@ -11,6 +11,7 @@ import { vegTrunkColliders, VARIANTS } from "../world/veg-scatter"; // only CALL
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
 import { panes, settleLoot } from "./pane-kit";
 import { F, addKitLoot, bx, doorLeaves, floraColliders, kitRoom, lazyBoxes, place, rng, settleFlora, stairs, sub, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece, type V3 } from "./coast-kit";
+import * as dmath from "../sim/dmath";
 
 export const PAD = { x: -470, z: -40, y: 14 };
 /** the map's pad circle (flat terrain at PAD.y inside `pad`) */
@@ -81,8 +82,8 @@ export const SPOT = { x: -17, z: -18.5, half: 2.2, y: 10.2, stairW: 1.3, stairZ:
 
 /** pitched railing collider following a line (frame-local) — bottom follows y0→y1, height h */
 function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.0): Piece {
-  const L = Math.hypot(x1 - x0, z1 - z0), yaw = Math.atan2(x1 - x0, z1 - z0), pitch = -Math.atan2(y1 - y0, L);
-  return { k: "rail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, Math.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "metal" };
+  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
+  return { k: "rail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "metal" };
 }
 
 const nr = (p: Piece): Piece => ({ ...p, k: "rail:new" }); // rails the client draws from the piece itself
@@ -104,7 +105,7 @@ function tower(): Piece[] {
   out.push(bx("tw:fill", -IN, floor0, -IN, -LN, floor0 + TWR.rise - 0.3, -LN, { col: true, surf: "concrete" }));
   // inner guard rails along each flight (bullets pass)
   for (const f of TWR_FLIGHTS) {
-    const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), L = run * TWR_STEPS;
+    const fx = dmath.sin(f.yaw), fz = dmath.cos(f.yaw), L = run * TWR_STEPS;
     // inner edge = the side toward the stairwell centre
     const ix = f.x + (Math.abs(fx) < 0.5 ? -Math.sign(f.x) * TWR.lane / 2 : 0), iz = f.z + (Math.abs(fz) < 0.5 ? -Math.sign(f.z) * TWR.lane / 2 : 0);
     out.push(railCol(ix, iz, f.y0, ix + fx * L, iz + fz * L, f.y0 + TWR.rise));
@@ -208,7 +209,7 @@ export const HGR_COVER: Array<[number, number, number, number, number, string, n
   [-11.6, 5.0, -10.5, 6.2, 1.5, "hg:crate", 3.0], [-10.5, 5.0, -9.4, 6.2, 1.0, "hg:crate", 3.0], [-9.4, 5.0, -8.3, 6.2, 0.5, "hg:crate", 3.0],
 ];
 /** barrel radius for the roof chord (W + 2·over) */
-export const HGR_R = ((HGR.W / 2 + HGR.over) ** 2 + HGR.AR ** 2) / (2 * HGR.AR);
+export const HGR_R = (dmath.pow(HGR.W / 2 + HGR.over, 2) + dmath.pow(HGR.AR, 2)) / (2 * HGR.AR);
 /** roof (outer) height at local z */
 export const hgrArch = (z: number) => HGR.HW + Math.sqrt(Math.max(0, HGR_R * HGR_R - z * z)) - (HGR_R - HGR.AR);
 export const SHED = { x0: -12.5, x1: -5.5, z0: HGR.W / 2, z1: HGR.W / 2 + 4.8, eave: 2.9, rise: 1.5, doorX: -7.2, winX: -10.4 };
@@ -249,8 +250,8 @@ function hangar(): Piece[] {
   const n = 14, R = HGR_R, zEdge = hw + HGR.over;
   for (let i = 0; i < n; i++) {
     const z0 = -zEdge + (2 * zEdge * i) / n, z1 = -zEdge + (2 * zEdge * (i + 1)) / n;
-    const y0 = hgrArch(z0), y1 = hgrArch(z1), zm = (z0 + z1) / 2, len = Math.hypot(z1 - z0, y1 - y0), pitch = Math.atan2(y0 - y1, z1 - z0);
-    const th = 0.25, nx = Math.sin(pitch), ny = Math.cos(pitch);
+    const y0 = hgrArch(z0), y1 = hgrArch(z1), zm = (z0 + z1) / 2, len = dmath.hypot(z1 - z0, y1 - y0), pitch = dmath.atan2(y0 - y1, z1 - z0);
+    const th = 0.25, nx = dmath.sin(pitch), ny = dmath.cos(pitch);
     void nx; void ny; void R;
     out.push({ k: "hg:roof", c: [0, (y0 + y1) / 2 - th / 2, zm], h: [hl + 0.5, th / 2, len / 2 + 0.03], pitch, surf: "metal", col: true });
   }
@@ -302,13 +303,13 @@ function hangar(): Piece[] {
   out.push(...wall("sh:wall", s.x1 - st / 2, s.z1, s.x1 - st / 2, s.z0, 0.2, s.eave - 0.2, st, [{ u: 2.4, w: 1.2, y0: 0.9, h: 1.0 }], { surf: "wood" }));
   out.push(...wall("sh:wall", s.x0 + st / 2, s.z0, s.x0 + st / 2, s.z1, 0.2, s.eave - 0.2, st, [], { surf: "wood" }));
   out.push(...panes("sh:pane", s.x0, s.z1 - st / 2, s.x1, s.z1 - st / 2, 0.2, [{ u: s.winX - s.x0, w: 1.2, y0: 0.9, h: 1.0 }]), ...panes("sh:pane", s.x1 - st / 2, s.z1, s.x1 - st / 2, s.z0, 0.2, [{ u: 2.4, w: 1.2, y0: 0.9, h: 1.0 }]));
-  const half = (s.x1 - s.x0) / 2, pitch = Math.atan2(s.rise, half + 0.4), slen = Math.hypot(half + 0.4, s.rise) + 0.1;
+  const half = (s.x1 - s.x0) / 2, pitch = dmath.atan2(s.rise, half + 0.4), slen = dmath.hypot(half + 0.4, s.rise) + 0.1;
   for (const sg of [-1, 1]) {
     const cx = (s.x0 + s.x1) / 2 + sg * (half + 0.4) / 2;
     out.push({ k: "sh:roof", c: [cx, s.eave + s.rise / 2 + 0.1, (s.z0 + s.z1) / 2 + 0.2], h: [(s.z1 - s.z0) / 2 + 0.45, 0.08, slen / 2], yaw: Math.PI / 2 * sg, pitch, surf: "metal", col: true });
   }
   // the shed's open door leaf (drawn hinged at doorX + 0.65, swung 2.0 rad outward) — its collider
-  { const hx0 = s.doorX + 0.65, hz0 = s.z1 - 0.12 + 0.15, a = 2.0, cx2 = hx0 - Math.cos(a) * 0.625, cz2 = hz0 + Math.sin(a) * 0.625;
+  { const hx0 = s.doorX + 0.65, hz0 = s.z1 - 0.12 + 0.15, a = 2.0, cx2 = hx0 - dmath.cos(a) * 0.625, cz2 = hz0 + dmath.sin(a) * 0.625;
     out.push({ k: "sh:leaf", c: [cx2, 0.2 + 1.13, cz2], h: [0.625, 1.125, 0.04], yaw: a, col: true, surf: "wood" }); }
   // fuel drum cluster at the front corner by the mural + inside the door
   out.push(bx("drums", 8.0, 0, hw + 0.4, 11.0, 1.0, hw + 1.6, { col: true, surf: "metal" }));
@@ -346,7 +347,7 @@ export interface CrashPart { k: string; c: V3; h: V3; yaw: number }
 export function crashParts(): CrashPart[] {
   const out: CrashPart[] = [];
   const grp = (gx: number, gz: number, gyaw: number, parts: Array<[string, number, number, number, number, number, number, number?]>) => {
-    const c = Math.cos(gyaw), s = Math.sin(gyaw);
+    const c = dmath.cos(gyaw), s = dmath.sin(gyaw);
     for (const [k, x, y, z, hx, hy, hz, yaw = 0] of parts) out.push({ k, c: [gx + x * c + z * s, y, gz - x * s + z * c], h: [hx, hy, hz], yaw: gyaw + yaw });
   };
   // front fuselage + cockpit (lying on its belly, sunk 0.2 m, torn open at its −x end)
@@ -383,7 +384,7 @@ const HOLLOW = new Set(["cr:fusF", "cr:fusR"]);
 export const CRASH_SHELL = { floor: 0.3, wall: 0.15, roof: 0.15 };
 /** a hollow section's collider shell in the crash frame (SCALED) */
 export function crashShell(q: CrashPart): Piece[] {
-  const K = CRASH_SCALE, [cx, cy, cz] = q.c.map((v) => v * K), [hx, hy, hz] = q.h.map((v) => v * K), c = Math.cos(q.yaw), s = Math.sin(q.yaw);
+  const K = CRASH_SCALE, [cx, cy, cz] = q.c.map((v) => v * K), [hx, hy, hz] = q.h.map((v) => v * K), c = dmath.cos(q.yaw), s = dmath.sin(q.yaw);
   const { floor: fl, wall: wt, roof: rt } = CRASH_SHELL, closed = q.k === "cr:fusF" ? 1 : -1;
   const P = (dx: number, dy: number, dz: number, ex: number, ey: number, ez: number, k = q.k): Piece => ({ k, c: [cx + dx * c + dz * s, cy + dy, cz - dx * s + dz * c], h: [ex, ey, ez], yaw: q.yaw, col: true, surf: "metal" });
   return [P(0, -hy + fl / 2, 0, hx, fl / 2, hz), P(0, hy - rt / 2, 0, hx, rt / 2, hz), P(0, 0, hz - wt / 2, hx, hy, wt / 2), P(0, 0, -hz + wt / 2, hx, hy, wt / 2),
@@ -606,12 +607,12 @@ export function floraKeep(x: number, z: number): boolean {
   if (x > 66 && x < 110 && z > -58 && z < -9) return true;                     // terminal + its forecourt
   if (x > RWY.len - 6 && x < RWY.len + 50 && z > -34 && z < 28) return true;   // crash (1.5×) + boulders
   if (x > -90 && x < -18 && Math.abs(z) < 17) return true;                     // firing range
-  if (Math.hypot(x - WINDSOCK[0], z - WINDSOCK[1]) < 5) return true;
-  if (Math.hypot(x - 262, z - 12) < 34 || Math.hypot(x - 250, z + 40) < 34) return true; // open meadow glades past the crash
-  const hf = HGR.frame, w = toWorld(STRIP, x, 0, z), dx = w[0] - hf.x, dz = w[2] - hf.z, c = Math.cos(hf.yaw), sn = Math.sin(hf.yaw);
+  if (dmath.hypot(x - WINDSOCK[0], z - WINDSOCK[1]) < 5) return true;
+  if (dmath.hypot(x - 262, z - 12) < 34 || dmath.hypot(x - 250, z + 40) < 34) return true; // open meadow glades past the crash
+  const hf = HGR.frame, w = toWorld(STRIP, x, 0, z), dx = w[0] - hf.x, dz = w[2] - hf.z, c = dmath.cos(hf.yaw), sn = dmath.sin(hf.yaw);
   const lx = dx * c - dz * sn, lz = dx * sn + dz * c;
   if (lx > -HGR.L / 2 - 6 && lx < TAXI.x1 + 4 && lz > -HGR.W / 2 - 6 && lz < SHED.z1 + 6) return true;
-  for (const [k, cx, cz] of COVER) if (Math.hypot(x - cx, z - cz) < (k === "container" || k === "bowser" ? 5 : 3.2)) return true;
+  for (const [k, cx, cz] of COVER) if (dmath.hypot(x - cx, z - cz) < (k === "container" || k === "bowser" ? 5 : 3.2)) return true;
   return false;
 }
 /** the airfield's jungle belt + right-hand grove: a jittered ~13 m lattice (8.5 m makes a closed canopy wall;
@@ -621,12 +622,12 @@ export const FLORA: Flora[] = (() => {
   const r = rng(4343), out: Flora[] = [], P = POIS_PAD;
   for (let gx = -95; gx <= 270; gx += 13) for (let gz = -170; gz <= 200; gz += 13) {
     const x = gx + (r() - 0.5) * 7, z = gz + (r() - 0.5) * 7, k = r(), s = 0.85 + r() * 0.35, yaw = r() * 6.283;
-    const w = sw(x, z), dp = Math.hypot(w[0] - P.x, w[2] - P.z);
+    const w = sw(x, z), dp = dmath.hypot(w[0] - P.x, w[2] - P.z);
     if (dp > P.pad + 6 || floraKeep(x, z)) continue;
     let kind: Flora[0] = k < 0.58 ? "palm" : k < 0.78 ? "palm-leaning" : "jungle-tree";
     // understorey between the trunks (soft, no colliders)
     const k2 = r(), a2 = r() * 6.283;
-    if (k2 < 0.45 && dp < P.pad - 4 && !floraKeep(x + Math.cos(a2) * 3, z + Math.sin(a2) * 3)) { const u = sw(x + Math.cos(a2) * 3, z + Math.sin(a2) * 3); out.push([k2 < 0.2 ? "bush" : k2 < 0.33 ? "banana-plant" : "fern", u[0], PAD.y, u[2], a2, 0.9 + k2]); }
+    if (k2 < 0.45 && dp < P.pad - 4 && !floraKeep(x + dmath.cos(a2) * 3, z + dmath.sin(a2) * 3)) { const u = sw(x + dmath.cos(a2) * 3, z + dmath.sin(a2) * 3); out.push([k2 < 0.2 ? "bush" : k2 < 0.33 ? "banana-plant" : "fern", u[0], PAD.y, u[2], a2, 0.9 + k2]); }
     // past the flat pad (≤ 6 m into the blend, terrain within ~0.5 m of the pad) only straight trunks: their colliders
     // stand on PAD.y and still wrap the drawn trunk at body height
     if (dp > P.pad - 4) { if (kind === "palm-leaning") kind = "palm"; else if (kind !== "palm" && kind !== "jungle-tree") continue; }
@@ -643,11 +644,11 @@ export const FLORA: Flora[] = (() => {
     ...([[-9, 17.5, 1.2], [40, 28, 1.1], [70, 31, 1.0], [26, -58, 1.05], [L + 28, -36, 1.0], [-24, 12, 1.0]] as Array<[number, number, number]>).map(([x, z, sc]) => ["palm-leaning", x, z, sc] as [Flora[0], number, number, number]),
   ];
   for (const [k0, x, z, sc] of hand) {
-    const w = sw(x, z), dp = Math.hypot(w[0] - P.x, w[2] - P.z), yaw = r2() * 6.283;
+    const w = sw(x, z), dp = dmath.hypot(w[0] - P.x, w[2] - P.z), yaw = r2() * 6.283;
     if (dp > P.pad + 6) continue;
-    if (COVER.some(([, cx, cz]) => Math.hypot(x - cx, z - cz) < 3.5)) continue;
+    if (COVER.some(([, cx, cz]) => dmath.hypot(x - cx, z - cz) < 3.5)) continue;
     const kind: Flora[0] = dp > P.pad - 4 ? "palm" : k0;
-    if (out.some((f) => Math.hypot(f[1] - w[0], f[3] - w[2]) < 3)) continue;
+    if (out.some((f) => dmath.hypot(f[1] - w[0], f[3] - w[2]) < 3)) continue;
     out.push([kind, settleFlora(kind, w[0], w[2]), PAD.y, w[2], yaw, sc]);
   }
   return out;

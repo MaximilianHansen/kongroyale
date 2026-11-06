@@ -15,6 +15,7 @@ import SLOPE from "./mango-slope.json";
 import type { InteriorRoom } from "./interior-kit";
 import TOWN_INT from "./town-interiors.json";
 import { settleLoot } from "./coast-kit";
+import * as dmath from "../sim/dmath";
 
 const P = poiById("stilt-town");
 export const CX = P.x, CZ = P.z;
@@ -31,7 +32,7 @@ type V2 = [number, number];
 const CAM: V2 = [396, -318], HD: V2 = [-0.88, -0.47];
 const RT: V2 = [-HD[1], HD[0]]; // screen right = (−dz, dx) for a camera looking along (dx, dz)
 export const W = (f: number, r: number): V2 => [CAM[0] + HD[0] * f + RT[0] * r, CAM[1] + HD[1] * f + RT[1] * r];
-const FACE = Math.atan2(-HD[0], -HD[1]); // yaw whose +z faces the camera
+const FACE = dmath.atan2(-HD[0], -HD[1]); // yaw whose +z faces the camera
 const VT = W(40, 0);
 // the camera 2.7 m above the water (level across at the decks, slightly down at the boats)
 export const VIEW = { pos: [CAM[0], 2.7, CAM[1]] as [number, number, number], target: [VT[0], 6.4, VT[1]] as [number, number, number], fov: 52 };
@@ -58,8 +59,8 @@ const ROOFS = ["#c3c8cc", "#b0b6ba", "#a0522d", "#3a6fa8", "#b8432f", "#aeb0aa",
 
 /** boundary point of an oriented rect (deck) along the ray from its centre toward (tx, tz) */
 function edgeToward(k: Deck, tx: number, tz: number): V2 {
-  const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = tx - k.x, dz = tz - k.z;
-  const lx = dx * c - dz * s, lz = dx * s + dz * c, L = Math.hypot(lx, lz) || 1;
+  const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = tx - k.x, dz = tz - k.z;
+  const lx = dx * c - dz * s, lz = dx * s + dz * c, L = dmath.hypot(lx, lz) || 1;
   const ux = lx / L, uz = lz / L, t = Math.min(Math.abs(ux) > 1e-6 ? (k.w / 2) / Math.abs(ux) : 1e9, Math.abs(uz) > 1e-6 ? (k.d / 2) / Math.abs(uz) : 1e9);
   const px = ux * t, pz = uz * t;
   return [k.x + px * c + pz * s, k.z - px * s + pz * c];
@@ -113,7 +114,7 @@ function genLayout(): StiltLayout {
     // (the EAVE side (back for a ridge along x, +x for a ridge along z) gets overhang + 1.4 m of deck: room for a
     //  timber stair up to the eave outside the overhang — every hut roof is a second fightable level, reached on foot)
     const ov = extra.overhang ?? 0.8, ext = ov + 1.45 - 1.3, alongX = (extra.roofAxis ?? (w >= d ? "x" : "z")) === "x";
-    const dw = w + 2.6 + (alongX ? 0 : ext), dd = d + porch + 0.8 + (alongX ? ext : 0), c = Math.cos(yaw), s = Math.sin(yaw), fz0 = porch / 2 - 0.9, fz = fz0 - (alongX ? ext / 2 : 0), fx = alongX ? 0 : ext / 2;
+    const dw = w + 2.6 + (alongX ? 0 : ext), dd = d + porch + 0.8 + (alongX ? ext : 0), c = dmath.cos(yaw), s = dmath.sin(yaw), fz0 = porch / 2 - 0.9, fz = fz0 - (alongX ? ext / 2 : 0), fx = alongX ? 0 : ext / 2;
     decks.push({ x: x + fx * c + fz * s, z: z - fx * s + fz * c, yaw, w: dw, d: dd, y: deckY, rail: [0, 1, 3] });
     hutDeck.set(b, decks[decks.length - 1]);
     extended.push({ dk: decks[decks.length - 1], plain: { x: x + fz0 * s, z: z + fz0 * c, w: w + 2.6, d: d + porch + 0.8 } });
@@ -177,13 +178,13 @@ function genLayout(): StiltLayout {
     const fixed = new Set<TownBuilding>([market, ...(lookout ? [lookout] : [])]);
     const bz0 = W(31.2, 2.4)[1];
     const spine: Array<[V2, V2]> = [[[224, bz0 - 1.5], [262, bz0 - 4.5]], [[262, bz0 - 4.5], [300, bz0 + 3.0]], [[300, bz0 + 3.0], W(46.5, 0)], [W(46.5, 0), W(32.7, 5.0)]];
-    const segD = (x: number, z: number, a: V2, b: V2) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return [Math.hypot(x - a[0] - t * dx, z - a[1] - t * dz), a[0] + t * dx, a[1] + t * dz] as const; };
+    const segD = (x: number, z: number, a: V2, b: V2) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return [dmath.hypot(x - a[0] - t * dx, z - a[1] - t * dz), a[0] + t * dx, a[1] + t * dz] as const; };
     const move = (h: TownBuilding, dx: number, dz: number) => {
       h.x += dx; h.z += dz;
       const dk = hutDeck.get(h); if (dk) { dk.x += dx; dk.z += dz; }
       const e = extended.find((q) => q.dk === dk); if (e) { e.plain.x += dx; e.plain.z += dz; }
     };
-    const rad = (h: TownBuilding) => Math.max(...footprint(h).map(([x, z]) => Math.hypot(x - CX, z - CZ)));
+    const rad = (h: TownBuilding) => Math.max(...footprint(h).map(([x, z]) => dmath.hypot(x - CX, z - CZ)));
     const sq = netSquare;
     // each hut its own elbow room (10.6–17 m): an even 10.6 m everywhere read as a honeycomb from the air
     const rr = mulberry(9033), room = huts.map(() => 10.6 + rr() * rr() * 8);
@@ -193,7 +194,7 @@ function genLayout(): StiltLayout {
         const A = huts[i], B = huts[j], g = polyGap(footprint(A), footprint(B)), need = Math.max(10.6, (room[i] + room[j]) / 2) - g;
         if (need <= 0) continue;
         worst = Math.max(worst, need);
-        let dx = B.x - A.x, dz = B.z - A.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        let dx = B.x - A.x, dz = B.z - A.z; const l = dmath.hypot(dx, dz) || 1; dx /= l; dz /= l;
         const fa = fixed.has(A), fb = fixed.has(B), k = Math.min(0.6, need) * 0.5;
         if (fa && fb) continue;
         if (fa) move(B, dx * k * 2, dz * k * 2); else if (fb) move(A, -dx * k * 2, -dz * k * 2); else { move(A, -dx * k, -dz * k); move(B, dx * k, dz * k); }
@@ -201,11 +202,11 @@ function genLayout(): StiltLayout {
       for (const h of huts) {
         if (fixed.has(h)) continue;
         // the radius cap: pull toward the POI centre
-        const r = rad(h); if (r > 66) { const dx = CX - h.x, dz = CZ - h.z, l = Math.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, r - 66), dz / l * Math.min(0.6, r - 66)); }
+        const r = rad(h); if (r > 66) { const dx = CX - h.x, dz = CZ - h.z, l = dmath.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, r - 66), dz / l * Math.min(0.6, r - 66)); }
         // the spine corridor: ≥ 7 m from the walkway's centreline
-        for (const [a, b] of spine) { const [d, px, pz] = segD(h.x, h.z, a, b), m = 7 + Math.max(h.w, h.d) / 2; if (d < m) { const dx = h.x - px, dz = h.z - pz, l = Math.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, m - d), dz / l * Math.min(0.6, m - d)); } }
+        for (const [a, b] of spine) { const [d, px, pz] = segD(h.x, h.z, a, b), m = 7 + Math.max(h.w, h.d) / 2; if (d < m) { const dx = h.x - px, dz = h.z - pz, l = dmath.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, m - d), dz / l * Math.min(0.6, m - d)); } }
         // Net Square
-        if (sq) { const dx = h.x - sq.x, dz = h.z - sq.z, l = Math.hypot(dx, dz) || 1, m = Math.hypot(sq.w, sq.d) / 2 + Math.max(h.w, h.d) / 2 + 2; if (l < m) move(h, dx / l * Math.min(0.6, m - l), dz / l * Math.min(0.6, m - l)); }
+        if (sq) { const dx = h.x - sq.x, dz = h.z - sq.z, l = dmath.hypot(dx, dz) || 1, m = dmath.hypot(sq.w, sq.d) / 2 + Math.max(h.w, h.d) / 2 + 2; if (l < m) move(h, dx / l * Math.min(0.6, m - l), dz / l * Math.min(0.6, m - l)); }
       }
       if (worst < 0.05) break;
     }
@@ -213,8 +214,8 @@ function genLayout(): StiltLayout {
   // an eave-side deck extension that would run into another hut or deck is taken back (it would make a pen)
   {
     const rectHit = (A: { x: number; z: number; w: number; d: number; yaw: number }, B: { x: number; z: number; w: number; d: number; yaw: number }, m: number) => {
-      const cs = (k: typeof A) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [k.x + a * k.w / 2 * Math.cos(k.yaw) + b * k.d / 2 * Math.sin(k.yaw), k.z - a * k.w / 2 * Math.sin(k.yaw) + b * k.d / 2 * Math.cos(k.yaw)]);
-      const inside = (k: typeof A, p: number[]) => { const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = p[0] - k.x, dz = p[1] - k.z; return Math.abs(dx * c - dz * s) < k.w / 2 + m && Math.abs(dx * s + dz * c) < k.d / 2 + m; };
+      const cs = (k: typeof A) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [k.x + a * k.w / 2 * dmath.cos(k.yaw) + b * k.d / 2 * dmath.sin(k.yaw), k.z - a * k.w / 2 * dmath.sin(k.yaw) + b * k.d / 2 * dmath.cos(k.yaw)]);
+      const inside = (k: typeof A, p: number[]) => { const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = p[0] - k.x, dz = p[1] - k.z; return Math.abs(dx * c - dz * s) < k.w / 2 + m && Math.abs(dx * s + dz * c) < k.d / 2 + m; };
       return cs(A).some((p) => inside(B, p)) || cs(B).some((p) => inside(A, p));
     };
     for (const e of extended) {
@@ -229,8 +230,8 @@ function genLayout(): StiltLayout {
   for (let pass = 0; pass < 3; pass++) for (let i = 0; i < decks.length; i++) for (let j = 0; j < decks.length; j++) {
     const lo = decks[i], hi = decks[j];
     if (i === j || hi.y - lo.y <= 0.5) continue;
-    const c = Math.cos(lo.yaw), s = Math.sin(lo.yaw);
-    const ch = Math.cos(hi.yaw), sh = Math.sin(hi.yaw);
+    const c = dmath.cos(lo.yaw), s = dmath.sin(lo.yaw);
+    const ch = dmath.cos(hi.yaw), sh = dmath.sin(hi.yaw);
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => { const wx = hi.x + a * hi.w / 2 * ch + b * hi.d / 2 * sh - lo.x, wz = hi.z - a * hi.w / 2 * sh + b * hi.d / 2 * ch - lo.z; return [wx * c - wz * s, wx * s + wz * c]; });
     const x0 = Math.min(...corners.map((q) => q[0])), x1 = Math.max(...corners.map((q) => q[0])), z0 = Math.min(...corners.map((q) => q[1])), z1 = Math.max(...corners.map((q) => q[1]));
     const ox = Math.min(x1, lo.w / 2) - Math.max(x0, -lo.w / 2), oz = Math.min(z1, lo.d / 2) - Math.max(z0, -lo.d / 2);
@@ -259,7 +260,7 @@ function genLayout(): StiltLayout {
   for (const [lx, lz] of [L1, L2, L3]) decks.push({ x: lx, z: lz, yaw: 0.1, w: 5.6, d: 5.6, y: DECK_Y - 0.02, rail: [0, 2] });
   // the spine's SHORE END — the walkway ends 1.7 m above the beach (x 224, sand ~0.5 m): a real timber stair down
   // onto the sand (steps = colliders)
-  { const w0 = walks[0], dx = -Math.sin(w0.yaw), dz = -Math.cos(w0.yaw), ex = w0.x + dx * (w0.d / 2 - 0.02), ez = w0.z + dz * (w0.d / 2 - 0.02);
+  { const w0 = walks[0], dx = -dmath.sin(w0.yaw), dz = -dmath.cos(w0.yaw), ex = w0.x + dx * (w0.d / 2 - 0.02), ez = w0.z + dz * (w0.d / 2 - 0.02);
     stairDown(ex, ez, dx, dz, DECK_Y - 0.02, 0.42, 2.4, 0.32); }
   const landings = [L1, L2, L3];
   // ---- TWO MORE WAYS IN. The 80 m west spine alone leaves every squad off the north or south beach a 40–50 m swim
@@ -270,10 +271,10 @@ function genLayout(): StiltLayout {
     const G: GroundGrid = (SLOPE as unknown as { grids: Record<string, GroundGrid> }).grids["stilt-town"];
     for (const [tx, tz] of [[293, -273], [298, -436]] as V2[]) {
       let dk: Deck | null = null, bd = Infinity;
-      for (const k of decks) { if (k.y < 1.5) continue; const d = Math.hypot(k.x - tx, k.z - tz); if (d < bd) { bd = d; dk = k; } }
+      for (const k of decks) { if (k.y < 1.5) continue; const d = dmath.hypot(k.x - tx, k.z - tz); if (d < bd) { bd = d; dk = k; } }
       if (!dk) continue;
       const A = deckAttach(dk, tx, tz, 1.6);
-      let dx = tx - A.x, dz = tz - A.z; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+      let dx = tx - A.x, dz = tz - A.z; const L = dmath.hypot(dx, dz) || 1; dx /= L; dz /= L;
       // march to the first sand ≥ 0.4 m; the walk stops 0.8 m short of it and a stair carries on down
       let t = 2; while (t < L + 20 && gridH(G, A.x + dx * t, A.z + dz * t) < 0.4) t += 0.5;
       const e = Math.max(4, t - 0.8), ex = A.x + dx * e, ez = A.z + dz * e, wy = DECK_Y - 0.02;
@@ -287,9 +288,9 @@ function genLayout(): StiltLayout {
   // decks that overlap within 0.5 m of height are ONE platform (a step between them) — no rail across it
   for (const A of [...decks, ...walks]) for (const B of [...decks, ...walks]) {
     if (A === B || Math.abs(A.y - B.y) > 0.5) continue;
-    const cB = Math.cos(B.yaw), sB = Math.sin(B.yaw);
+    const cB = dmath.cos(B.yaw), sB = dmath.sin(B.yaw);
     const inB = (x: number, z: number, m: number) => { const dx = x - B.x, dz = z - B.z; return Math.abs(dx * cB - dz * sB) < B.w / 2 + m && Math.abs(dx * sB + dz * cB) < B.d / 2 + m; };
-    const cA = Math.cos(A.yaw), sA = Math.sin(A.yaw);
+    const cA = dmath.cos(A.yaw), sA = dmath.sin(A.yaw);
     const rails: Array<0 | 1 | 2 | 3> = A.rail === true ? [0, 1, 2, 3] : (A.rail || []);
     for (const side of rails) {
       const len = side % 2 === 0 ? A.w : A.d;
@@ -322,7 +323,7 @@ function genLayout(): StiltLayout {
     if (hi - lo > 0.35) {
       // tall-stilt hut: the plank link runs at the LOWER deck's level; a timber STAIR (not a ladder: the sim has no
       // ladder climbing) rises over its last metres to the tall deck's edge, steps = colliders
-      const top = k.y > best.y ? a : b, other = k.y > best.y ? b : a, L = Math.hypot(top[0] - other[0], top[1] - other[1]) || 1;
+      const top = k.y > best.y ? a : b, other = k.y > best.y ? b : a, L = dmath.hypot(top[0] - other[0], top[1] - other[1]) || 1;
       const dx = (other[0] - top[0]) / L, dz = (other[1] - top[1]) / L, n = Math.ceil((hi - lo) / 0.19), tread = 0.3;
       // (always ≥ 0.28 m treads — steeper flights stop the capsule (it overlaps ~3 treads); a flight longer than
       //  the link simply runs on down onto the lower deck)
@@ -330,7 +331,7 @@ function genLayout(): StiltLayout {
       stairs.push({ x: top[0] - dx * 0.02, z: top[1] - dz * 0.02, dirX: dx, dirZ: dz, width: 1.3, yTop: hi, yBottom: lo, steps: n, rise: (hi - lo) / n, tread: tr });
     }
   };
-  const gapOf = (k: Deck, o: Deck) => { const a = edgeToward(k, o.x, o.z), b = edgeToward(o, k.x, k.z); return Math.hypot(b[0] - a[0], b[1] - a[1]); };
+  const gapOf = (k: Deck, o: Deck) => { const a = edgeToward(k, o.x, o.z), b = edgeToward(o, k.x, k.z); return dmath.hypot(b[0] - a[0], b[1] - a[1]); };
   for (let i = 0; i < decks.length; i++) {
     const k = decks[i];
     if (k === marketDeck) continue;
@@ -370,7 +371,7 @@ function genLayout(): StiltLayout {
     if (b.roof === "flat") continue; // (flat roofs are reached by the stair hall inside)
     const pr = resolveBuilding(b).roof, alongX = pr.axis === "x", N = Math.max(4, Math.ceil(pr.rise / 0.45));
     const yTop = pr.y + pr.rise * (1 - (N - 0.5) / N) + 0.07, dk = hutDeck.get(b)!;
-    const c = Math.cos(b.yaw), s = Math.sin(b.yaw), L = (lx: number, lz: number): V2 => [b.x + lx * c + lz * s, b.z - lx * s + lz * c];
+    const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw), L = (lx: number, lz: number): V2 => [b.x + lx * c + lz * s, b.z - lx * s + lz * c];
     const half = alongX ? b.d / 2 : b.w / 2, len = alongX ? b.w : b.d, off = half + pr.overhang + 0.15 + 0.55;
     const n = Math.ceil((yTop - dk.y) / 0.19), tread = 0.28, run = n * tread;
     const tries: Array<[number, number]> = [[-1, 1], [-1, -1]];
@@ -388,7 +389,7 @@ function genLayout(): StiltLayout {
       const blocked = ropeWalks.some((r) => [r.a, r.b].some((q) => near(q[0], q[1], 1.6, 1.6)))
         || stairs.some((f) => near(f.x, f.z, 1.6, 1.6) || near(f.x + f.dirX * f.steps * f.tread, f.z + f.dirZ * f.steps * f.tread, 1.6, 1.6));
       // (the whole footprint on the hut's own deck)
-      const onDeck = (q: V2) => { const cd = Math.cos(dk.yaw), sd = Math.sin(dk.yaw), ddx = q[0] - dk.x, ddz = q[1] - dk.z; return Math.abs(ddx * cd - ddz * sd) < dk.w / 2 - 0.05 && Math.abs(ddx * sd + ddz * cd) < dk.d / 2 - 0.05; };
+      const onDeck = (q: V2) => { const cd = dmath.cos(dk.yaw), sd = dmath.sin(dk.yaw), ddx = q[0] - dk.x, ddz = q[1] - dk.z; return Math.abs(ddx * cd - ddz * sd) < dk.w / 2 - 0.05 && Math.abs(ddx * sd + ddz * cd) < dk.d / 2 - 0.05; };
       const Qo = (t: number, o: number): V2 => (alongX ? L(t, so * o) : L(o, -t));
       if (blocked || ![tTop, tBot].every((t) => onDeck(Qo(t, off + 0.5)) && onDeck(Qo(t, off - 0.5)))) continue;
       const st: StiltStair = { x: P0[0], z: P0[1], dirX: dx, dirZ: dz, width: 1.0, yTop, yBottom: dk.y, steps: n, rise: (yTop - dk.y) / n, tread, closed: true, paint: b.wall };
@@ -397,7 +398,7 @@ function genLayout(): StiltLayout {
     }
   }
   // ---- dressing on the market deck (front porch faces the camera): local frame of the market
-  const mc = Math.cos(market.yaw), ms = Math.sin(market.yaw);
+  const mc = dmath.cos(market.yaw), ms = dmath.sin(market.yaw);
   const ML = (lx: number, lz: number): V2 => [market.x + lx * mc + lz * ms, market.z - lx * ms + lz * mc];
   const front = market.d / 2 + 0.25;
   const at = (kind: StiltProp["kind"], lx: number, lz: number, extra: Partial<StiltProp> = {}) => { const [x, z] = ML(lx, lz); props.push({ kind, x, z, yaw: market.yaw, ...extra }); };
@@ -446,13 +447,13 @@ function genLayout(): StiltLayout {
   // the tower and both plank links. Five crate / drum stacks 6–9 m apart (crouch cover ~1 m, a waist-high drum pair) and
   // the hot drop's payoff loot between them (LOOT_SPOTS: SQUARE_LOOT)
   if (netSquare) {
-    const k = netSquare, c = Math.cos(k.yaw), s = Math.sin(k.yaw), Q = (lx: number, lz: number): V2 => [k.x + lx * c + lz * s, k.z - lx * s + lz * c];
+    const k = netSquare, c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), Q = (lx: number, lz: number): V2 => [k.x + lx * c + lz * s, k.z - lx * s + lz * c];
     const stack = (lx: number, lz: number, turn: number) => {
       const [x, z] = Q(lx, lz), y0 = k.y, yw = k.yaw + turn;
       for (let i = 0; i < 3; i++) props.push({ kind: "crate", x, z, yaw: yw + (rng() - 0.5) * 0.12, y: y0 + i * 0.34, v: Math.floor(rng() * 4) });
-      const [x2, z2] = Q(lx + 0.75 * Math.cos(turn), lz - 0.75 * Math.sin(turn));
+      const [x2, z2] = Q(lx + 0.75 * dmath.cos(turn), lz - 0.75 * dmath.sin(turn));
       props.push({ kind: "crate", x: x2, z: z2, yaw: yw + 0.3, y: y0, v: Math.floor(rng() * 4) }); props.push({ kind: "crate", x: x2, z: z2, yaw: yw + 0.2, y: y0 + 0.34, v: Math.floor(rng() * 4) });
-      const [x3, z3] = Q(lx - 0.4 * Math.sin(turn) - 0.6 * Math.cos(turn), lz - 0.4 * Math.cos(turn) + 0.6 * Math.sin(turn) + 0.75);
+      const [x3, z3] = Q(lx - 0.4 * dmath.sin(turn) - 0.6 * dmath.cos(turn), lz - 0.4 * dmath.cos(turn) + 0.6 * dmath.sin(turn) + 0.75);
       props.push({ kind: "drum", x: x3, z: z3, yaw: 0, y: y0, v: Math.floor(rng() * 3) });
     };
     for (const [lx, lz, t] of [[-5.5, -3.2, 0.2], [3.8, -4.6, -0.4], [-0.6, 2.9, 1.3], [6.4, 2.6, 0.7], [-7.4, 4.4, -0.9]] as Array<[number, number, number]>) stack(lx, lz, t);
@@ -464,7 +465,7 @@ function genLayout(): StiltLayout {
   // ---- porch dressing on every hut: planter, lantern, a barrel or crate, a hanging net on some
   for (const h of huts) {
     if (h === market) continue;
-    const c = Math.cos(h.yaw), s = Math.sin(h.yaw), y = h.y;
+    const c = dmath.cos(h.yaw), s = dmath.sin(h.yaw), y = h.y;
     const fx = h.x + (h.d / 2 + 1.0) * s, fz = h.z + (h.d / 2 + 1.0) * c;
     const r = rng();
     if (r < 0.4) props.push({ kind: "barrel", x: fx + (h.w / 2 - 0.6) * c, z: fz - (h.w / 2 - 0.6) * s, yaw: 0, y, v: Math.floor(rng() * 4) });
@@ -482,7 +483,7 @@ function genLayout(): StiltLayout {
   // ---- spine dressing: barrels, crates, pots every ~6 m along each leg; the landings get lamp posts, a crate stack,
   // drums, a net on a rack, a stair down + a moored boat
   for (const w of walks) {
-    const c = Math.cos(w.yaw), s2 = Math.sin(w.yaw), n = Math.floor(w.d / 6.2);
+    const c = dmath.cos(w.yaw), s2 = dmath.sin(w.yaw), n = Math.floor(w.d / 6.2);
     for (let i = 0; i < n; i++) {
       const t = -w.d / 2 + 3 + i * 6.2, side = i % 2 ? 1 : -1, off = side * 0.9;
       const x = w.x + t * s2 + off * c, z = w.z + t * c - off * s2, k = rng();
@@ -497,8 +498,8 @@ function genLayout(): StiltLayout {
     props.push({ kind: "drum", x: lx + 1.9, z: lz - 1.8, yaw: 0, v: 0 }); props.push({ kind: "drum", x: lx + 1.3, z: lz - 2.0, yaw: 0, v: 1 });
     props.push({ kind: "net", x: lx + 0.6, z: lz + 2.55, yaw: 0.1, y: DECK_Y + 2.7, w: 2.0, h: 0.75 });
     // stair down to the water off the landing's back edge
-    { const dk = decks.find((q) => q.x === lx && q.z === lz)!, yw = dk.yaw, bx0 = lx - Math.sin(yw) * (dk.d / 2 - 0.02), bz0 = lz - Math.cos(yw) * (dk.d / 2 - 0.02);
-      waterStair(dk, bx0, bz0, -Math.sin(yw), -Math.cos(yw), DECK_Y - 0.02, 1.2, 1.5); }
+    { const dk = decks.find((q) => q.x === lx && q.z === lz)!, yw = dk.yaw, bx0 = lx - dmath.sin(yw) * (dk.d / 2 - 0.02), bz0 = lz - dmath.cos(yw) * (dk.d / 2 - 0.02);
+      waterStair(dk, bx0, bz0, -dmath.sin(yw), -dmath.cos(yw), DECK_Y - 0.02, 1.2, 1.5); }
     const [dx, dz] = [lx + 1.2, lz - 5.4];
     props.push({ kind: "dinghy", x: dx, z: dz, yaw: 0.1, moor: [lx, DECK_Y - 0.3, lz - 2.8] });
   }
@@ -508,7 +509,7 @@ function genLayout(): StiltLayout {
   const [rbx, rbz] = W(9.5, 3.2), [mpx, mpz] = W(12.5, 9);
   props.push({ kind: "mooring", x: mpx, z: mpz, yaw: 0, h: 2.6 });
   // boat yaw: local +x = bow → world (cos yaw, −sin yaw). Red: bow toward the huts + a little toward the camera
-  const yawOf = (dx: number, dz: number) => Math.atan2(-dz, dx);
+  const yawOf = (dx: number, dz: number) => dmath.atan2(-dz, dx);
   props.push({ kind: "boat", x: rbx, z: rbz, yaw: yawOf(-RT[0] * 0.8 - HD[0] * 0.3, -RT[1] * 0.8 - HD[1] * 0.3), v: 0, moor: [mpx, 1.6, mpz] });
   const [ybx, ybz] = W(14.5, -8.6);
   props.push({ kind: "boat", x: ybx, z: ybz, yaw: yawOf(-RT[0], -RT[1]) + 0.12, v: 1, moor: [tealFront[0], DECK_Y - 0.4, tealFront[1]] });
@@ -528,20 +529,20 @@ function genLayout(): StiltLayout {
   const isletR: Array<[number, number, number]> = props.filter((p) => p.kind === "islet").map((p) => [p.x, p.z, (p.s ?? 3) * 1.1]);
   // rocks among the piles + in the foreground water (never under a boat)
   const boats = props.filter((p) => p.kind === "boat");
-  const clearOfBoats = (x: number, z: number, r: number) => boats.every((b) => Math.hypot(b.x - x, b.z - z) > 3.4 * (b.s ?? 1) + r);
+  const clearOfBoats = (x: number, z: number, r: number) => boats.every((b) => dmath.hypot(b.x - x, b.z - z) > 3.4 * (b.s ?? 1) + r);
   // MOSSY BOULDERS 1–2 m among the piles under the left cluster and the
   // market, a couple in the open water
   for (const [f, r, s] of [[20.5, -11.5, 1.7], [23.5, -4.2, 1.2], [19.5, -16.5, 1.3], [26, 6.8, 1.5], [17.5, 10.5, 1.1], [30.5, -13.0, 1.4], [34, 12.5, 1.2], [15.5, -2.5, 0.9]] as Array<[number, number, number]>) {
     const [x, z] = W(f, r);
     if (!clearOfBoats(x, z, s)) continue;
     // (never under a deck / walkway — a boulder top 1.4 m under the planks is a crouch-only pocket)
-    const under = [...decks, ...walks].some((k) => { const c = Math.cos(k.yaw), sn = Math.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * sn) < k.w / 2 + s + 0.3 && Math.abs(dx * sn + dz * c) < k.d / 2 + s + 0.3; });
+    const under = [...decks, ...walks].some((k) => { const c = dmath.cos(k.yaw), sn = dmath.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * sn) < k.w / 2 + s + 0.3 && Math.abs(dx * sn + dz * c) < k.d / 2 + s + 0.3; });
     if (under) { rng(); continue; }
     props.push({ kind: "rock", x, z, yaw: rng() * 6.28, v: s });
   }
   // mangroves: dense on the right-edge islet, sparse on the others
   const MI = props.find((p) => p.kind === "islet")!;
-  for (let i = 0; i < 9; i++) { const a = rng() * 6.28, r = rng() * (MI.s ?? 4) * 1.1; props.push({ kind: "mangrove", x: MI.x + Math.cos(a) * r, z: MI.z + Math.sin(a) * r, yaw: rng() * 6.28, s: 0.9 + rng() * 0.35 }); }
+  for (let i = 0; i < 9; i++) { const a = rng() * 6.28, r = rng() * (MI.s ?? 4) * 1.1; props.push({ kind: "mangrove", x: MI.x + dmath.cos(a) * r, z: MI.z + dmath.sin(a) * r, yaw: rng() * 6.28, s: 0.9 + rng() * 0.35 }); }
   for (const [x, z, s] of [[376, -392, 1.0], [366, -398, 1.1], [344, -396, 0.9], [318, -376, 1.0], [312, -366, 0.9], [410, -300, 1.0], [416, -290, 1.1], [300, -290, 1.0], [296, -300, 0.9]] as Array<[number, number, number]>) props.push({ kind: "mangrove", x, z, yaw: rng() * 6.28, s });
   // palms + banana plants on the islets and the shore behind
   { const [a, b] = W(18.3, -19.2), [c, d] = W(19.5, -17.6); props.push({ kind: "palm-leaning", x: a, z: b, yaw: 2.3, s: 1.1 }); props.push({ kind: "banana-plant", x: c, z: d, yaw: 0.6, s: 1.0 }); }
@@ -557,22 +558,22 @@ function genLayout(): StiltLayout {
   // islet / rock
   {
     type P2 = Array<[number, number]>;
-    const rect = (cx: number, cz: number, yaw: number, w: number, d: number): P2 => { const c = Math.cos(yaw), s = Math.sin(yaw); return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [cx + a * w / 2 * c + b * d / 2 * s, cz - a * w / 2 * s + b * d / 2 * c] as [number, number]); };
-    const circ = (cx: number, cz: number, r: number): P2 => Array.from({ length: 8 }, (_, i) => [cx + Math.cos(i * Math.PI / 4) * r, cz + Math.sin(i * Math.PI / 4) * r] as [number, number]);
+    const rect = (cx: number, cz: number, yaw: number, w: number, d: number): P2 => { const c = dmath.cos(yaw), s = dmath.sin(yaw); return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [cx + a * w / 2 * c + b * d / 2 * s, cz - a * w / 2 * s + b * d / 2 * c] as [number, number]); };
+    const circ = (cx: number, cz: number, r: number): P2 => Array.from({ length: 8 }, (_, i) => [cx + dmath.cos(i * Math.PI / 4) * r, cz + dmath.sin(i * Math.PI / 4) * r] as [number, number]);
     const overlap = (A: P2, B: P2) => { for (const Q of [A, B]) for (let i = 0; i < Q.length; i++) { const a = Q[i], b = Q[(i + 1) % Q.length], nx = -(b[1] - a[1]), nz = b[0] - a[0]; let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity; for (const p of A) { const d = p[0] * nx + p[1] * nz; a0 = Math.min(a0, d); a1 = Math.max(a1, d); } for (const p of B) { const d = p[0] * nx + p[1] * nz; b0 = Math.min(b0, d); b1 = Math.max(b1, d); } if (a1 <= b0 || b1 <= a0) return false; } return true; };
     const obst: Array<{ p: P2; o: unknown }> = [
       ...[...decks, ...walks].map((d) => ({ p: rect(d.x, d.z, d.yaw, d.w, d.d), o: d as unknown })),
       ...huts.map((h) => ({ p: rect(h.x, h.z, h.yaw, h.w + 0.4, h.d + 0.4), o: h as unknown })),
-      ...ropeWalks.map((r) => ({ p: rect((r.a[0] + r.b[0]) / 2, (r.a[1] + r.b[1]) / 2, Math.atan2(r.b[0] - r.a[0], r.b[1] - r.a[1]), r.w + 0.2, Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]) + 0.4), o: r as unknown })),
+      ...ropeWalks.map((r) => ({ p: rect((r.a[0] + r.b[0]) / 2, (r.a[1] + r.b[1]) / 2, dmath.atan2(r.b[0] - r.a[0], r.b[1] - r.a[1]), r.w + 0.2, dmath.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]) + 0.4), o: r as unknown })),
       ...props.filter((q) => q.kind === "boat" || q.kind === "dinghy" || q.kind === "islet" || q.kind === "rock" || q.kind === "mooring").map((q) => ({ p: circ(q.x, q.z, q.kind === "boat" ? 3.2 * (q.s ?? 1) : q.kind === "dinghy" ? 2.3 : q.kind === "islet" ? (q.s ?? 3) * 1.1 : q.kind === "rock" ? (q.v ?? 1) : 0.4), o: q as unknown })),
-      ...stairs.filter((f) => !waterStairs.some((w) => w.st === f)).map((f) => ({ p: rect(f.x + f.dirX * f.steps * f.tread / 2, f.z + f.dirZ * f.steps * f.tread / 2, Math.atan2(f.dirX, f.dirZ), f.width, f.steps * f.tread), o: f as unknown })),
+      ...stairs.filter((f) => !waterStairs.some((w) => w.st === f)).map((f) => ({ p: rect(f.x + f.dirX * f.steps * f.tread / 2, f.z + f.dirZ * f.steps * f.tread / 2, dmath.atan2(f.dirX, f.dirZ), f.width, f.steps * f.tread), o: f as unknown })),
     ];
     const keep: typeof waterStairs = [];
     for (const w of waterStairs) {
       const f = w.st, run = f.steps * f.tread;
       // the stair footprint starts 0.1 m past its own deck's edge
-      const P = rect(f.x + f.dirX * (run / 2 + 0.1), f.z + f.dirZ * (run / 2 + 0.1), Math.atan2(f.dirX, f.dirZ), f.width + 0.3, run);
-      const hit = obst.some((ob) => ob.o !== w.dk && overlap(P, ob.p)) || keep.some((k) => overlap(P, rect(k.st.x + k.st.dirX * k.st.steps * k.st.tread / 2, k.st.z + k.st.dirZ * k.st.steps * k.st.tread / 2, Math.atan2(k.st.dirX, k.st.dirZ), k.st.width + 0.3, k.st.steps * k.st.tread)));
+      const P = rect(f.x + f.dirX * (run / 2 + 0.1), f.z + f.dirZ * (run / 2 + 0.1), dmath.atan2(f.dirX, f.dirZ), f.width + 0.3, run);
+      const hit = obst.some((ob) => ob.o !== w.dk && overlap(P, ob.p)) || keep.some((k) => overlap(P, rect(k.st.x + k.st.dirX * k.st.steps * k.st.tread / 2, k.st.z + k.st.dirZ * k.st.steps * k.st.tread / 2, dmath.atan2(k.st.dirX, k.st.dirZ), k.st.width + 0.3, k.st.steps * k.st.tread)));
       if (!hit) { keep.push(w); continue; }
       stairs.splice(stairs.indexOf(f), 1);
       w.dk.gaps!.pop();   // (its gap was the deck's latest)
@@ -584,9 +585,9 @@ function genLayout(): StiltLayout {
     {
       const G: GroundGrid = (SLOPE as unknown as { grids: Record<string, GroundGrid> }).grids["stilt-town"];
       const allD = [...decks, ...walks];
-      const inD = (x: number, z: number, m: number) => allD.some((k) => { const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * s) < k.w / 2 + m && Math.abs(dx * s + dz * c) < k.d / 2 + m; });
+      const inD = (x: number, z: number, m: number) => allD.some((k) => { const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * s) < k.w / 2 + m && Math.abs(dx * s + dz * c) < k.d / 2 + m; });
       let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-      for (const k of allD) { const r = Math.hypot(k.w, k.d) / 2 + 5; x0 = Math.min(x0, k.x - r); x1 = Math.max(x1, k.x + r); z0 = Math.min(z0, k.z - r); z1 = Math.max(z1, k.z + r); }
+      for (const k of allD) { const r = dmath.hypot(k.w, k.d) / 2 + 5; x0 = Math.min(x0, k.x - r); x1 = Math.max(x1, k.x + r); z0 = Math.min(z0, k.z - r); z1 = Math.max(z1, k.z + r); }
       const water: V2[] = [], ways: V2[] = [];
       for (let x = x0; x <= x1; x += 2) for (let z = z0; z <= z1; z += 2) {
         const h = gridH(G, x, z);
@@ -595,13 +596,13 @@ function genLayout(): StiltLayout {
       }
       const foot = (f: StiltStair): V2 => [f.x + f.dirX * f.steps * f.tread, f.z + f.dirZ * f.steps * f.tread];
       for (const f of stairs) if (f.yBottom < 0.5) ways.push(foot(f));
-      const dist = water.map(([x, z]) => { let d = Infinity; for (const [a, b] of ways) d = Math.min(d, Math.hypot(a - x, b - z)); return d; });
-      const stairRect = (f: StiltStair) => rect(f.x + f.dirX * (f.steps * f.tread / 2 + 0.1), f.z + f.dirZ * (f.steps * f.tread / 2 + 0.1), Math.atan2(f.dirX, f.dirZ), f.width + 0.3, f.steps * f.tread);
+      const dist = water.map(([x, z]) => { let d = Infinity; for (const [a, b] of ways) d = Math.min(d, dmath.hypot(a - x, b - z)); return d; });
+      const stairRect = (f: StiltStair) => rect(f.x + f.dirX * (f.steps * f.tread / 2 + 0.1), f.z + f.dirZ * (f.steps * f.tread / 2 + 0.1), dmath.atan2(f.dirX, f.dirZ), f.width + 0.3, f.steps * f.tread);
       type Cand = { dk: Deck; x: number; z: number; dx: number; dz: number };
       const cands: Cand[] = [];
       for (const dk of allD) {
         if (dk.y < 1) continue;
-        const c = Math.cos(dk.yaw), s = Math.sin(dk.yaw);
+        const c = dmath.cos(dk.yaw), s = dmath.sin(dk.yaw);
         for (let side = 0; side < 4; side++) {
           const len = side % 2 === 0 ? dk.w : dk.d;
           for (let u = 1.3; u <= len - 1.3; u += 2.5) {
@@ -629,20 +630,20 @@ function genLayout(): StiltLayout {
           for (const i of far) {
             const dx = wx[i] - fx, dz = wz[i] - fz, D = dist[i];
             if (dx * dx + dz * dz >= D * D * 1.000001) continue;   // (surely no nearer: skip the exact hypot)
-            const d = Math.hypot(dx, dz); if (d < D) gain += Math.min(D, 30) - d;
+            const d = dmath.hypot(dx, dz); if (d < D) gain += Math.min(D, 30) - d;
           }
           if (gain <= (best?.gain ?? 20)) continue;
           const P = stairRect(st);
           if (obst.some((ob) => ob.o !== cd.dk && overlap(P, ob.p)) || [...keep.map((k) => k.st), ...placed].some((k) => overlap(P, stairRect(k)))) continue;
           // (and clear of every rail-less stair / link landing on the same deck edge)
-          if (stairs.some((f) => Math.hypot(f.x - st.x, f.z - st.z) < 2.2) || ropeWalks.some((r) => Math.hypot(r.a[0] - st.x, r.a[1] - st.z) < 2.4 || Math.hypot(r.b[0] - st.x, r.b[1] - st.z) < 2.4)) continue;
+          if (stairs.some((f) => dmath.hypot(f.x - st.x, f.z - st.z) < 2.2) || ropeWalks.some((r) => dmath.hypot(r.a[0] - st.x, r.a[1] - st.z) < 2.4 || dmath.hypot(r.b[0] - st.x, r.b[1] - st.z) < 2.4)) continue;
           best = { c: cd, st, gain };
         }
         if (!best) break;
         stairs.push(best.st); placed.push(best.st);
         deckGap(best.c.dk, best.st.x + best.st.dirX * 0.03, best.st.z + best.st.dirZ * 0.03, 1.4);
         const [fx, fz] = foot(best.st);
-        for (let i = 0; i < water.length; i++) dist[i] = Math.min(dist[i], Math.hypot(water[i][0] - fx, water[i][1] - fz));
+        for (let i = 0; i < water.length; i++) dist[i] = Math.min(dist[i], dmath.hypot(water[i][0] - fx, water[i][1] - fz));
       }
     }
   }
@@ -650,8 +651,8 @@ function genLayout(): StiltLayout {
   // boulder outcrops on a jittered 12 m grid, on dry ground clear of the village
   {
     const G: GroundGrid = (SLOPE as unknown as { grids: Record<string, GroundGrid> }).grids["stilt-town"];
-    const near = (x: number, z: number, m: number) => [...decks, ...walks].some((k) => { const c = Math.cos(k.yaw), sn = Math.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * sn) < k.w / 2 + m && Math.abs(dx * sn + dz * c) < k.d / 2 + m; })
-      || props.some((q) => (q.kind === "palm" || q.kind === "palm-leaning" || q.kind === "rock" || q.kind === "islet") && Math.hypot(q.x - x, q.z - z) < m + 1);
+    const near = (x: number, z: number, m: number) => [...decks, ...walks].some((k) => { const c = dmath.cos(k.yaw), sn = dmath.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * sn) < k.w / 2 + m && Math.abs(dx * sn + dz * c) < k.d / 2 + m; })
+      || props.some((q) => (q.kind === "palm" || q.kind === "palm-leaning" || q.kind === "rock" || q.kind === "islet") && dmath.hypot(q.x - x, q.z - z) < m + 1);
     // (a 10 m grid of palm groups makes a palm wall along both shores — the village cannot be read from the
     //  beach. 15 m grid, 'palms' cells become boulder outcrops (hard cover) with at most one palm, groves 1–2 palms)
     for (const c0 of coverScatter(G, { cx: CX, cz: CZ, r: P.r, step: 15, seed: 9131, minY: 0.9, free: (x, z) => !near(x, z, 5) })) {
@@ -660,18 +661,18 @@ function genLayout(): StiltLayout {
       if (c0.kind === "palms" && rng() < 0.35) props.push({ kind: "palm", x: c.x + 3.6, z: c.z - 1.0, y: g(3.6, -1.0), yaw: rng() * 6.28, s: 0.95 + rng() * 0.25 });
       if (c.kind === "rocks") {
         const n = 1 + Math.floor(rng() * 2.4);
-        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() : 0, v = (i ? 0.75 + rng() * 0.4 : 1.45 + rng() * 0.4) * c.s; props.push({ kind: "rock", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, v, land: true }); }
-        for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 2 + rng() * 1.5; props.push({ kind: rng() < 0.5 ? "fern" : "bush", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
+        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() : 0, v = (i ? 0.75 + rng() * 0.4 : 1.45 + rng() * 0.4) * c.s; props.push({ kind: "rock", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, v, land: true }); }
+        for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 2 + rng() * 1.5; props.push({ kind: rng() < 0.5 ? "fern" : "bush", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
       } else {
         const n = 1 + (rng() < 0.45 ? 1 : 0);
-        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.8 + rng() * 1.6 : 0; props.push({ kind: rng() < 0.4 ? "palm-leaning" : "palm", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.9 + rng() * 0.3 }); }
-        for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 1 + rng() * 2.8, k = rng(); props.push({ kind: k < 0.35 ? "banana-plant" : k < 0.7 ? "bush" : "fern", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.5 }); }
+        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.8 + rng() * 1.6 : 0; props.push({ kind: rng() < 0.4 ? "palm-leaning" : "palm", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.9 + rng() * 0.3 }); }
+        for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 1 + rng() * 2.8, k = rng(); props.push({ kind: k < 0.35 ? "banana-plant" : k < 0.7 ? "bush" : "fern", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.5 }); }
       }
     }
   }
   // (the shore palms seated on the ground grid — otherwise their foot colliders stand at sea level)
   { const G: GroundGrid = (SLOPE as unknown as { grids: Record<string, GroundGrid> }).grids["stilt-town"];
-    for (const q of props) if ((q.kind === "palm" || q.kind === "palm-leaning") && q.y === undefined && !props.some((i) => i.kind === "islet" && Math.hypot(i.x - q.x, i.z - q.z) < (i.s ?? 3) * 1.2)) { const g = gridH(G, q.x, q.z); if (g > 0.3) q.y = g; } }
+    for (const q of props) if ((q.kind === "palm" || q.kind === "palm-leaning") && q.y === undefined && !props.some((i) => i.kind === "islet" && dmath.hypot(i.x - q.x, i.z - q.z) < (i.s ?? 3) * 1.2)) { const g = gridH(G, q.x, q.z); if (g > 0.3) q.y = g; } }
   // (nothing stands on a roof stair's footprint)
   for (const st of roofStairs) {
     const run = st.steps * st.tread, mx = st.x + st.dirX * run / 2, mz = st.z + st.dirZ * run / 2;
@@ -682,12 +683,12 @@ function genLayout(): StiltLayout {
   }
   // (nothing stands on / grows through the two beach boardwalks or their shore stairs)
   {
-    const onWalk = (x: number, z: number, m: number) => extraWalks.some((k) => { const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * s) < k.w / 2 + m && Math.abs(dx * s + dz * c) < k.d / 2 + 3.5 + m; });
+    const onWalk = (x: number, z: number, m: number) => extraWalks.some((k) => { const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = x - k.x, dz = z - k.z; return Math.abs(dx * c - dz * s) < k.w / 2 + m && Math.abs(dx * s + dz * c) < k.d / 2 + 3.5 + m; });
     for (let i = props.length - 1; i >= 0; i--) { const q = props[i]; const r = q.kind === "boat" ? 3.4 * (q.s ?? 1) : q.kind === "dinghy" ? 2.4 : q.kind === "islet" ? (q.s ?? 3) * 1.1 : q.kind === "rock" ? (q.v ?? 1) : q.kind === "palm" || q.kind === "palm-leaning" || q.kind === "mangrove" ? 1.2 : 0.6; if (onWalk(q.x, q.z, r)) props.splice(i, 1); }
   }
   const parts = huts.map(resolveBuilding);
   const places: StiltLayout["places"] = [];
-  if (netSquare) { const k = netSquare, c = Math.cos(k.yaw), s = Math.sin(k.yaw); places.push({ kind: "plaza", name: "Net Square", x: k.x, z: k.z, poly: [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, e]) => { const lx = a * k.w / 2, lz = e * k.d / 2; return [k.x + lx * c + lz * s, k.z - lx * s + lz * c] as V2; }) }); }
+  if (netSquare) { const k = netSquare, c = dmath.cos(k.yaw), s = dmath.sin(k.yaw); places.push({ kind: "plaza", name: "Net Square", x: k.x, z: k.z, poly: [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, e]) => { const lx = a * k.w / 2, lz = e * k.d / 2; return [k.x + lx * c + lz * s, k.z - lx * s + lz * c] as V2; }) }); }
   // (top = the roof + its timber water tower: legs 3.2 m + tank)
   if (lookout) places.push({ kind: "landmark", name: "The Lookout", x: lookout.x, z: lookout.z, top: lookout.y + lookout.floors * (lookout.floorH ?? 2.9) + 3.29 + 1.45 });
   return { decks, walks, ropeWalks, huts, parts, props, stairs, places };
@@ -718,7 +719,7 @@ function propColliders(): Box[] {
   }
   // stairs: one solid box per step (lower deck → step top)
   for (const f of LAYOUT.stairs) {
-    const yaw = Math.atan2(f.dirX, f.dirZ);
+    const yaw = dmath.atan2(f.dirX, f.dirZ);
     for (let i = 0; i < f.steps; i++) {
       const u = (i + 0.5) * f.tread, top = f.yTop - (i + 1) * f.rise;
       if (top <= f.yBottom + 1e-3) break;
@@ -727,10 +728,10 @@ function propColliders(): Box[] {
   }
   // plank links: thin wood slabs (+ rope rails as low walls so players don't slide off)
   for (const r of LAYOUT.ropeWalks) {
-    const dx = r.b[0] - r.a[0], dz = r.b[1] - r.a[1], len = Math.hypot(dx, dz), yaw = Math.atan2(dx, dz);
+    const dx = r.b[0] - r.a[0], dz = r.b[1] - r.a[1], len = dmath.hypot(dx, dz), yaw = dmath.atan2(dx, dz);
     out.push({ c: [(r.a[0] + r.b[0]) / 2, r.y - 0.08, (r.a[1] + r.b[1]) / 2], h: [r.w / 2, 0.08, len / 2 + 0.3], yaw, surf: "wood" });
     // (the rail posts + the piles under long spans, as client town-lagoon addPlankBridge draws them)
-    const mx = (r.a[0] + r.b[0]) / 2, mz = (r.a[1] + r.b[1]) / 2, cy = Math.cos(yaw), sy = Math.sin(yaw), np = Math.max(1, Math.round(len / 2.4));
+    const mx = (r.a[0] + r.b[0]) / 2, mz = (r.a[1] + r.b[1]) / 2, cy = dmath.cos(yaw), sy = dmath.sin(yaw), np = Math.max(1, Math.round(len / 2.4));
     for (let i = 0; i <= np; i++) for (const sd of [-1, 1]) {
       const lx = sd * (r.w / 2 - 0.05), lz = (i / np - 0.5) * len, x = mx + lx * cy + lz * sy, z = mz - lx * sy + lz * cy;
       out.push({ c: [x, r.y + 0.5, z], h: [0.05, 0.53, 0.05], surf: "wood" });
@@ -763,14 +764,14 @@ export const LOOT_HOT = (() => { const t = LAYOUT.parts.find((p) => p.b.use === 
 export const LOOT_SPOTS = (() => {
   const floor: Array<[number, number, number]> = [], chests: Array<[number, number, number, number]> = [];
   const tower = LAYOUT.parts.find((p) => p.b.use === "tower");
-  if (tower) { const b = tower.b, c = Math.cos(b.yaw), s = Math.sin(b.yaw); chests.push([b.x - 2.2 * c - 2.2 * s, tower.roof.y, b.z + 2.2 * s - 2.2 * c, b.yaw]); }
+  if (tower) { const b = tower.b, c = dmath.cos(b.yaw), s = dmath.sin(b.yaw); chests.push([b.x - 2.2 * c - 2.2 * s, tower.roof.y, b.z + 2.2 * s - 2.2 * c, b.yaw]); }
   const sq = LAYOUT.places.find((q) => q.name === "Net Square"), nsq = LAYOUT.decks.find((k) => sq && k.x === sq.x && k.z === sq.z);
-  if (nsq) { const c = Math.cos(nsq.yaw), s = Math.sin(nsq.yaw), Q = (lx: number, lz: number): [number, number] => [nsq.x + lx * c + lz * s, nsq.z - lx * s + lz * c];
+  if (nsq) { const c = dmath.cos(nsq.yaw), s = dmath.sin(nsq.yaw), Q = (lx: number, lz: number): [number, number] => [nsq.x + lx * c + lz * s, nsq.z - lx * s + lz * c];
     { const [x, z] = Q(-1.4, -2.2); chests.push([x, nsq.y, z, nsq.yaw]); }
     for (const [lx, lz] of [[2.6, 1.0], [-6.0, 1.2], [5.0, -1.6]]) { const [x, z] = Q(lx, lz); floor.push([x, nsq.y, z]); } }
-  { const m = LAYOUT.huts[0], c = Math.cos(m.yaw), s = Math.sin(m.yaw), lz = m.d / 2 + 2.3; chests.push([m.x + 2.6 * c + lz * s, DECK_Y, m.z - 2.6 * s + lz * c, m.yaw + Math.PI]); }
+  { const m = LAYOUT.huts[0], c = dmath.cos(m.yaw), s = dmath.sin(m.yaw), lz = m.d / 2 + 2.3; chests.push([m.x + 2.6 * c + lz * s, DECK_Y, m.z - 2.6 * s + lz * c, m.yaw + Math.PI]); }
   for (const w of LAYOUT.walks) if (w.d > 6) floor.push([w.x, w.y, w.z]);
-  for (const k of LAYOUT.decks) if (k.y > 1) floor.push([k.x + Math.sin(k.yaw) * (k.d / 2 - 0.9), k.y, k.z + Math.cos(k.yaw) * (k.d / 2 - 0.9)]);
+  for (const k of LAYOUT.decks) if (k.y > 1) floor.push([k.x + dmath.sin(k.yaw) * (k.d / 2 - 0.9), k.y, k.z + dmath.cos(k.yaw) * (k.d / 2 - 0.9)]);
   const L = townLootSpots(INTERIOR_LOOT, { floor, chests, chestSep: 5 });
   return { chests: settleLoot(L.chests, colliders, { chest: true, needFloor: () => true, snap: 0.2 }), floor: settleLoot(L.floor, colliders, { needFloor: () => true }) };
 })();

@@ -8,6 +8,7 @@ import type { Terrain } from './terrain';
 import { STREETS } from '../pois/mango-market';
 import { LAYOUT as COVE } from '../pois/coconut-cove';
 import { ROADS } from '../pois/the-plantation';
+import * as dmath from "../sim/dmath";
 
 const groveNoise = new Simplex2(WORLD.SEED + 8107);
 /** Dense enclosed jungle deliberately survives away from settlements and approach roads.
@@ -15,14 +16,14 @@ const groveNoise = new Simplex2(WORLD.SEED + 8107);
  * stands sit between the rotations instead of lining them) */
 export function deepJungleAt(t: Terrain, x: number, z: number, roadDistance: number): boolean {
   if (t.biomeAt(x,z) !== Biome.Jungle || roadDistance < 40) return false;
-  if (POIS.some(p => Math.hypot(x-p.x,z-p.z) < p.r + 45)) return false;
+  if (POIS.some(p => dmath.hypot(x-p.x,z-p.z) < p.r + 45)) return false;
   return groveNoise.fbm(x/190+27,z/190-15,2) > 0.2;
 }
 /** 0..1: how much a spot sits in the ring that frames a POI (r + 6 … r + 40 m outside its radius) */
 function poiFrame(x: number, z: number): number {
   let best = 0;
   for (const p of POIS) {
-    const d = Math.hypot(x-p.x,z-p.z) - p.r;
+    const d = dmath.hypot(x-p.x,z-p.z) - p.r;
     if (d < 0 || d > 42) continue;
     best = Math.max(best, smoothstep(2,8,d) * (1 - smoothstep(26,42,d)));
   }
@@ -38,7 +39,7 @@ export function canopyKeepAt(t: Terrain, x: number, z: number, roadDistance: num
   const previous = 0.02 + 0.92 * smoothstep(0.37,0.65,grove);
   const verge = 0.12 + 0.88 * smoothstep(10,30,roadDistance);
   // Mango Market (430, 20) and its approaches (240 m) keep the gentler first-pass grove field: more solid cover there.
-  if (Math.hypot(x-430,z-20)<240) return previous * (0.3 + 0.45 * verge);
+  if (dmath.hypot(x-430,z-20)<240) return previous * (0.3 + 0.45 * verge);
   // Distinct dense grove cores and open meadow, rather than isolated trunks across the entire transition.
   const broadGrove = 0.5 + 0.5 * groveNoise.fbm(x/110,z/110,2);
   const open = (0.01 + 0.98 * smoothstep(0.62,0.68,broadGrove)) * verge;
@@ -69,7 +70,7 @@ export function crownOverAuthoredLane(x: number,z: number,radius: number): boole
     if(x < Math.min(a[0],b[0])-halfWidth-radius || x > Math.max(a[0],b[0])+halfWidth+radius ||
        z < Math.min(a[1],b[1])-halfWidth-radius || z > Math.max(a[1],b[1])+halfWidth+radius) continue;
     const dx=b[0]-a[0],dz=b[1]-a[1],u=Math.max(0,Math.min(1,((x-a[0])*dx+(z-a[1])*dz)/(dx*dx+dz*dz||1)));
-    if(Math.hypot(x-a[0]-dx*u,z-a[1]-dz*u) < halfWidth+radius) return true;
+    if(dmath.hypot(x-a[0]-dx*u,z-a[1]-dz*u) < halfWidth+radius) return true;
   }
   return false;
 }

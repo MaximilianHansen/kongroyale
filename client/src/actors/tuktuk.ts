@@ -7,10 +7,12 @@
 // grips, round scooter mirrors, a whip aerial with a pennant, and one big cyclops headlight under a chrome brow.
 //
 // Frame = the sim's body frame: +X right, +Y up, −Z forward, origin on the ground under the middle of the wheelbase.
-// Everything is merged per material per moving part (≈ 30 draws close up, 12 beyond DETAIL_M); the parts that move:
-// the three wheels, the steering (bars + fork + mudguard), the cabin on its springs, the aerial, the dice, the horn bulb.
+// Everything is merged per material per moving part, every distance class of a material in one mesh (buildLayered:
+// nothing switches a tuk's lod classes, so separate lod meshes were only extra draws): 47 meshes, 32 casting, of which
+// the detail, aerial and dice beyond DETAIL_M are hidden. The parts that move: the three wheels, the steering (bars +
+// fork + mudguard), the cabin on its springs, the aerial, the dice, the horn bulb.
 import * as THREE from "three";
-import { Batch, M, box, cyl, mat, rbox, sph, type MatKey } from "../world/pois/_kit/coast-kit";
+import { Batch, M, box, buildLayered, cyl, mat, rbox, sph, type MatKey } from "../world/pois/_kit/coast-kit";
 import { wheel } from "../world/pois/_kit/coast-vehicles";
 import { bananaHand, crate } from "../world/pois/_kit/coast-props";
 import { TUK, VF, VS } from "../../../shared/sim/vehicle";
@@ -81,7 +83,7 @@ function build(burnt: boolean): Parts {
   const C = (hex: number, keep = 0.1) => (burnt ? new THREE.Color(hex).lerp(dark, 1 - keep).getHex() : hex);
   const K = (k: MatKey): MatKey => (burnt && (k === "gloss" || k === "chrome" || k === "steel" || k === "lamp" || k === "lampRed") ? "pmetal" : k);
   const mk = () => new Batch({ cell: 1e6 });
-  const fin = (b: Batch, name: string) => { const g = b.build(name); g.traverse((o) => { o.userData.farShadow = false; }); return g; };
+  const fin = (b: Batch, name: string) => { const g = buildLayered(name, [b]); g.traverse((o) => { o.userData.farShadow = false; }); return g; };
 
   // ------------------------------------------------------------------------------------------------ body (the tub + nose)
   const b = mk(), d = mk(), roof = mk();

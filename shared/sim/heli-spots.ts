@@ -15,6 +15,7 @@ import { findHelipad } from "./heli";
 import { VKind } from "./vehicle";
 import type { StaticWorld } from "./world";
 import { allRanks, type TukSpot } from "./tuk-spots";
+import * as dmath from "./dmath";
 
 /** Peel Strip's pad: the concrete apron at the runway's threshold (strip-local metres along / right of the runway), the
  * nose down the runway */
@@ -48,7 +49,7 @@ function build(world: StaticWorld) {
   const ps = POIS.findIndex((p) => p.id === "peel-strip");
   {
     const [x, , z] = sw(STRIP_PAD[0], STRIP_PAD[1]), [x1, , z1] = sw(STRIP_PAD[0] + 1, STRIP_PAD[1]);
-    const into: TukSpot[] = []; pad(x, z, Math.atan2(-(x1 - x), -(z1 - z)), ps, 14, into); c.strip = into[0] ?? null;
+    const into: TukSpot[] = []; pad(x, z, dmath.atan2(-(x1 - x), -(z1 - z)), ps, 14, into); c.strip = into[0] ?? null;
   }
   for (const [id, dx, dz, hint] of HELIPADS) { const i = POIS.findIndex((p) => p.id === id), P = POIS[i]; pad(P.x + dx, P.z + dz, hint, i, 90, c.pool); }
   const li = POIS.findIndex((p) => p.id === "lobby-islet");
@@ -67,7 +68,7 @@ export function heliPads(world: StaticWorld, seed: number): TukSpot[] {
   const left = c.pool.slice();
   for (let n = 0; n < want && left.length; ) {
     const s = left.splice(Math.floor(rnd() * left.length), 1)[0];
-    if (out.some((q) => Math.hypot(q.x - s.x, q.z - s.z) < HELI_SPREAD)) continue;
+    if (out.some((q) => dmath.hypot(q.x - s.x, q.z - s.z) < HELI_SPREAD)) continue;
     out.push(s); n++;
   }
   return out;

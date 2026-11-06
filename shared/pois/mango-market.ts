@@ -19,6 +19,7 @@ import type { InteriorRoom } from "./interior-kit";
 import TOWN_INT from "./town-interiors.json";
 import { fountainColliders } from "./town-fountain";
 import SLOPE_H from "./mango-slope.json";
+import * as dmath from "../sim/dmath";
 
 const P = poiById("mango-market");
 export const CX = P.x, CZ = P.z, Y = P.padY as number;
@@ -28,8 +29,8 @@ export const HEAD = 35 * DEG;
 /** fountain centre (world) */
 export const FX = 455, FZ = -55;
 /** unit vectors of the plaza frame in world xz */
-export const AXV: [number, number] = [Math.sin(HEAD), -Math.cos(HEAD)];
-export const AXU: [number, number] = [Math.cos(HEAD), Math.sin(HEAD)];
+export const AXV: [number, number] = [dmath.sin(HEAD), -dmath.cos(HEAD)];
+export const AXU: [number, number] = [dmath.cos(HEAD), dmath.sin(HEAD)];
 export const PU = 13, PV0 = -27.5, PV1 = 24;
 /** front wall of the view camera's building "A" (plaza frame v). A fronts the plaza DIRECTLY — no forecourt street (a
  *  camera looking down a street between C's and B's walls reads as an alley shot). C (left) and B (right) stand 1.5–4.5 m
@@ -45,7 +46,7 @@ export const toW = (u: number, v: number): [number, number] => [FX + u * AXU[0] 
 /** world → plaza frame */
 export const toUV = (x: number, z: number): [number, number] => { const dx = x - FX, dz = z - FZ; return [dx * AXU[0] + dz * AXU[1], dx * AXV[0] + dz * AXV[1]]; };
 /** world yaw for a direction given in the plaza frame */
-export const yawUV = (du: number, dv: number) => { const x = du * AXU[0] + dv * AXV[0], z = du * AXU[1] + dv * AXV[1]; return Math.atan2(x, z); };
+export const yawUV = (du: number, dv: number) => { const x = du * AXU[0] + dv * AXV[0], z = du * AXU[1] + dv * AXV[1]; return dmath.atan2(x, z); };
 /** the statue faces the camera (−v) */
 export const STATUE_YAW = yawUV(0, -1);
 
@@ -76,7 +77,7 @@ const TANKS: Record<string, string> = { blue: "#2f4f8f", teal: "#2c8a80", olive:
 const VMAX: Array<[number, number]> = [[-112, 20], [-100, 30], [-90, 40], [-80, 42], [-70, 50], [-60, 52], [-50, 60], [-40, 62], [-30, 60], [-20, 62], [-10, 70], [0, 72], [60, 72], [70, 70], [80, 62], [90, 60], [100, 42], [110, 30]];
 function vmax(u: number) { for (let i = 1; i < VMAX.length; i++) if (u <= VMAX[i][0]) { const [u0, v0] = VMAX[i - 1], [u1, v1] = VMAX[i]; return v0 + (v1 - v0) * (u - u0) / (u1 - u0); } return 20; }
 /** is a world point on the flat town ground (the pad circle, short of the north slope)? */
-export function townFlat(x: number, z: number, m = 0): boolean { const [u, v] = toUV(x, z); return Math.hypot(x - CX, z - CZ) < P.pad - 4 - m && v < vmax(u) - 1 - m; }
+export function townFlat(x: number, z: number, m = 0): boolean { const [u, v] = toUV(x, z); return dmath.hypot(x - CX, z - CZ) < P.pad - 4 - m && v < vmax(u) - 1 - m; }
 /** does a world point sit on the flat town pad? */
 function onPad(x: number, z: number, margin = 0) { const [u, v] = toUV(x, z); return Math.abs(u) < 110 - margin && v > -160 + margin && v < vmax(u) - margin; }
 
@@ -90,7 +91,7 @@ export function slopeH(u: number, v: number): number {
 /** rooftop clutter for a flat roof (local roof coords), clear of the stair bulkhead (back-left corner) */
 function roofClutter(w: number, d: number, rng: () => number, o: { tank?: string | null; ac?: boolean } = {}): RoofProp[] {
   const out: RoofProp[] = [];
-  const free = (x: number, z: number, r: number) => !(x < -w / 2 + 5 && z < -d / 2 + 2.4) && Math.abs(x) < w / 2 - r - 0.35 && Math.abs(z) < d / 2 - r - 0.35 && out.every((p) => Math.hypot(p.x - x, p.z - z) > r + ROOF_PROP_HALF[p.kind][0] * (p.s ?? 1) + 0.35);
+  const free = (x: number, z: number, r: number) => !(x < -w / 2 + 5 && z < -d / 2 + 2.4) && Math.abs(x) < w / 2 - r - 0.35 && Math.abs(z) < d / 2 - r - 0.35 && out.every((p) => dmath.hypot(p.x - x, p.z - z) > r + ROOF_PROP_HALF[p.kind][0] * (p.s ?? 1) + 0.35);
   const tryPut = (kind: RoofProp["kind"], color?: string, s = 1) => {
     const r = ROOF_PROP_HALF[kind][0] * s;
     for (let k = 0; k < 12; k++) {
@@ -125,7 +126,7 @@ function genLayout(): MarketLayout {
    *  it (and its position) about the pivot (pu, pv) — blocks are turned a few degrees so the streets bend */
   const place = (u0: number, u1: number, v0: number, v1: number, fu: number, fv: number, spec: Partial<TownBuilding> = {}, id?: string, turn = 0, pu = 0, pv = 0): TownBuilding => {
     let cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
-    if (turn) { const c = Math.cos(turn), s = Math.sin(turn), du = cu - pu, dv = cv - pv; cu = pu + du * c - dv * s; cv = pv + du * s + dv * c; }
+    if (turn) { const c = dmath.cos(turn), s = dmath.sin(turn), du = cu - pu, dv = cv - pv; cu = pu + du * c - dv * s; cv = pv + du * s + dv * c; }
     const [x, z] = toW(cu, cv);
     const alongU = fv !== 0; // front faces ±v → width runs along u
     const w = alongU ? u1 - u0 : v1 - v0, d = alongU ? v1 - v0 : u1 - u0;
@@ -232,7 +233,7 @@ function genLayout(): MarketLayout {
   // face its (curving) street; yards fenced / hedged / walled and planted. Declared as STREETS / PLACES.
   const PADC: [number, number] = toUV(CX, CZ);
   /** flat pad (plaza frame): inside the pad circle and short of the north slope */
-  const flatUV = (u: number, v: number, m = 0) => Math.hypot(u - PADC[0], v - PADC[1]) < P.pad - 4 - m && v < vmax(u) - 1 - m;
+  const flatUV = (u: number, v: number, m = 0) => dmath.hypot(u - PADC[0], v - PADC[1]) < P.pad - 4 - m && v < vmax(u) - 1 - m;
   const site = new TownSite();
   const W2 = (pts: Array<[number, number]>): Vec2[] => pts.map(([u, v]) => toW(u, v));
   const street = (name: string, kind: TownStreet["kind"], w: number, ctrl: Array<[number, number]>) => { const s: TownStreet = { name, kind, w, pts: splinePts(W2(ctrl), 3) }; site.addStreet(s); return s; };
@@ -279,7 +280,7 @@ function genLayout(): MarketLayout {
   }
   // ---- lots along every street side
   type Zone = "core" | "mid" | "outer";
-  const zoneOf = (u: number, v: number): Zone => { const d = Math.hypot(u, v * (v < 0 ? 0.8 : 1)); return d < 72 ? "core" : d < 118 ? "mid" : "outer"; };
+  const zoneOf = (u: number, v: number): Zone => { const d = dmath.hypot(u, v * (v < 0 ? 0.8 : 1)); return d < 72 ? "core" : d < 118 ? "mid" : "outer"; };
   const R = (a: number, b: number) => a + (b - a) * rng();
   const ZP: Record<Zone, { fw: [number, number]; d: [number, number]; sb: [number, number]; gap: [number, number] }> = {
     core: { fw: [11, 17], d: [11, 15], sb: [0.6, 2.8], gap: [4.5, 9.0] },
@@ -330,10 +331,10 @@ function genLayout(): MarketLayout {
         if (zone === "core") {
           const k = 2 + Math.floor(rng() * 3), ws = Array.from({ length: k }, () => R(7.6, 11.5)), runL = ws.reduce((a, b) => a + b, 0);
           const pa = polyAt(st.pts, arc, s), pb = polyAt(st.pts, arc, Math.min(L - 1, s + runL));
-          let dt = Math.abs(Math.atan2(pb.d[1], pb.d[0]) - Math.atan2(pa.d[1], pa.d[0])); if (dt > Math.PI) dt = 2 * Math.PI - dt;
+          let dt = Math.abs(dmath.atan2(pb.d[1], pb.d[0]) - dmath.atan2(pa.d[1], pa.d[0])); if (dt > Math.PI) dt = 2 * Math.PI - dt;
           if (s + runL < L - 4 && dt < 9 * DEG) {
-            const cl = Math.hypot(pb.p[0] - pa.p[0], pb.p[1] - pa.p[1]) || 1, dir: Vec2 = [(pb.p[0] - pa.p[0]) / cl, (pb.p[1] - pa.p[1]) / cl];
-            const n: Vec2 = [-dir[1] * side, dir[0] * side], yaw = Math.atan2(-n[0], -n[1]);
+            const cl = dmath.hypot(pb.p[0] - pa.p[0], pb.p[1] - pa.p[1]) || 1, dir: Vec2 = [(pb.p[0] - pa.p[0]) / cl, (pb.p[1] - pa.p[1]) / cl];
+            const n: Vec2 = [-dir[1] * side, dir[0] * side], yaw = dmath.atan2(-n[0], -n[1]);
             const sb = rng() < 0.5 ? R(0.4, 1.4) : R(2.2, 4.0), dBase = R(10, 13.5);
             let along = 0, prev = -1, placed = 0;
             for (let j = 0; j < k; j++) {
@@ -354,7 +355,7 @@ function genLayout(): MarketLayout {
         const mid = polyAt(st.pts, arc, Math.min(L - 1, s + fw / 2));
         const n: Vec2 = [-mid.d[1] * side, mid.d[0] * side];
         // the front faces the street: local +z = −n
-        const yaw = Math.atan2(-n[0], -n[1]) + (rng() - 0.5) * 6 * DEG;
+        const yaw = dmath.atan2(-n[0], -n[1]) + (rng() - 0.5) * 6 * DEG;
         const off = st.w / 2 + sb + dd / 2;
         const spec = specFor(zone, fw, dd, st.kind === "main");
         let bi = -1;
@@ -384,10 +385,10 @@ function genLayout(): MarketLayout {
       const [x, z] = toW(u, v), ns = site.nearestStreet(x, z, 48);
       if (!ns || ns.d < 7 || ns.d > 44) continue;
       const zone = zoneOf(u, v), zz: Zone = zone === "core" ? "mid" : zone, Z = ZP[zz];
-      const dx = ns.b[0] - ns.a[0], dz = ns.b[1] - ns.a[1], l = Math.hypot(dx, dz) || 1;
+      const dx = ns.b[0] - ns.a[0], dz = ns.b[1] - ns.a[1], l = dmath.hypot(dx, dz) || 1;
       const cx = (ns.a[0] + ns.b[0]) / 2 - x, cz = (ns.a[1] + ns.b[1]) / 2 - z;
       let nx = -dz / l, nz = dx / l; if (nx * cx + nz * cz < 0) { nx = -nx; nz = -nz; }
-      const yaw = Math.atan2(nx, nz) + (rng() - 0.5) * 16 * DEG;
+      const yaw = dmath.atan2(nx, nz) + (rng() - 0.5) * 16 * DEG;
       let w = R(Z.fw[0], Z.fw[1]), d = R(Z.d[0], Z.d[1]), bi = -1;
       const spec = specFor(zz, w, d, false);
       for (let t = 0; t < 4 && bi < 0; t++) { bi = tryPlace(x, z, yaw, w, d, Z.gap[0], spec, -1); w = Math.max(9, w * 0.88); d = Math.max(8.6, d * 0.9); }
@@ -488,21 +489,21 @@ function genLayout(): MarketLayout {
   // far / side arcs facing the basin, fruit carts and crate stacks on the near arc (low: the camera looks over them), potted
   // palms at the four diagonals; hard cover within ~6 m anywhere on the plaza
   const RAD: Partial<Record<PropKind, number>> = { stall: 1.5, table: 0.7, cart: 1.05, scooter: 0.95, bench: 0.95, planter: 0.6, pot: 0.35, lamp: 0.2, crate: 0.35, pcrate: 0.35, cratestack: 0.65, barrel: 0.3, sack: 0.35 };
-  const freeAt = (u: number, v: number, r: number) => { const [x, z] = toW(u, v); return props.every((q) => Math.hypot(q.x - x, q.z - z) >= r + (RAD[q.kind] ?? 0) + 0.25); };
+  const freeAt = (u: number, v: number, r: number) => { const [x, z] = toW(u, v); return props.every((q) => dmath.hypot(q.x - x, q.z - z) >= r + (RAD[q.kind] ?? 0) + 0.25); };
   for (const [a, k, f] of [[0.62, 1, 0], [1.25, 4, 1], [1.9, 2, 2], [2.52, 0, 1]] as Array<[number, number, number]>) {
-    const r = FOUNTAIN_R + 5.6, u = Math.cos(a) * r, v = Math.sin(a) * r;
-    if (!freeAt(u, v, 1.5) || !freeAt(u - Math.cos(a) * 1.55, v - Math.sin(a) * 1.55, 0.9)) continue;
-    at("stall", u, v, -Math.cos(a), -Math.sin(a), { v: k, fruit: (["mango", "banana", "mixed"] as const)[f] });
-    crateRow(u, v, -Math.cos(a), -Math.sin(a), 2, k * 5 + f);
+    const r = FOUNTAIN_R + 5.6, u = dmath.cos(a) * r, v = dmath.sin(a) * r;
+    if (!freeAt(u, v, 1.5) || !freeAt(u - dmath.cos(a) * 1.55, v - dmath.sin(a) * 1.55, 0.9)) continue;
+    at("stall", u, v, -dmath.cos(a), -dmath.sin(a), { v: k, fruit: (["mango", "banana", "mixed"] as const)[f] });
+    crateRow(u, v, -dmath.cos(a), -dmath.sin(a), 2, k * 5 + f);
   }
   for (const [a, kind] of [[-0.55, "cart"], [-2.6, "cart"], [-1.25, "cratestack"], [-1.9, "cratestack"], [-0.95, "barrel"], [-2.25, "barrel"]] as Array<[number, PropKind]>) {
-    const r = FOUNTAIN_R + 5.2, u = Math.cos(a) * r, v = Math.sin(a) * r;
+    const r = FOUNTAIN_R + 5.2, u = dmath.cos(a) * r, v = dmath.sin(a) * r;
     if (!freeAt(u, v, RAD[kind] ?? 0.5)) continue;
-    at(kind, u, v, -Math.sin(a), Math.cos(a), kind === "cart" ? { fruit: a < -1.5 ? "banana" : "mango" } : kind === "barrel" ? { v: 1 } : {});
+    at(kind, u, v, -dmath.sin(a), dmath.cos(a), kind === "cart" ? { fruit: a < -1.5 ? "banana" : "mango" } : kind === "barrel" ? { v: 1 } : {});
   }
-  for (const a of [0.0, Math.PI / 2 + 0.15, Math.PI, -Math.PI / 2 - 0.3]) { const r = FOUNTAIN_R + 2.6, u = Math.cos(a) * r, v = Math.sin(a) * r; if (freeAt(u, v, 0.35)) at("pot", u, v, 0, 1, { s: 0.6 }); }
+  for (const a of [0.0, Math.PI / 2 + 0.15, Math.PI, -Math.PI / 2 - 0.3]) { const r = FOUNTAIN_R + 2.6, u = dmath.cos(a) * r, v = dmath.sin(a) * r; if (freeAt(u, v, 0.35)) at("pot", u, v, 0, 1, { s: 0.6 }); }
   // planter boxes round the fountain + crate tables on the plaza (small tables of fruit)
-  for (const a of [0.6, 2.4, 4.0, 5.5]) at("planter", Math.cos(a) * 6.4, Math.sin(a) * 6.4, 0, 1, { s: 0.45 });
+  for (const a of [0.6, 2.4, 4.0, 5.5]) at("planter", dmath.cos(a) * 6.4, dmath.sin(a) * 6.4, 0, 1, { s: 0.45 });
   at("table", -5.6, 12.8, -0.2, -1, { fruit: "banana" });
   at("cratestack", 3.2, 14.5, 0.2, -1); at("cratestack", -6.8, -3.2, 1, 0.1);
   at("lamp", -11.4, -16.3, 0, 1); at("lamp", 12.5, -20.5, 0, 1); at("lamp", -11.4, 23.4, 0, 1); at("lamp", 12.5, 23.4, 0, 1);
@@ -542,9 +543,9 @@ function genLayout(): MarketLayout {
     for (let j = ringCount; j < buildings.length; j++) {
       if (j === i) continue;
       const b = buildings[j];
-      const dx = b.x - a.x, dz = b.z - a.z, dist = Math.hypot(dx, dz);
-      const facing = Math.cos(b.yaw - a.yaw) < -0.9;
-      if (facing && dist < bd + 12) { const fp = frontPoint(b, 0.5, 0); const dd = Math.hypot(fp[0] - fa[0], fp[1] - fa[1]); if (dd < bd) { bd = dd; best = b; } }
+      const dx = b.x - a.x, dz = b.z - a.z, dist = dmath.hypot(dx, dz);
+      const facing = dmath.cos(b.yaw - a.yaw) < -0.9;
+      if (facing && dist < bd + 12) { const fp = frontPoint(b, 0.5, 0); const dd = dmath.hypot(fp[0] - fa[0], fp[1] - fa[1]); if (dd < bd) { bd = dd; best = b; } }
     }
     if (!best) continue;
     const fbp = frontPoint(best, 0.5, wtop(best) - 0.5);
@@ -553,10 +554,10 @@ function genLayout(): MarketLayout {
     k++;
   }
   // ======================= STREET COVER: a cluster every ~6 m along every fabric frontage =======================
-  const clearOfOthers = (x: number, z: number, r: number) => props.every((p) => Math.hypot(p.x - x, p.z - z) > r + 0.8);
+  const clearOfOthers = (x: number, z: number, r: number) => props.every((p) => dmath.hypot(p.x - x, p.z - z) > r + 0.8);
   // along the SIDE walls that face a street too; never inside a neighbour's footprint
-  const inAnyBuilding = (x: number, z: number, m: number) => buildings.some((q) => { const c = Math.cos(q.yaw), s = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z; const lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < q.w / 2 + m && Math.abs(lz) < q.d / 2 + m; });
-  const sidePoint = (b: TownBuilding, side: number, t: number, out: number): [number, number] => { const c = Math.cos(b.yaw), s = Math.sin(b.yaw), lx = side * (b.w / 2 + out), lz = (t - 0.5) * b.d; return [b.x + lx * c + lz * s, b.z - lx * s + lz * c]; };
+  const inAnyBuilding = (x: number, z: number, m: number) => buildings.some((q) => { const c = dmath.cos(q.yaw), s = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z; const lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < q.w / 2 + m && Math.abs(lz) < q.d / 2 + m; });
+  const sidePoint = (b: TownBuilding, side: number, t: number, out: number): [number, number] => { const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw), lx = side * (b.w / 2 + out), lz = (t - 0.5) * b.d; return [b.x + lx * c + lz * s, b.z - lx * s + lz * c]; };
   // never in front of a doorway / shop opening — the openings come
   // from the SAME resolver the colliders use (deterministic per building seed)
   const doorsOf = (b: TownBuilding) => resolveBuilding(b).walls[b.front ?? 0].openings[0].filter((o) => o.kind === "door" || o.kind === "shop").map((o) => [o.u - 1.0, o.u + o.w + 1.0] as [number, number]);
@@ -579,14 +580,14 @@ function genLayout(): MarketLayout {
       else if (r < 0.86) props.push({ kind: "pot", x: fx, z: fz, yaw: rng() * 6.28, s: 0.45 });
       else props.push({ kind: "sack", x: fx, z: fz, yaw: rng() * 6.28 });
     }
-    if (b.shop && rng() < 0.4 && Math.hypot(b.x - FX, b.z - FZ) < 60) { const [sx, sz] = frontPoint(b, 0.5, 0, 2.2); if (clearOfOthers(sx, sz, 1.5) && !atDoor(b, 0.5)) props.push({ kind: "stall", x: sx, z: sz, yaw: b.yaw, v: Math.floor(rng() * 6), fruit: pick(["mango", "banana", "mixed"] as const) }); }
+    if (b.shop && rng() < 0.4 && dmath.hypot(b.x - FX, b.z - FZ) < 60) { const [sx, sz] = frontPoint(b, 0.5, 0, 2.2); if (clearOfOthers(sx, sz, 1.5) && !atDoor(b, 0.5)) props.push({ kind: "stall", x: sx, z: sz, yaw: b.yaw, v: Math.floor(rng() * 6), fruit: pick(["mango", "banana", "mixed"] as const) }); }
   }
   // a planted TOWN EDGE: a loose band of palms, banana plants
   // and bushes just outside the last street on the south, east and west sides of the pad
   const edgePlant = (x: number, z: number) => { if (!clearOfOthers(x, z, 1.2) || inAnyBuilding(x, z, 2.5)) return; const k = rng(); props.push({ kind: k < 0.14 ? "palm" : k < 0.5 ? "banana-plant" : k < 0.82 ? "bush" : "monstera", x, z, yaw: rng() * 6.28, s: 0.8 + rng() * 0.45 }); };
   // (the planted band follows the pad's round edge)
   for (let a = 0; a < Math.PI * 2; a += 0.045 + rng() * 0.03) {
-    const r = P.pad - 4 - rng() * 5, [x, z] = [CX + Math.cos(a) * r, CZ + Math.sin(a) * r], [u, v] = toUV(x, z);
+    const r = P.pad - 4 - rng() * 5, [x, z] = [CX + dmath.cos(a) * r, CZ + dmath.sin(a) * r], [u, v] = toUV(x, z);
     if (v > vmax(u) - 6) continue;
     const ns = site.nearestStreet(x, z, 20); if (ns && ns.d - site.streets[ns.i].w / 2 < 2.5) continue;
     edgePlant(x, z);
@@ -609,7 +610,7 @@ function genLayout(): MarketLayout {
     for (let i = 0; i < buildings.length; i++) {
       const b = buildings[i];
       if (i === ids.A || i === ids.B || i === ids.C) continue;
-      const rp = resolveBuilding(b), c = Math.cos(b.yaw), sn = Math.sin(b.yaw);
+      const rp = resolveBuilding(b), c = dmath.cos(b.yaw), sn = dmath.sin(b.yaw);
       const W = (lx: number, lz: number): [number, number] => [b.x + lx * c + lz * sn, b.z - lx * sn + lz * c];
       for (let side = 0; side < 4; side++) {
         const S = SD[side], len = side % 2 === 0 ? b.w : b.d, A0 = S.A(b.w, b.d);
@@ -640,15 +641,15 @@ function genLayout(): MarketLayout {
         const n = 1 + Math.floor(rng() * 2.4);
         // (every boulder itself clear of houses and props — a satellite rock can wedge a crate against a
         //  wall: a stuck pocket)
-        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() : 0, rx = c.x + Math.cos(a) * r, rz = c.z + Math.sin(a) * r; if (inAnyBuilding(rx, rz, 2.0) || !clearOfOthers(rx, rz, 1.4)) continue; props.push({ kind: "rock", x: rx, z: rz, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: (i ? 0.75 + rng() * 0.4 : 1.45 + rng() * 0.4) * c.s }); }
-        for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 2 + rng() * 1.5; props.push({ kind: rng() < 0.5 ? "fern" : "bush", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
+        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() : 0, rx = c.x + dmath.cos(a) * r, rz = c.z + dmath.sin(a) * r; if (inAnyBuilding(rx, rz, 2.0) || !clearOfOthers(rx, rz, 1.4)) continue; props.push({ kind: "rock", x: rx, z: rz, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: (i ? 0.75 + rng() * 0.4 : 1.45 + rng() * 0.4) * c.s }); }
+        for (let i = 0; i < 3; i++) { const a = rng() * 6.283, r = 2 + rng() * 1.5; props.push({ kind: rng() < 0.5 ? "fern" : "bush", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.4 }); }
       } else {
         // (light tree coverage, so the outskirts ring is no palm forest: every third cluster is left open ground, a
         //  group is ONE palm, a grove two; the undergrowth stays knee-high)
         if (rng() < 0.34) continue;
         const n = c.kind === "grove" ? 2 : 1;
-        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() * 1.6 : 0; props.push({ kind: "palm", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.9 + rng() * 0.3 }); }
-        for (let i = 0; i < (c.kind === "grove" ? 3 : 2); i++) { const a = rng() * 6.283, r = 1 + rng() * 2.8, k = rng(); props.push({ kind: k < 0.2 ? "banana-plant" : k < 0.6 ? "bush" : "fern", x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r, y: g(Math.cos(a) * r, Math.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.5 }); }
+        for (let i = 0; i < n; i++) { const a = rng() * 6.283, r = i ? 1.4 + rng() * 1.6 : 0; props.push({ kind: "palm", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.9 + rng() * 0.3 }); }
+        for (let i = 0; i < (c.kind === "grove" ? 3 : 2); i++) { const a = rng() * 6.283, r = 1 + rng() * 2.8, k = rng(); props.push({ kind: k < 0.2 ? "banana-plant" : k < 0.6 ? "bush" : "fern", x: c.x + dmath.cos(a) * r, z: c.z + dmath.sin(a) * r, y: g(dmath.cos(a) * r, dmath.sin(a) * r), yaw: rng() * 6.28, s: 0.8 + rng() * 0.5 }); }
       }
     }
   }
@@ -657,11 +658,11 @@ function genLayout(): MarketLayout {
     // Banana Square: a ring of stalls in front of the market hall, benches + potted palms round the edge, a fruit cart
     const [scx, scz] = toW(SQ[0], SQ[1]);
     for (let k = 0; k < 7; k++) {
-      const a = -0.6 + k * 0.62, r = 11.5, u = SQ[0] + Math.cos(a) * r, v = SQ[1] + Math.sin(a) * r * 0.8;
+      const a = -0.6 + k * 0.62, r = 11.5, u = SQ[0] + dmath.cos(a) * r, v = SQ[1] + dmath.sin(a) * r * 0.8;
       const [x, z] = toW(u, v);
       if (!clearOfOthers(x, z, 1.4) || inAnyBuilding(x, z, 1.5)) continue;
       const kind: PropKind = k % 3 === 0 ? "bench" : k % 3 === 1 ? "planter" : "pot";
-      props.push({ kind, x, z, yaw: Math.atan2(scx - x, scz - z) + Math.PI, s: kind === "planter" ? 0.55 : kind === "pot" ? 0.6 : undefined });
+      props.push({ kind, x, z, yaw: dmath.atan2(scx - x, scz - z) + Math.PI, s: kind === "planter" ? 0.55 : kind === "pot" ? 0.6 : undefined });
     }
     if (ids.HALL !== undefined) {
       const h = buildings[ids.HALL];
@@ -672,14 +673,14 @@ function genLayout(): MarketLayout {
     }
     { const [x, z] = toW(SQ[0] + 3, SQ[1] - 5); if (clearOfOthers(x, z, 1.6)) props.push({ kind: "cart", x, z, yaw: 0.6, fruit: "mango" }); }
     // the square's heart: a ring of tall palms round a flower bed, benches under them facing out
-    for (let k = 0; k < 5; k++) { const a = k * 1.2566 + 0.3, [x, z] = toW(SQ[0] + Math.cos(a) * 3.4, SQ[1] + Math.sin(a) * 3.4); props.push({ kind: "palm", x, z, yaw: rng() * 6.28, s: 1.15 + rng() * 0.2 }); }
-    for (let k = 0; k < 5; k++) { const a = k * 1.2566 + 0.93, [x, z] = toW(SQ[0] + Math.cos(a) * 2.2, SQ[1] + Math.sin(a) * 2.2); props.push({ kind: k % 2 ? "bush" : "banana-plant", x, z, yaw: rng() * 6.28, s: 0.9 }); }
-    for (let k = 0; k < 3; k++) { const a = k * 2.094 + 0.6, [x, z] = toW(SQ[0] + Math.cos(a) * 5.4, SQ[1] + Math.sin(a) * 5.4); if (clearOfOthers(x, z, 0.9)) props.push({ kind: "bench", x, z, yaw: Math.atan2(x - scx, z - scz) + Math.PI / 2 }); }
+    for (let k = 0; k < 5; k++) { const a = k * 1.2566 + 0.3, [x, z] = toW(SQ[0] + dmath.cos(a) * 3.4, SQ[1] + dmath.sin(a) * 3.4); props.push({ kind: "palm", x, z, yaw: rng() * 6.28, s: 1.15 + rng() * 0.2 }); }
+    for (let k = 0; k < 5; k++) { const a = k * 1.2566 + 0.93, [x, z] = toW(SQ[0] + dmath.cos(a) * 2.2, SQ[1] + dmath.sin(a) * 2.2); props.push({ kind: k % 2 ? "bush" : "banana-plant", x, z, yaw: rng() * 6.28, s: 0.9 }); }
+    for (let k = 0; k < 3; k++) { const a = k * 2.094 + 0.6, [x, z] = toW(SQ[0] + dmath.cos(a) * 5.4, SQ[1] + dmath.sin(a) * 5.4); if (clearOfOthers(x, z, 0.9)) props.push({ kind: "bench", x, z, yaw: dmath.atan2(x - scx, z - scz) + Math.PI / 2 }); }
     // the Mango Orchard: mango trees (broadleaf) in loose rows, a low wall round it with two gaps
     const oc = orchardPoly.reduce((a, p) => [a[0] + p[0] / orchardPoly.length, a[1] + p[1] / orchardPoly.length], [0, 0]);
     for (let i = -2; i <= 2; i++) for (let j = -1; j <= 2; j++) {
       const [x, z] = toW(orchardUV[0] + i * 5.4 + (rng() - 0.5) * 1.6, orchardUV[1] + j * 5.4 - 2.7 + (rng() - 0.5) * 1.6);
-      if (polyGapPt(orchardPoly, x, z) > 0 || Math.hypot(x - oc[0], z - oc[1]) > 13) continue;
+      if (polyGapPt(orchardPoly, x, z) > 0 || dmath.hypot(x - oc[0], z - oc[1]) > 13) continue;
       props.push({ kind: "tree", x, z, yaw: rng() * 6.28, s: 0.5 + rng() * 0.18 });
     }
     // street lamps: every ~24 m along the main + side streets, alternating sides, 0.9 m in from the kerb
@@ -702,16 +703,16 @@ function genLayout(): MarketLayout {
   // (no slots a kong squeezes into); each kept run is one Prop (collider = what is drawn).
   {
     const fenceSamples: Vec2[] = [];
-    const inB = (x: number, z: number, m: number, skip: TownBuilding) => buildings.some((q) => { if (q === skip) return false; const c = Math.cos(q.yaw), sn = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * c - dz * sn) < q.w / 2 + m && Math.abs(dx * sn + dz * c) < q.d / 2 + m; });
+    const inB = (x: number, z: number, m: number, skip: TownBuilding) => buildings.some((q) => { if (q === skip) return false; const c = dmath.cos(q.yaw), sn = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * c - dz * sn) < q.w / 2 + m && Math.abs(dx * sn + dz * c) < q.d / 2 + m; });
     const okPt = (x: number, z: number, b: TownBuilding) => {
       const [u, v] = toUV(x, z);
       if (!flatUV(u, v, 1)) return false;
       if (inB(x, z, 2.2, b)) return false;
       if (reserved.some((p) => polyGapPt(p, x, z) < 2.0)) return false;
       const ns = site.nearestStreet(x, z, 20); if (ns && ns.d - site.streets[ns.i].w / 2 < 2.0) return false;
-      if (fenceSamples.some(([fx, fz]) => Math.hypot(fx - x, fz - z) < 2.2)) return false;
+      if (fenceSamples.some(([fx, fz]) => dmath.hypot(fx - x, fz - z) < 2.2)) return false;
       // (no slot between a yard run and the street dressing against a wall: a crate stack wedged there was a stuck spot)
-      if (props.some((q) => q.kind !== "palm" && q.kind !== "banana-plant" && q.kind !== "bush" && q.kind !== "fern" && q.kind !== "monstera" && q.kind !== "tree" && Math.hypot(q.x - x, q.z - z) < 1.9)) return false;
+      if (props.some((q) => q.kind !== "palm" && q.kind !== "banana-plant" && q.kind !== "bush" && q.kind !== "fern" && q.kind !== "monstera" && q.kind !== "tree" && dmath.hypot(q.x - x, q.z - z) < 1.9)) return false;
       return true;
     };
     const KIND: Array<"hedge" | "gwall" | "fence"> = ["hedge", "gwall", "fence"];
@@ -719,7 +720,7 @@ function genLayout(): MarketLayout {
       const b = buildings[i], [bu, bv] = toUV(b.x, b.z), zone = zoneOf(bu, bv);
       if (b.y !== Y || b.use === "tower" || b.use === "market-hall") continue;
       if (rng() > (zone === "core" ? 0.12 : zone === "mid" ? 0.62 : 0.82)) continue;
-      const m = R(2.8, 4.6), kind = KIND[Math.floor(rng() * 3)], c = Math.cos(b.yaw), sn = Math.sin(b.yaw);
+      const m = R(2.8, 4.6), kind = KIND[Math.floor(rng() * 3)], c = dmath.cos(b.yaw), sn = dmath.sin(b.yaw);
       const W = (lx: number, lz: number): Vec2 => [b.x + lx * c + lz * sn, b.z - lx * sn + lz * c];
       const hw = b.w / 2 + m, back = -b.d / 2 - m, fz = b.d / 2 - 1.0, gate = R(-hw + 1.5, hw - 3.0);
       // segments in local coords [ax, az, bx, bz] — back (with a 1.5 m gate), left, right
@@ -727,13 +728,13 @@ function genLayout(): MarketLayout {
       const color = kind === "gwall" ? b.trim : kind === "fence" ? pick(["#f4efe1", "#2f8f86", "#e8c15a", "#f0a24a", "#4f9fd6"]) : undefined;
       let any = false;
       for (const [ax, az, bx2, bz2] of segs) {
-        const L = Math.hypot(bx2 - ax, bz2 - az); if (L < 2.2) continue;
+        const L = dmath.hypot(bx2 - ax, bz2 - az); if (L < 2.2) continue;
         // split into runs of good samples (every 0.8 m)
         const n = Math.ceil(L / 0.8); let run0 = -1;
         const flush = (k0: number, k1: number) => {
           const t0 = k0 / n, t1 = k1 / n, len = (t1 - t0) * L; if (len < 2.4) return;
           const p0 = W(ax + (bx2 - ax) * t0, az + (bz2 - az) * t0), p1 = W(ax + (bx2 - ax) * t1, az + (bz2 - az) * t1);
-          props.push({ kind, x: (p0[0] + p1[0]) / 2, z: (p0[1] + p1[1]) / 2, yaw: Math.atan2(-(p1[1] - p0[1]), p1[0] - p0[0]), s: len, color, v: Math.floor(rng() * 4) });
+          props.push({ kind, x: (p0[0] + p1[0]) / 2, z: (p0[1] + p1[1]) / 2, yaw: dmath.atan2(-(p1[1] - p0[1]), p1[0] - p0[0]), s: len, color, v: Math.floor(rng() * 4) });
           for (let k = 0; k <= Math.ceil(len / 0.8); k++) { const t = k / Math.ceil(len / 0.8); fenceSamples.push([p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t]); }
           any = true;
         };
@@ -770,7 +771,7 @@ function genLayout(): MarketLayout {
     const PLC = ["#f2e8d0", "#e9d3a8", "#f6efe0", "#e8c9a0", "#d9e3d0"];
     const offStreet = (x: number, z: number, self: number, m: number) => site.streets.some((o, oi) => {
       if (oi === self) return false;
-      for (let k = 1; k < o.pts.length; k++) { const a = o.pts[k - 1], b = o.pts[k], dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); if (Math.hypot(x - a[0] - t * dx, z - a[1] - t * dz) < o.w / 2 + m) return true; }
+      for (let k = 1; k < o.pts.length; k++) { const a = o.pts[k - 1], b = o.pts[k], dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); if (dmath.hypot(x - a[0] - t * dx, z - a[1] - t * dz) < o.w / 2 + m) return true; }
       return false;
     });
     const okAt = (x: number, z: number, si: number) => townFlat(x, z, 2) && !inAnyBuilding(x, z, 2.2) && clearOfOthers(x, z, 1.5) && !offStreet(x, z, si, 5)
@@ -782,7 +783,7 @@ function genLayout(): MarketLayout {
       for (let s = 9 + rng() * 5; s < L - 8; s += 13 + rng() * 5) {
         const q = polyAt(st.pts, arc, s), sd = side;
         side = -side;
-        const yaw = Math.atan2(-q.d[1], q.d[0]);
+        const yaw = dmath.atan2(-q.d[1], q.d[0]);
         // the planned slot (~2.3 m in from the kerb on this side), else nearer the centreline, else the other side; the
         // piece's ends must be clear too (it is up to 3.2 m long along the street)
         let x = 0, z = 0, ok = false;
@@ -810,12 +811,12 @@ function genLayout(): MarketLayout {
   const sqA: number[] = [];
   for (let k = 0; k < 16 && sqA.length < 4; k++) {
     const a = 0.35 + k * 0.3927;
-    if (sqA.some((b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 1.2)) continue;
-    const u = SQ[0] + Math.cos(a) * 8.6, v = SQ[1] + Math.sin(a) * 7.4, [x, z] = toW(u, v);
-    const [tx, tz] = toW(SQ[0] - Math.sin(a) * 8.6, SQ[1] + Math.cos(a) * 7.4), [cx, cz] = toW(SQ[0], SQ[1]);
+    if (sqA.some((b) => Math.abs(dmath.atan2(dmath.sin(a - b), dmath.cos(a - b))) < 1.2)) continue;
+    const u = SQ[0] + dmath.cos(a) * 8.6, v = SQ[1] + dmath.sin(a) * 7.4, [x, z] = toW(u, v);
+    const [tx, tz] = toW(SQ[0] - dmath.sin(a) * 8.6, SQ[1] + dmath.cos(a) * 7.4), [cx, cz] = toW(SQ[0], SQ[1]);
     const dx = tx - cx, dz = tz - cz;
     if (!clearOfOthers(x, z, 1.6) || inAnyBuilding(x, z, 2.2)) continue;
-    props.push({ kind: "splanter", x, z, yaw: Math.atan2(-dz, dx), s: 2.8, color: "#f2e8d0" }); sqA.push(a);
+    props.push({ kind: "splanter", x, z, yaw: dmath.atan2(-dz, dx), s: 2.8, color: "#f2e8d0" }); sqA.push(a);
   }
   autoBlind(buildings);
   clearDoors(buildings, props);
@@ -823,17 +824,17 @@ function genLayout(): MarketLayout {
   //  eave intrudes into the neighbour's stairwell at head height and its flights stop one step short)
   for (const b of buildings) {
     if (b.roof === "flat") continue;
-    const eave = b.y + b.floors * (b.floorH ?? 3.2), c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+    const eave = b.y + b.floors * (b.floorH ?? 3.2), c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
     const pts: Array<[number, number]> = [];
     for (let k = 0; k <= 8; k++) { const t = k / 8 - 0.5; for (const [lx, lz] of [[t * b.w, b.d / 2 + 0.3], [t * b.w, -b.d / 2 - 0.3], [b.w / 2 + 0.3, t * b.d], [-b.w / 2 - 0.3, t * b.d]]) pts.push([b.x + lx * c + lz * s, b.z - lx * s + lz * c]); }
-    const hit = buildings.some((q) => q !== b && q.y + q.floors * (q.floorH ?? 3.2) > eave + 0.3 && pts.some(([x, z]) => { const qc = Math.cos(q.yaw), qs = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * qc - dz * qs) < q.w / 2 + 0.45 && Math.abs(dx * qs + dz * qc) < q.d / 2 + 0.45; }));
+    const hit = buildings.some((q) => q !== b && q.y + q.floors * (q.floorH ?? 3.2) > eave + 0.3 && pts.some(([x, z]) => { const qc = dmath.cos(q.yaw), qs = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * qc - dz * qs) < q.w / 2 + 0.45 && Math.abs(dx * qs + dz * qc) < q.d / 2 + 0.45; }));
     if (hit) b.overhang = 0.06;
     // the gable end(s) facing a taller neighbour ≤ 0.6 m away: one full block (no ledges in the slot)
     const along = (b.roofAxis ?? "x") === "x", fill: Array<-1 | 1> = [];
     for (const e of [-1, 1] as const) {
       const ends: Array<[number, number]> = [];
       for (let k = 0; k <= 6; k++) { const t = (k / 6 - 0.5) * 0.9; const [lx, lz] = along ? [e * (b.w / 2 + 0.35), t * b.d] : [t * b.w, e * (b.d / 2 + 0.35)]; ends.push([b.x + lx * c + lz * s, b.z - lx * s + lz * c]); }
-      if (buildings.some((q) => q !== b && q.y + q.floors * (q.floorH ?? 3.2) > eave + 0.3 && ends.filter(([x, z]) => { const qc = Math.cos(q.yaw), qs = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * qc - dz * qs) < q.w / 2 + 0.3 && Math.abs(dx * qs + dz * qc) < q.d / 2 + 0.3; }).length >= 3)) fill.push(e);
+      if (buildings.some((q) => q !== b && q.y + q.floors * (q.floorH ?? 3.2) > eave + 0.3 && ends.filter(([x, z]) => { const qc = dmath.cos(q.yaw), qs = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * qc - dz * qs) < q.w / 2 + 0.3 && Math.abs(dx * qs + dz * qc) < q.d / 2 + 0.3; }).length >= 3)) fill.push(e);
     }
     if (fill.length) b.gableFill = fill;
     // a chimney on ~60 % of the gables (the roofscape is never bare): a quarter in from one end, off the ridge
@@ -841,10 +842,10 @@ function genLayout(): MarketLayout {
   }
   // (no proud corner quoins in narrow gaps — they pinch alleys into capsule traps)
   for (const b of buildings) {
-    const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+    const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
     for (const [cx, cz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
       const lx = cx * b.w / 2, lz = cz * b.d / 2, x = b.x + lx * c + lz * s, z = b.z - lx * s + lz * c;
-      if (buildings.some((q) => { if (q === b) return false; const qc = Math.cos(q.yaw), qs = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * qc - dz * qs) < q.w / 2 + 2.0 && Math.abs(dx * qs + dz * qc) < q.d / 2 + 2.0; })) { b.quoins = false; break; }
+      if (buildings.some((q) => { if (q === b) return false; const qc = dmath.cos(q.yaw), qs = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z; return Math.abs(dx * qc - dz * qs) < q.w / 2 + 2.0 && Math.abs(dx * qs + dz * qc) < q.d / 2 + 2.0; })) { b.quoins = false; break; }
     }
   }
   const parts = buildings.map(resolveBuilding);
@@ -871,18 +872,18 @@ function genLayout(): MarketLayout {
 function polyGapPt(p: Vec2[], x: number, z: number): number {
   let ins = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const [xi, zi] = p[i], [xj, zj] = p[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) ins = !ins; }
   if (ins) return 0;
-  let m = Infinity; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length], dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); m = Math.min(m, Math.hypot(x - a[0] - t * dx, z - a[1] - t * dz)); }
+  let m = Infinity; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length], dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); m = Math.min(m, dmath.hypot(x - a[0] - t * dx, z - a[1] - t * dz)); }
   return m;
 }
 function openingHashLocal(x: number, z: number): number { let h = (Math.round(x * 13) * 73856093) ^ (Math.round(z * 17) * 19349663); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
 function clearDoors(bs: TownBuilding[], props: Prop[]) {
-  const inB = (q: TownBuilding, x: number, z: number, m: number) => { const c = Math.cos(q.yaw), s = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z; const lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < q.w / 2 + m && Math.abs(lz) < q.d / 2 + m; };
+  const inB = (q: TownBuilding, x: number, z: number, m: number) => { const c = dmath.cos(q.yaw), s = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z; const lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < q.w / 2 + m && Math.abs(lz) < q.d / 2 + m; };
   const approach = (b: TownBuilding, side: number, u: number): Array<[number, number]> => {
     const S = [{ A: [-b.w / 2, b.d / 2], dir: [1, 0], n: [0, 1] }, { A: [b.w / 2, b.d / 2], dir: [0, -1], n: [1, 0] }, { A: [b.w / 2, -b.d / 2], dir: [-1, 0], n: [0, -1] }, { A: [-b.w / 2, -b.d / 2], dir: [0, 1], n: [-1, 0] }][side];
     const out: Array<[number, number]> = [];
     for (const d of [0.5, 1.0, 1.6]) for (const a of [-0.45, 0, 0.45]) {
       const lx = S.A[0] + S.dir[0] * (u + a) + S.n[0] * d, lz = S.A[1] + S.dir[1] * (u + a) + S.n[1] * d;
-      const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+      const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
       out.push([b.x + lx * c + lz * s, b.z - lx * s + lz * c]);
     }
     return out;
@@ -907,7 +908,7 @@ function clearDoors(bs: TownBuilding[], props: Prop[]) {
   const near = approaches.filter((_, k) => k % 9 === 4 || k % 9 === 1);
   for (let i = props.length - 1; i >= 0; i--) {
     const bx = propBoxes([props[i]]);
-    if (bx.some((q) => near.some(([x, z]) => { const c = Math.cos(q.yaw ?? 0), s = Math.sin(q.yaw ?? 0), dx = x - q.c[0], dz = z - q.c[2]; return Math.abs(dx * c - dz * s) < q.h[0] + 0.42 && Math.abs(dx * s + dz * c) < q.h[2] + 0.42; }))) props.splice(i, 1);
+    if (bx.some((q) => near.some(([x, z]) => { const c = dmath.cos(q.yaw ?? 0), s = dmath.sin(q.yaw ?? 0), dx = x - q.c[0], dz = z - q.c[2]; return Math.abs(dx * c - dz * s) < q.h[0] + 0.42 && Math.abs(dx * s + dz * c) < q.h[2] + 0.42; }))) props.splice(i, 1);
   }
 }
 
@@ -915,7 +916,7 @@ function clearDoors(bs: TownBuilding[], props: Prop[]) {
  *  (party walls, back-to-back rows) — make it BLIND (no windows: no trims, shutters, glass or wall cut-outs behind it) */
 function autoBlind(bs: TownBuilding[]) {
   const inside = (b: TownBuilding, x: number, z: number, m: number) => {
-    const c = Math.cos(b.yaw), s = Math.sin(b.yaw), dx = x - b.x, dz = z - b.z;
+    const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw), dx = x - b.x, dz = z - b.z;
     const lx = dx * c - dz * s, lz = dx * s + dz * c;
     return Math.abs(lx) < b.w / 2 + m && Math.abs(lz) < b.d / 2 + m;
   };
@@ -925,7 +926,7 @@ function autoBlind(bs: TownBuilding[]) {
   // local side frames (see town-kit SIDES): 0 front +z, 1 right +x, 2 back -z, 3 left -x
   const SD: Array<{ n: [number, number]; dir: [number, number] }> = [{ n: [0, 1], dir: [1, 0] }, { n: [1, 0], dir: [0, -1] }, { n: [0, -1], dir: [-1, 0] }, { n: [-1, 0], dir: [0, 1] }];
   bs.forEach((b, i) => {
-    const c = Math.cos(b.yaw), s = Math.sin(b.yaw), cand = near(b.x, b.z).filter((j) => j !== i);
+    const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw), cand = near(b.x, b.z).filter((j) => j !== i);
     const blind = new Set(b.blind ?? []);
     for (let side = 0; side < 4; side++) {
       if (side === (b.front ?? 0) || side === (b.doorSide ?? b.front ?? 0)) continue;
@@ -945,7 +946,7 @@ function autoBlind(bs: TownBuilding[]) {
 
 /** world point on a building's front wall line at fraction t along it, `out` metres in front; returns [x, z, y] */
 export function frontPoint(b: TownBuilding, t: number, y: number, out = 0): [number, number, number] {
-  const c = Math.cos(b.yaw), s = Math.sin(b.yaw), lx = -b.w / 2 + b.w * t, lz = b.d / 2 + out;
+  const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw), lx = -b.w / 2 + b.w * t, lz = b.d / 2 + out;
   return [b.x + lx * c + lz * s, b.z - lx * s + lz * c, y];
 }
 
@@ -959,7 +960,7 @@ function propColliders(): Box[] { return propBoxes(LAYOUT.props); }
 /** street / plaza prop colliders (three.js yaw convention — simBoxes converts the exported list) */
 /** a prop-local box (three.js yaw: local +x → (cos, −sin), +z → (sin, cos)) */
 function pb(p: Prop, lx: number, ly: number, lz: number, hx: number, hy: number, hz: number, surf: Box["surf"]): Box {
-  const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+  const c = dmath.cos(p.yaw), s = dmath.sin(p.yaw);
   return { c: [p.x + lx * c + lz * s, (p.y ?? Y) + ly, p.z - lx * s + lz * c], h: [hx, hy, hz], yaw: p.yaw, surf };
 }
 function propBoxes(props: Prop[]): Box[] {
@@ -1014,9 +1015,9 @@ function roofSpot(p: BuildingParts, skip: Array<[number, number, number]> = [], 
   for (const [fx, fz] of [[0.25, 0.25], [-0.2, 0.3], [0.3, -0.1], [0, 0], [-0.3, -0.25], [0.3, -0.3], [-0.3, 0.05]]) {
     const lx = fx * b.w, lz = fz * b.d;
     if (p.bulk && lx > p.bulk.x0 - 1 && lx < p.bulk.x1 + 1 && lz > p.bulk.z0 - 1 && lz < p.bulk.z1 + 1.6) continue;
-    if (p.roof.props.some((q) => Math.hypot(q.x - lx, q.z - lz) < Math.hypot(ROOF_PROP_HALF[q.kind][0], ROOF_PROP_HALF[q.kind][2]) * (q.s ?? 1) + 0.9)) continue;
+    if (p.roof.props.some((q) => dmath.hypot(q.x - lx, q.z - lz) < dmath.hypot(ROOF_PROP_HALF[q.kind][0], ROOF_PROP_HALF[q.kind][2]) * (q.s ?? 1) + 0.9)) continue;
     const [x, z] = toWorld(b, lx, lz);
-    if (skip.some((q) => Math.hypot(q[0] - x, q[2] - z) < sep)) continue;
+    if (skip.some((q) => dmath.hypot(q[0] - x, q[2] - z) < sep)) continue;
     return [x, p.roof.y, z];
   }
   return null;

@@ -28,6 +28,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      # the WebTransport QUIC binding's install script fetches its prebuilt native module, which --ignore-scripts skips;
+      # run that one package's script so npm test's wt checks run (tools/net/wt-endpoint.test.mts fails without it)
+      - run: npm rebuild @fails-components/webtransport-transport-http3-quiche
       - run: npm run build
       - run: npm test
 
@@ -124,3 +127,27 @@ jobs:
           name: memory-result
           path: shots/memory/ci/
           retention-days: 7
+
+  context-restore:
+    name: no-GPU context restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: lose and restore the WebGL context at the title and in a match warm-up, title modules only
+        timeout-minutes: 30
+        run: |
+          node tools/kr-verify.mjs up --prod --port 3140
+          npx tsx tools/verify-context-loss.mts --url "http://127.0.0.1:3140/?modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage"
+      - name: stop the server
+        if: always()
+        run: node tools/kr-verify.mjs down

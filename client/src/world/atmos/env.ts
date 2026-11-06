@@ -9,6 +9,7 @@ import { SkyDome, makeLUT, toHalf } from "./sky";
 import { makeAtmosUniforms, type AtmosUniforms } from "./glsl";
 import { lin, type AtmosPreset } from "./state";
 import { skyTable } from "./grade";
+import { onRestore } from "../../engine/res/restore";
 
 
 export class SkyEnvironment {
@@ -19,8 +20,10 @@ export class SkyEnvironment {
   readonly u: AtmosUniforms = makeAtmosUniforms();
   private current: THREE.Texture | null = null;
   private lut = makeLUT();
+  private last: [THREE.Scene, AtmosPreset, AtmosUniforms] | null = null;
 
   constructor(renderer: THREE.WebGLRenderer) {
+    onRestore("bake", () => { if (this.last) this.bake(...this.last); });
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.dome = new SkyDome(this.u, 100);
     this.dome.setDisc(1, false);
@@ -28,6 +31,7 @@ export class SkyEnvironment {
   }
 
   bake(scene: THREE.Scene, p: AtmosPreset, shared: AtmosUniforms) {
+    this.last = [scene, p, shared];
     const u = this.u;
     for (const k of Object.keys(shared) as Array<keyof AtmosUniforms>) {
       if (k === "uAtmSkyLUT") continue; // own table below

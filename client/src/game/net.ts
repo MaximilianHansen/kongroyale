@@ -1,19 +1,23 @@
-// Links: the same interface for a WebSocket to the Node server and for the in-browser offline host.
+// Links: the same interface for a WebSocket to the Node server and for the in-browser offline host. An online link is
+// the primary WebSocket (JSON: lobby, welcome, results) plus a binary Transport (shared/net/transport.ts) for the hot path.
 //
-// Redundant transport: a WebSocket is TCP, so ONE lost packet stalls everything behind it for ~RTT + 50 ms (head-of-line
-// blocking). After the server's "welcome" (which carries an aux token) we open a second socket; every binary frame
-// (inputs up; snapshots, events, inventory, pongs down) travels on both, and both ends keep the first copy (inputs by
-// seq, snapshots/events by tick, inventory by seq, pongs by timestamp). A stall now needs both sockets to lose a packet
-// at the same moment. JSON (lobby) stays on the primary. Disable with ?aux=0 on the page URL.
+// The WebSocket transport, the redundant pair: a WebSocket is TCP, so ONE lost packet stalls everything behind it for
+// ~RTT + 50 ms (head-of-line blocking). After the server's "welcome" (which carries an aux token) we open a second
+// socket; every binary frame (inputs up; snapshots, events, inventory, pongs down) travels on both, and both ends keep
+// the first copy (inputs by seq, snapshots/events by tick, inventory by seq, pongs by timestamp). A stall now needs both
+// sockets to lose a packet at the same moment. Disable the aux socket with ?aux=0 on the page URL.
 import { DT } from "../../../shared/sim/const";
 import { Match, type MatchOpts } from "../../../shared/sim/match";
 import type { BotDifficulty } from "../ui/api";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { MatchHost, matchInfo, type HostPeer } from "../../../shared/net/host";
 import { flag } from "../flags";
+import { countSent, makeTransportStats, sendFrame, type Channel, type Path, type Transport } from "../../../shared/net/transport";
 
 export interface Link {
   readonly offline: boolean;
+  /** the binary transport of an online link (none offline) */
+  readonly transport?: Transport;
   onJSON: (m: Record<string, unknown>) => void;
   /** `at` = arrival time (MessageEvent.timeStamp on the performance.now() clock), when the transport knows it */
   onBinary: (u8: Uint8Array, at?: number) => void;
@@ -32,24 +36,38 @@ const auxWanted = () => flag("aux");
  *  the socket was closed. The server keeps ≤ 64 queued inputs (~1 s) anyway; the burst is now ≤ ~3 s of them. */
 const STALL_MS = 3000;
 
+/** the client never answers a server frame and never blames one: inbound frames come from the server it chose */
+const SERVER_PATH: Path = { reply: () => {}, strike: () => {} };
+
 export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url); ws.binaryType = "arraybuffer";
     let opened = false, closed = false, aux: WebSocket | null = null, lastRx = performance.now();
-    const link: Link = {
-      offline: false, onJSON: () => {}, onBinary: () => {}, onClose: () => {},
-      sendJSON: (o) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); },
-      // WebSocket.send copies the bytes, so views over reused buffers are safe here
-      sendBinary: (u8) => { if (performance.now() - lastRx > STALL_MS) return; if (ws.readyState === WebSocket.OPEN) ws.send(u8); if (aux && aux.readyState === WebSocket.OPEN) aux.send(u8); },
-      close: () => { closed = true; aux?.close(); ws.close(); },
+    // the transport: every binary frame on the primary and the aux socket, both channels reliable
+    const stats = makeTransportStats("ws");
+    // WebSocket.send copies the bytes, so views over reused buffers are safe here
+    const send = (u8: Uint8Array, ch: Channel) => {
+      if (performance.now() - lastRx > STALL_MS) { stats.skipped++; return; }
+      countSent(stats, ch, u8.length);
+      if (ws.readyState === WebSocket.OPEN) ws.send(u8);
+      if (aux && aux.readyState === WebSocket.OPEN) aux.send(u8);
     };
+    const bin: Transport = { kind: "ws", stats, sendReliable: (u8) => send(u8, 0), sendUnreliable: (u8) => send(u8, 1), onMessage: () => {}, close: () => aux?.close() };
+    const receive = (e: MessageEvent) => { const u8 = new Uint8Array(e.data as ArrayBuffer); stats.recv++; stats.recvBytes += u8.length; bin.onMessage(u8, e.timeStamp, SERVER_PATH); };
+    const link: Link = {
+      offline: false, transport: bin, onJSON: () => {}, onBinary: () => {}, onClose: () => {},
+      sendJSON: (o) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); },
+      sendBinary: (u8) => sendFrame(bin, u8),
+      close: () => { closed = true; bin.close(); ws.close(); },
+    };
+    bin.onMessage = (u8, at) => link.onBinary(u8, at);
     const openAux = (token: string) => {
       if (aux || closed || !auxWanted()) return;
       // (admin lobby) the token is the aux socket's FIRST message, never in its URL (URLs reach access logs)
       const u = new URL(url, location.href); u.searchParams.set("attach", "1");
       const a = new WebSocket(u.toString()); a.binaryType = "arraybuffer";
       a.onopen = () => a.send(JSON.stringify({ t: "aux", token }));
-      a.onmessage = (e) => { lastRx = performance.now(); if (typeof e.data !== "string") link.onBinary(new Uint8Array(e.data as ArrayBuffer), e.timeStamp); };
+      a.onmessage = (e) => { lastRx = performance.now(); if (typeof e.data !== "string") receive(e); };
       a.onclose = () => { if (aux === a) aux = null; };
       a.onerror = () => { /* the primary keeps working alone */ };
       aux = a;
@@ -57,14 +75,14 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
     const t = setTimeout(() => { if (!opened) { ws.close(); reject(new Error("timeout")); } }, timeoutMs);
     ws.onopen = () => { opened = true; clearTimeout(t); resolve(link); };
     ws.onerror = () => { if (!opened) { clearTimeout(t); reject(new Error("connect failed")); } };
-    ws.onclose = (e) => { aux?.close(); if (opened) link.onClose(e.reason || "disconnected"); };
+    ws.onclose = (e) => { bin.close(); if (opened) link.onClose(e.reason || "disconnected"); };
     ws.onmessage = (e) => {
       lastRx = performance.now();
       if (typeof e.data === "string") {
         let m: Record<string, unknown>; try { m = JSON.parse(e.data); } catch { return; }
         if (m.t === "welcome" && typeof m.aux === "string") openAux(m.aux);
         link.onJSON(m);
-      } else link.onBinary(new Uint8Array(e.data as ArrayBuffer), e.timeStamp);
+      } else receive(e);
     };
   });
 }

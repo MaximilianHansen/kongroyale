@@ -11,7 +11,8 @@
 import * as THREE from "three";
 import type { ContainerColor } from "../../../../../shared/pois/harbor-kit";
 import { workerPool } from "../../../engine/worker-pool";
-import { canvas, drawBanana, drawBananaBunch, drawFruitBanana, edgeShade, noiseTile, normalFromHeight, paintNoise, rng, scratches, splotches, stencilText, tex } from "./harbor-paint";
+import { capped } from "../../../engine/tex-cap";
+import { canvas, drawBanana, drawBananaBunch, drawFruitBanana, edgeShade, noiseTile, normalFromHeight, paintNoise, rng, scratches, splotches, stencilText, tex, cappedBitmap } from "./harbor-paint";
 
 export interface Region { x: number; y: number; w: number; h: number }
 
@@ -670,7 +671,7 @@ type CvOrBm = HTMLCanvasElement | ImageBitmap;
 function ctCanvases(g: string): Record<string, CvOrBm> {
   const pre = [...CT_PRE].filter(([k]) => k === g || k.startsWith(g + "."));
   if (pre.length) return Object.fromEntries(pre);
-  if (!CT_LIVE.has(g)) CT_LIVE.set(g, CT_GROUPS[g]());
+  if (!CT_LIVE.has(g)) CT_LIVE.set(g, Object.fromEntries(Object.entries(CT_GROUPS[g]()).map(([k, c]) => [k, capped(c)])));
   return CT_LIVE.get(g)!;
 }
 function ctTex(c: CvOrBm, o: { srgb?: boolean; repeat?: boolean; aniso?: number } = {}): THREE.Texture {
@@ -692,7 +693,8 @@ export function containerTexAsync(): Promise<void> {
       const pool = workerPool(() => new Worker(new URL("./harbor-tex.worker.ts", import.meta.url), { type: "module" }), 3);
       const res = await Promise.all([["atlas"], ["stamps"], ["dent", "detail"]].map((g) => pool.run<Record<string, ImageBitmap>>("paintCt", g)));
       pool.close();
-      for (const r of res) for (const [k, v] of Object.entries(r)) CT_PRE.set(k, v);
+      const done = await Promise.all(res.flatMap((r) => Object.entries(r).map(async ([k, v]) => [k, await cappedBitmap(v)] as const)));
+      for (const [k, v] of done) CT_PRE.set(k, v);
     } catch (e) { console.warn("[containers] texture worker failed — painting on the main thread", e); }
   })());
 }
