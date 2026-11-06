@@ -8,11 +8,12 @@ import { CONSUMABLES, RARITIES, WEAPONS } from "../world/map";
 import { AMMO_PICKUP, CONSUMABLE_DEFS } from "./const";
 import { consumableRarity } from "./loot";
 import { MYTHIC_R, MYTHICS } from "./mythic";
+import * as dmath from "./dmath";
 
 /** strip-local x of the firing line */
 export const RANGE_LINE_X = -58;
 /** strip → world yaw: a kong facing strip +X (downrange). Player forward = (−sin yaw, −cos yaw). */
-const DOWN = (() => { const a = sw(0, 0), b = sw(1, 0); return Math.atan2(-(b[0] - a[0]), -(b[2] - a[2])); })();
+const DOWN = (() => { const a = sw(0, 0), b = sw(1, 0); return dmath.atan2(-(b[0] - a[0]), -(b[2] - a[2])); })();
 export const RANGE_YAW_DOWNRANGE = DOWN;
 export const RANGE_YAW_UPRANGE = DOWN + Math.PI;
 

@@ -9,6 +9,7 @@ import { vegTrunkColliders, VARIANTS } from "../world/veg-scatter"; // only CALL
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
 import { panes, settleLoot } from "./pane-kit";
 import { F, addKitLoot, bx, doorLeaves, floraColliders, inFrameRect, kitRoom, lazyBoxes, place, rng, settleFlora, stairs, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece, type V3 } from "./coast-kit";
+import * as dmath from "../sim/dmath";
 
 export const PAD = { x: -230, z: 240, y: 10, r: 150 };
 /** open glades at the pad's E rim (kept as open ground): [x, z, r] */
@@ -33,7 +34,7 @@ export function roadDist(x: number, z: number): number {
   for (const r of ROADS) for (let i = 0; i + 1 < r.pts.length; i++) {
     const [ax, az] = r.pts[i], [bx2, bz] = r.pts[i + 1], dx = bx2 - ax, dz = bz - az, L2 = dx * dx + dz * dz;
     const u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2));
-    best = Math.min(best, Math.hypot(x - ax - dx * u, z - az - dz * u) - r.hw);
+    best = Math.min(best, dmath.hypot(x - ax - dx * u, z - az - dz * u) - r.hw);
   }
   return best;
 }
@@ -66,21 +67,21 @@ export const BARN = {
 };
 /** lean-to ceiling: top y + thickness (barn-local) */
 export const BARN_LEANCEIL = { y: 4.3, t: 0.15 };
-export const barnRise = () => (BARN.main.x1 - BARN.main.x0) / 2 * Math.tan(BARN.main.pitch);
+export const barnRise = () => (BARN.main.x1 - BARN.main.x0) / 2 * dmath.tan(BARN.main.pitch);
 /** lean-to roof height at local x (inner edge at the main wall) */
 export const leanY = (x: number) => BARN.lean.lo + (BARN.lean.hi - BARN.lean.lo) * (x - BARN.lean.x0) / (BARN.main.x0 - BARN.lean.x0);
 
 /** pitched railing collider following a line (frame-local) — bottom follows y0→y1, height h */
 function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.0): Piece {
-  const L = Math.hypot(x1 - x0, z1 - z0), yaw = Math.atan2(x1 - x0, z1 - z0), pitch = -Math.atan2(y1 - y0, L);
-  return { k: "rail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, Math.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "wood" };
+  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
+  return { k: "rail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "wood" };
 }
 const nr = (p: Piece): Piece => ({ ...p, k: "rail:new" }); // rails the client draws from the piece itself
 /** gable roof slabs over x0..x1 (ridge along X at z=0), overhang o */
 function gableRoof(k: string, x0: number, x1: number, hz: number, eave: number, pitch: number, o: number, th = 0.3, trimSide = 0): Piece[] {
   const out: Piece[] = [];
   const slope = (s: number, ov: number, extra: Partial<Piece>) => {
-    const run = hz + ov, len = run / Math.cos(pitch), cy = eave + (hz - run / 2) * Math.tan(pitch);
+    const run = hz + ov, len = run / dmath.cos(pitch), cy = eave + (hz - run / 2) * dmath.tan(pitch);
     out.push({ k, c: [(x0 + x1) / 2, cy + th / 2, s * run / 2], h: [(x1 - x0) / 2 + o, th / 2, len / 2], pitch: s * pitch, surf: "metal", ...extra });
   };
   for (const s of [-1, 1]) {
@@ -92,7 +93,7 @@ function gableRoof(k: string, x0: number, x1: number, hz: number, eave: number, 
 }
 /** gable end infill as stacked collider strips (triangle above the eave) at x, spanning z ±hz */
 function gableFill(k: string, x: number, hz: number, eave: number, pitch: number, t: number, holes: Array<[number, number, number, number]> = []): Piece[] {
-  const out: Piece[] = [], n = 8, rise = hz * Math.tan(pitch);
+  const out: Piece[] = [], n = 8, rise = hz * dmath.tan(pitch);
   // the strips are cut AT the hole edges (with 8 even strips a hole only opens the strips whose centre falls inside
   // it: the farmhouse attic windows [-0.5, 0.5] would open nothing and the barn loft window [-0.85, 0.85] 3 m of wall)
   const cuts = new Set<number>();
@@ -164,7 +165,7 @@ function barn(): Piece[] {
   leanEnd(-t / 2, -11.8);
   leanEnd(zb + t / 2, null);
   {
-    const run = Mn.x0 - Ln.x0 + Ln.over, rise = (Ln.hi - Ln.lo) * run / (Mn.x0 - Ln.x0), ang = Math.atan2(rise, run), L = Math.hypot(run, rise);
+    const run = Mn.x0 - Ln.x0 + Ln.over, rise = (Ln.hi - Ln.lo) * run / (Mn.x0 - Ln.x0), ang = dmath.atan2(rise, run), L = dmath.hypot(run, rise);
     // (with yaw π/2 the length goes in h.x: h [L/2, 0.12, len/2] would run the 27 m length ACROSS the barn)
     out.push({ k: "bn:roofL", c: [Mn.x0 - run / 2, Ln.hi - rise / 2 + 0.15, zb / 2], h: [len / 2 + 0.5, 0.12, L / 2], yaw: Math.PI / 2, pitch: -ang, surf: "metal" });
   }
@@ -205,13 +206,13 @@ function barn(): Piece[] {
   out.push(railCol(B.conv.x1 + 1.3, Dk.z1 - 0.06, B.loft, Dk.x1, Dk.z1 - 0.06, B.loft, 1.05), railCol(Dk.x1 - 0.06, 0, B.loft, Dk.x1 - 0.06, Dk.z1, B.loft, 1.05));
   out.push(railCol(Dk.x0 + 0.06, 0, B.loft, Dk.x0 + 0.06, B.conv.z - B.conv.w / 2 - 0.05, B.loft, 1.05));
   {
-    const run = Sh.z1 - Sh.z0, ang = Math.atan2(Sh.y0 - Sh.y1, run), L = Math.hypot(run, Sh.y0 - Sh.y1);
+    const run = Sh.z1 - Sh.z0, ang = dmath.atan2(Sh.y0 - Sh.y1, run), L = dmath.hypot(run, Sh.y0 - Sh.y1);
     out.push({ k: "bn:shed", c: [(Sh.x0 + Sh.x1) / 2, (Sh.y0 + Sh.y1) / 2, (Sh.z0 + Sh.z1) / 2], h: [(Sh.x1 - Sh.x0) / 2, 0.08, L / 2], pitch: ang, surf: "metal" });
     for (const x of [Sh.x0 + 0.2, 1.4, Sh.x1 - 0.2]) { const y0 = x > D.x0 ? D.y : 0; out.push(bx("bn:post", x - 0.12, y0, Sh.z1 - 0.35, x + 0.12, Sh.y1, Sh.z1 - 0.11, { surf: "wood", col: true })); }
   }
   // the conveyor: a truss ramp from the yard up onto the upper deck (walkable, ~20°), side rails
-  const C = B.conv, L = C.x1 - C.x0, rise = C.y1 - C.y0, ang = Math.atan2(rise, L);
-  out.push({ k: "bn:conv", c: [(C.x0 + C.x1) / 2, (C.y0 + C.y1) / 2 - 0.12, C.z], h: [C.w / 2, 0.12, Math.hypot(L, rise) / 2], yaw: Math.PI / 2, pitch: -ang, surf: "metal" });
+  const C = B.conv, L = C.x1 - C.x0, rise = C.y1 - C.y0, ang = dmath.atan2(rise, L);
+  out.push({ k: "bn:conv", c: [(C.x0 + C.x1) / 2, (C.y0 + C.y1) / 2 - 0.12, C.z], h: [C.w / 2, 0.12, dmath.hypot(L, rise) / 2], yaw: Math.PI / 2, pitch: -ang, surf: "metal" });
   out.push(railCol(C.x0, C.z + C.w / 2, C.y0, C.x1, C.z + C.w / 2, C.y1, 0.5), railCol(C.x0, C.z - C.w / 2, C.y0, C.x1, C.z - C.w / 2, C.y1, 0.5));
   // crate stacks on pallets in the yard + on the dock (cover)
   for (const [x0, z0, x1, z1, h, y] of CRATE_STACKS) out.push(bx("crates", x0, y, z0, x1, y + h, z1, { col: true, surf: "wood" }));
@@ -292,25 +293,25 @@ export const FIELD_CRATES: Array<[number, number, number]> = (() => {
   const out: Array<[number, number, number]> = [];
   const avoid: Array<[number, number, number]> = [[TRACTOR[0], TRACTOR[1], 12], ...ROADSIDE_CRATES.map(([x, z]) => [x, z, 12] as [number, number, number])];
   for (const [ri, road] of ROADS.slice(0, 3).entries()) {
-    const pts = road.pts, total = pts.slice(1).reduce((a, p, i) => a + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+    const pts = road.pts, total = pts.slice(1).reduce((a, p, i) => a + dmath.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
     let side = ri % 2 ? 1 : -1;
     for (let d = 14; d < total - 24; d += 28) {
       let rem = d, i = 0;
-      while (i + 1 < pts.length && rem > Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])) { rem -= Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); i++; }
+      while (i + 1 < pts.length && rem > dmath.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])) { rem -= dmath.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); i++; }
       if (i + 1 >= pts.length) break;
-      const [ax, az] = pts[i], [bx2, bz] = pts[i + 1], L = Math.hypot(bx2 - ax, bz - az), ux = (bx2 - ax) / L, uz = (bz - az) / L;
+      const [ax, az] = pts[i], [bx2, bz] = pts[i + 1], L = dmath.hypot(bx2 - ax, bz - az), ux = (bx2 - ax) / L, uz = (bz - az) / L;
       const off = road.hw + 1.7, x = ax + ux * rem - uz * off * side, z = az + uz * rem + ux * off * side;
       side = -side;
-      if (Math.hypot(x - PAD.x, z - PAD.z) > PAD.r - 8 || avoid.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r)) continue;
+      if (dmath.hypot(x - PAD.x, z - PAD.z) > PAD.r - 8 || avoid.some(([qx, qz, r]) => dmath.hypot(x - qx, z - qz) < r)) continue;
       if (roadDist(x, z) < 0.6) continue;
-      out.push([+x.toFixed(2), +z.toFixed(2), +(Math.atan2(ux, uz) + Math.PI / 2).toFixed(3)]); // (long side along the road)
+      out.push([+x.toFixed(2), +z.toFixed(2), +(dmath.atan2(ux, uz) + Math.PI / 2).toFixed(3)]); // (long side along the road)
     }
   }
   return out;
 })();
 /** a designed chest beside every other field crate pair, on the road side (world [x, z, yaw]) */
 export const FIELD_CHESTS: Array<[number, number, number]> = FIELD_CRATES.filter((_, i) => i % 2 === 0).map(([x, z, yaw]) => {
-  const a = yaw - Math.PI / 2, ux = Math.sin(a), uz = Math.cos(a); // along the road
+  const a = yaw - Math.PI / 2, ux = dmath.sin(a), uz = dmath.cos(a); // along the road
   return [+(x + ux * 2.4).toFixed(2), +(z + uz * 2.4).toFixed(2), +a.toFixed(3)] as [number, number, number];
 });
 export const YARD_PICKUP: [number, number, number] = [11.2, 12.4, 1.25];
@@ -344,7 +345,7 @@ function cottage(): Piece[] {
   out.push(...panes("ct:pane", hw, -hd + t / 2, -hw, -hd + t / 2, 0.45, [{ u: w / 2, w: 1.1, y0: 0.9, h: 1.0 }], 0.06));
   out.push(...panes("ct:pane", -hw + t / 2, -hd + t, -hw + t / 2, hd - t, 0.45, [{ u: d / 2 - t, w: 0.9, y0: 1.0, h: 0.9 }], 0.06));
   // gable roof: ridge along X; porch step
-  const run = hd + 0.5, len = run / Math.cos(pitch), eave = 0.45 + h, cy = eave + (hd - run / 2) * Math.tan(pitch);
+  const run = hd + 0.5, len = run / dmath.cos(pitch), eave = 0.45 + h, cy = eave + (hd - run / 2) * dmath.tan(pitch);
   for (const s of [-1, 1]) out.push({ k: "ct:roof", c: [0, cy + 0.06, s * run / 2], h: [hw + 0.45, 0.06, len / 2], pitch: s * pitch, surf: "metal" });
   out.push(...gableFill("ct:gable", -hw + t / 2, hd, eave, pitch, t), ...gableFill("ct:gable", hw - t / 2, hd, eave, pitch, t));
   out.push(bx("ct:step", COT.doorX - 0.8, 0, hd, COT.doorX + 0.8, 0.22, hd + 0.6, { surf: "wood" }));
@@ -455,7 +456,7 @@ function farmhouse(): Piece[] {
   out.push(bx("fh:part", 0.65, f1, -hz + t, 0.95, H.eave - 0.25, 0.8, { surf: "wood" }), bx("fh:part", 0.65, f1, 2.2, 0.95, H.eave - 0.25, hz - t, { surf: "wood" }));
   out.push(bx("fh:part", 0.65, f1 + 2.3, 0.8, 0.95, H.eave - 0.25, 2.2, { surf: "wood" }));
   // attic knee walls (the roof is < 1.9 m above the floor outside them)
-  const kneeTop = H.eave + (hz - H.knee - 0.12) * Math.tan(H.pitch) - 0.05;
+  const kneeTop = H.eave + (hz - H.knee - 0.12) * dmath.tan(H.pitch) - 0.05;
   out.push(bx("fh:knee", -hx + t, f2, -H.knee - 0.12, S2.x0 - 0.1, kneeTop, -H.knee, { surf: "wood" }), bx("fh:knee", S2.x1 + 0.1, f2, -H.knee - 0.12, hx - t, kneeTop, -H.knee, { surf: "wood" }));
   out.push(bx("fh:knee", -hx + t, f2, H.knee, hx - t, kneeTop, H.knee + 0.12, { surf: "wood" }));
   // chimney: one brick column from the fireplace through both floors and out of the roof
@@ -506,7 +507,7 @@ function yard(): Piece[] {
     bx("wt:deck", -s - WT_DECK, W.legH - 0.25, -s - WT_DECK, s + WT_DECK, W.legH, s + WT_DECK, { surf: "wood", col: true }),
     // the round stave tank as a regular octagon (four strips at 0/45/90/135°, circumradius 0.97 R: inside the drawn
     // Ø, ≤ 0.26 m from its staves), its cone roof as a smaller box
-    ...[0, 1, 2, 3].map((k) => ({ k: "wt:tank", c: [0, W.legH + W.tankH / 2, 0] as V3, h: [W.tankR * 0.97 * Math.cos(Math.PI / 8), W.tankH / 2, W.tankR * 0.97 * Math.sin(Math.PI / 8)] as V3, yaw: (k * Math.PI) / 4, col: true, surf: "wood" as const })),
+    ...[0, 1, 2, 3].map((k) => ({ k: "wt:tank", c: [0, W.legH + W.tankH / 2, 0] as V3, h: [W.tankR * 0.97 * dmath.cos(Math.PI / 8), W.tankH / 2, W.tankR * 0.97 * dmath.sin(Math.PI / 8)] as V3, yaw: (k * Math.PI) / 4, col: true, surf: "wood" as const })),
     bx("wt:tank", -1.25, W.legH + W.tankH, -1.25, 1.25, W.legH + W.tankH + 0.9, 1.25, { surf: "metal", col: true }),
     ...waterTowerStair(),
   ]));
@@ -550,7 +551,7 @@ export function bananaSpots(): Array<[number, number, number, number, number, nu
       const x = PAD.x + ux * along + vx * lateral + (r() - 0.5) * 0.7, z = PAD.z + uz * along + vz * lateral + (r() - 0.5) * 0.7;
       // taller spread (0.9–1.3) and the rows along a road carry more bags
       const yaw = r() * 6.283, sc = 0.78 + r() * 0.36, variant = Math.floor(r() * 3), bagR = r(), bag = bagR < (roadDist(x, z) < 12 ? 0.94 : 0.72) ? 1 : 0;
-      const dc = Math.hypot(x - PAD.x, z - PAD.z), gap = r();
+      const dc = dmath.hypot(x - PAD.x, z - PAD.z), gap = r();
       if (dc > PAD.r + 2 * r()) continue; // ≤ 152 m (the pad is flat to 150 — the stem colliders assume it)
       // harvest lanes every 7 rows (a 7.4 m walkable lane every ~26 m: cross-field rotations and
       // mid-range sight lines between the rows) + ~5 % missing plants (the field reads planted, not tiled)
@@ -565,7 +566,7 @@ export function bananaSpots(): Array<[number, number, number, number, number, nu
 export function plantable(x: number, z: number): boolean {
   if (roadDist(x, z) < 1.5) return false;
   const inFrame = (f: Frame, x0: number, x1: number, z0: number, z1: number) => {
-    const dx = x - f.x, dz = z - f.z, c = Math.cos(f.yaw), s = Math.sin(f.yaw);
+    const dx = x - f.x, dz = z - f.z, c = dmath.cos(f.yaw), s = dmath.sin(f.yaw);
     const lx = dx * c - dz * s, lz = dx * s + dz * c;
     return lx > x0 && lx < x1 && lz > z0 && lz < z1;
   };
@@ -574,15 +575,15 @@ export function plantable(x: number, z: number): boolean {
   if (inFrame(BARN.frame, -30, 16, -32, 8) || inFrame(BARN.frame, -18, 16, -32, 15)) return false;
   for (const c of COTTAGES) if (inFrame(c.f, -8, 8, -7, 10)) return false;
   if (inFrame(FARM.frame, -10, 10, -8, 12)) return false;
-  if (Math.hypot(x - WTOWER.x, z - WTOWER.z) < 7.5) return false;
-  if (Math.hypot(x - FLOOD[0], z - FLOOD[1]) < 3) return false;
-  if (Math.hypot(x - TRACTOR[0], z - TRACTOR[1]) < 7.5) return false;
+  if (dmath.hypot(x - WTOWER.x, z - WTOWER.z) < 7.5) return false;
+  if (dmath.hypot(x - FLOOD[0], z - FLOOD[1]) < 3) return false;
+  if (dmath.hypot(x - TRACTOR[0], z - TRACTOR[1]) < 7.5) return false;
   // keep the view's sight line to the tractor + trailer open (a wedge of the left verge rows)
-  { const [cx, cz] = roadPt(34, -3.5), [tx, tz] = [TRACTOR[0], TRACTOR[1]], dx = tx - cx, dz = tz - cz, L = Math.hypot(dx, dz), u = ((x - cx) * dx + (z - cz) * dz) / (L * L);
+  { const [cx, cz] = roadPt(34, -3.5), [tx, tz] = [TRACTOR[0], TRACTOR[1]], dx = tx - cx, dz = tz - cz, L = dmath.hypot(dx, dz), u = ((x - cx) * dx + (z - cz) * dz) / (L * L);
     if (u > 0.05 && u < 1 && Math.abs((x - cx) * dz - (z - cz) * dx) / L < 2.2 + 3.5 * u) return false; }
-  if (Math.hypot(x - ROADSIDE_CRATES[0][0], z - ROADSIDE_CRATES[0][1]) < 4) return false;
-  for (const [cx, cz] of FIELD_CRATES) if (Math.hypot(x - cx, z - cz) < 3.4) return false;
-  for (const [cx, cz] of FIELD_CHESTS) if (Math.hypot(x - cx, z - cz) < 2.2) return false;
+  if (dmath.hypot(x - ROADSIDE_CRATES[0][0], z - ROADSIDE_CRATES[0][1]) < 4) return false;
+  for (const [cx, cz] of FIELD_CRATES) if (dmath.hypot(x - cx, z - cz) < 3.4) return false;
+  for (const [cx, cz] of FIELD_CHESTS) if (dmath.hypot(x - cx, z - cz) < 2.2) return false;
   return true;
 }
 
@@ -600,10 +601,10 @@ export const FLORA: Flora[] = (() => {
   const r = rng(6262), out: Flora[] = [];
   const put = (k: Flora[0], x: number, z: number, s: number) => { x = settleFlora(k, x, z); out.push([k, x, PAD.y, z, r() * 6.283, s]); };
   const clear = (x: number, z: number) => roadDist(x, z) > 1.5 && !COTTAGES.some((c) => inFrameRect(c.f, x, z, -5.5, 6.5, -4.5, 5)) && !inFrameRect(FARM.frame, x, z, -8, 8, -6.5, 10.5)
-    && !inFrameRect(BARN.frame, x, z, -30, 16, -32, 16) && Math.hypot(x - WTOWER.x, z - WTOWER.z) > 7.5;
+    && !inFrameRect(BARN.frame, x, z, -30, 16, -32, 16) && dmath.hypot(x - WTOWER.x, z - WTOWER.z) > 7.5;
   for (const c of COTTAGES) for (let k = 0; k < 3; k++) {
     for (let tries = 0; tries < 12; tries++) {
-      const a = r() * 6.283, d = 6.5 + r() * 2.5, x = c.f.x + Math.cos(a) * d, z = c.f.z + Math.sin(a) * d;
+      const a = r() * 6.283, d = 6.5 + r() * 2.5, x = c.f.x + dmath.cos(a) * d, z = c.f.z + dmath.sin(a) * d;
       if (!clear(x, z)) continue;
       put(k === 2 ? "bush" : k === 1 ? "palm-leaning" : "palm", x, z, 0.9 + r() * 0.3); break;
     }
@@ -616,15 +617,15 @@ export const FLORA: Flora[] = (() => {
   const spots = bananaSpots();
   // (one tree every ~20 m — denser, with the outer ring below, it reads as a double wall of palms round the field)
   for (let a = 0; a < Math.PI * 2; a += 20 / 146.5) {
-    const d = 144 + r() * 5, aa = a + (r() - 0.5) * 0.02, x = PAD.x + Math.cos(aa) * d, z = PAD.z + Math.sin(aa) * d;
-    if (roadDist(x, z) < 2.5 || spots.some(([sx, sz]) => (sx - x) ** 2 + (sz - z) ** 2 < 2.2)) continue;
+    const d = 144 + r() * 5, aa = a + (r() - 0.5) * 0.02, x = PAD.x + dmath.cos(aa) * d, z = PAD.z + dmath.sin(aa) * d;
+    if (roadDist(x, z) < 2.5 || spots.some(([sx, sz]) => dmath.pow(sx - x, 2) + dmath.pow(sz - z, 2) < 2.2)) continue;
     const k = r();
     put(k < 0.55 ? "palm" : k < 0.75 ? "palm-leaning" : "jungle-tree", x, z, 0.95 + r() * 0.3);
   }
   // … and the outer windbreak on the blend slope (terrain heights baked offline)
   for (const [i, [x, y, z, ki]] of RIM_BAKED.entries()) {
     if (i % 2) continue; // half the outer windbreak (less tree coverage, clean rotations onto the pad)
-    if (GLADES.some(([mx, mz]) => Math.hypot(x - mx, z - mz) < 32)) continue; // (the open glades)
+    if (GLADES.some(([mx, mz]) => dmath.hypot(x - mx, z - mz) < 32)) continue; // (the open glades)
     const kind: Flora[0] = ki === 0 ? "palm" : ki === 1 ? "palm-leaning" : "jungle-tree";
     out.push([kind, settleFlora(kind, x, z), y, z, r() * 6.283, kind === "jungle-tree" ? 0.9 : 1.0 + r() * 0.25]);
   }
@@ -641,7 +642,7 @@ export function bananaColliders(): Box[] {
   const H0 = 2.7 + rng(700)() * 0.3;
   for (const [x, z, , sc] of bananaSpots()) {
     const ky = 0.92 + (((x * 7.13) % 1) + 1) % 1 * 0.16;
-    const off = Math.hypot(x - PAD.x, z - PAD.z) > PAD.r ? 1.5 : 0.1, base = PAD.y - 0.06, hs = H0 * sc * ky, top = base + hs - 0.03, mid = base + hs * 0.6, bot = PAD.y - off;
+    const off = dmath.hypot(x - PAD.x, z - PAD.z) > PAD.r ? 1.5 : 0.1, base = PAD.y - 0.06, hs = H0 * sc * ky, top = base + hs - 0.03, mid = base + hs * 0.6, bot = PAD.y - off;
     // two courses following the taper: 0.11·sc wide to 0.6 h, 0.075·sc above (the top corners stay inside the cap)
     // (a tuk-tuk ploughs through the banana rows — noDrive; kongs and bullets still meet the stems)
     out.push({ c: [x, (mid + bot) / 2, z], h: [0.11 * sc, (mid - bot) / 2, 0.11 * sc], surf: "foliage", noDrive: true });
