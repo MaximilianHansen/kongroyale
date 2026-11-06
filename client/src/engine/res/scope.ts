@@ -66,7 +66,8 @@ export function geometryBytes(g: THREE.BufferGeometry): number {
     const buf = gpuBuffer(a);
     if (seen.has(buf)) return;
     seen.add(buf);
-    b += buf.array.byteLength;
+    // (a geofree batch dropped its CPU array after the upload: engine/geometry-release.ts keeps the byte count)
+    b += buf.array?.byteLength ?? (buf as unknown as { releasedBytes?: number }).releasedBytes ?? 0;
   };
   for (const a of Object.values(g.attributes)) add(a);
   for (const list of Object.values(g.morphAttributes)) for (const a of list) add(a);

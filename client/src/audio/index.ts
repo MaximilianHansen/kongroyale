@@ -31,8 +31,13 @@ import { Ambience } from "./ambience";
 import { StepCadence, loadFloorMap, loadRoomsMap, stepSurfaceAt, stepSurfaceUnderLive, type RayWorld } from "./steps";
 import { setT } from "./param";
 import { flag } from "../flags";
+import { lowMemSaver } from "../low-mem-device";
 import { GameBridge } from "./bridge";
 import { FootDriver, type FootEvent } from "./feet";
+
+/** leaving a match frees the decoded sound of every loaded on-demand group (?audioevict; on by default on low-memory
+ *  devices, low-mem-device.ts): the next match decodes what it plays again */
+const AUDIO_EVICT = lowMemSaver(flag("audioevict"));
 
 export interface AudioOptions {
   /** render into this context (OfflineAudioContext for the audition tool) instead of a live one */
@@ -356,7 +361,7 @@ class Engine implements KongAudio {
     if (this.uwBed) { this.uwBed.stop(); this.uwBed = null; } this.uwK = 0;
     const t = this.ctx.currentTime;
     for (const v of this.voices) if (v.end > t && !v.group.startsWith("ui/")) this.fadeOut(v, 0.15);
-    if (flag("audioevict")) { this.lib.releaseLoaded(prefetchGroup); this.dropWanted = false; this.stormFetched = false; }
+    if (AUDIO_EVICT) { this.lib.releaseLoaded(prefetchGroup); this.dropWanted = false; this.stormFetched = false; }
   }
   /** endSession() ran and no match update() since: the idle slice starts nothing */
   private sessionOff = false;

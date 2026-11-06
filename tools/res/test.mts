@@ -126,6 +126,17 @@ const mb = (r: ReturnType<Ledger["report"]>, k: keyof ReturnType<Ledger["report"
 }
 
 {
+  // a geofree batch (engine/geometry-release.ts) drops its CPU array after the upload and keeps the byte count
+  const g = new THREE.BufferGeometry();
+  const a = new THREE.BufferAttribute(new Float32Array(9), 3);
+  g.setAttribute("position", a);
+  g.setIndex(new THREE.BufferAttribute(new Uint16Array(3), 1));
+  Object.assign(a, { releasedBytes: a.array.byteLength, array: null });
+  assert.equal(geometryBytes(g), 36 + 6);
+  console.log("PASS  a released vertex array still counts the bytes it holds on the GPU");
+}
+
+{
   const lazy = new THREE.Texture();
   assert.equal(textureBytes(lazy), 0);
   (lazy as { image: unknown }).image = { width: 64, height: 32 };
