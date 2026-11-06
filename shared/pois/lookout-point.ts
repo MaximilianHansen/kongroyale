@@ -10,6 +10,7 @@ import baked from "./lookout-baked.json";
 import { vegTrunkColliders, VARIANTS } from "../world/veg-scatter"; // only CALLED lazily (import cycle — see coast-kit lazyBoxes)
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
 import { F, addKitLoot, bx, doorLeaves, floraColliders, kitRoom, lazyBoxes, place, ringWall, rng, settleFlora, spiral, stairs, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece } from "./coast-kit";
+import * as dmath from "../sim/dmath";
 
 export const PAD = { x: -590, z: 470, y: 46 };
 export const BAKED = baked;
@@ -25,7 +26,7 @@ export const COLUMNS: Column[] = baked.columns;
 export function capAt(x: number, z: number): number {
   let y = -Infinity;
   for (const c of COLUMNS) {
-    const dx = x - c.x, dz = z - c.z, co = Math.cos(c.yaw), si = Math.sin(c.yaw);
+    const dx = x - c.x, dz = z - c.z, co = dmath.cos(c.yaw), si = dmath.sin(c.yaw);
     const lx = dx * co - dz * si, lz = dx * si + dz * co;
     if (Math.abs(lx) <= c.w / 2 && lz >= c.zin && lz <= c.zout) y = Math.max(y, c.y1);
   }
@@ -42,7 +43,7 @@ export function faceR(deg: number): number {
 // ------------------------------------------------------------------------------------------------ lighthouse
 const [LHX, LHY, LHZ] = baked.anchors.lh;
 /** outward (seaward) direction at the tower, radians in the XZ plane (position = (cos a, sin a)) */
-const SEA_A = Math.atan2(LHZ - PAD.z, LHX - PAD.x);
+const SEA_A = dmath.atan2(LHZ - PAD.z, LHX - PAD.x);
 export const LH = {
   x: LHX, z: LHZ, y: LHY,
   plinthR: 5.0, plinthH: 2.4,
@@ -143,13 +144,13 @@ function lighthouse(): Piece[] {
   for (let i = LH_SOLID; i < LH.steps - LH_HATCH; i++) {
     const top = LH_RISE * (i + 1);
     if (LH_FLOORS.some((h) => Math.abs(top - h) < 1.05)) continue;
-    const a = LH.stairA0 + LH.stepDa * (i + 0.5), r = treadR0(i) + 0.05, len = 2 * r * Math.tan(LH.stepDa / 2) + 0.04;
-    out.push({ k: "lh:rail", c: [x + Math.cos(a) * r, y + top + 0.5, z + Math.sin(a) * r], h: [0.03, 0.5, len / 2], yaw: -a, col: true, noShoot: true, surf: "metal" });
+    const a = LH.stairA0 + LH.stepDa * (i + 0.5), r = treadR0(i) + 0.05, len = 2 * r * dmath.tan(LH.stepDa / 2) + 0.04;
+    out.push({ k: "lh:rail", c: [x + dmath.cos(a) * r, y + top + 0.5, z + dmath.sin(a) * r], h: [0.03, 0.5, len / 2], yaw: -a, col: true, noShoot: true, surf: "metal" });
   }
   // the floors: two squares (0° and 45°) whose corners touch the octagon's vertices — their union is the drawn
   // octagon less 8 slivers (≤ 0.2 m), and each square is wide enough for the room scan
   for (const h of LH_FLOORS) {
-    const R = lhFloorR(h), s = R * Math.SQRT1_2, ri = R * Math.cos(Math.PI / 8), aa = R * Math.sin(Math.PI / 8), fy = y + h, th = 0.25;
+    const R = lhFloorR(h), s = R * Math.SQRT1_2, ri = R * dmath.cos(Math.PI / 8), aa = R * dmath.sin(Math.PI / 8), fy = y + h, th = 0.25;
     // + four strips (0/45/90/135°): the union is then exactly the drawn octagon (no unsupported rim slivers)
     for (const yaw of [0, Math.PI / 4]) out.push({ k: "lh:floorW", c: [x, fy - th / 2, z], h: [s, th / 2, s], yaw, col: true, surf: "wood" });
     for (let k = 0; k < 4; k++) out.push({ k: "lh:floorW", c: [x, fy - th / 2, z], h: [ri, th / 2, aa], yaw: (k * Math.PI) / 4, col: true, surf: "wood" });
@@ -159,11 +160,11 @@ function lighthouse(): Piece[] {
   // props (drawn at exactly these boxes by lookout-point/index.ts)
   for (const [fi, da, r, w, d, hh, k] of LH_PROPS) {
     const h = fi < 0 ? 0 : LH_FLOORS[fi], a = (fi < 0 ? LH.doorA : lhArrival(h).a) + da;
-    out.push({ k, c: [x + Math.cos(a) * r, y + h + hh / 2, z + Math.sin(a) * r], h: [w / 2, hh / 2, d / 2], yaw: Math.PI / 2 - a, col: true, surf: k === "lh:drums" ? "metal" : "wood" });
+    out.push({ k, c: [x + dmath.cos(a) * r, y + h + hh / 2, z + dmath.sin(a) * r], h: [w / 2, hh / 2, d / 2], yaw: Math.PI / 2 - a, col: true, surf: k === "lh:drums" ? "metal" : "wood" });
   }
   // the door portal's pilasters + jambs (drawn proud of the plinth beside the door gap)
   {
-    const th = Math.PI / 2 - LH.doorA, ca = Math.cos(LH.doorA), sa = Math.sin(LH.doorA), tx = Math.cos(th), tz = -Math.sin(th);
+    const th = Math.PI / 2 - LH.doorA, ca = dmath.cos(LH.doorA), sa = dmath.sin(LH.doorA), tx = dmath.cos(th), tz = -dmath.sin(th);
     const rIn = lhRadius(y) - LH.wall, rO = LH.plinthR, rm = (rIn + rO) / 2, depth = rO - rIn + 0.2;
     for (const s of [-1, 1]) {
       const lp = s * (LH.doorW / 2 + 0.3), lj = s * (LH.doorW / 2 + 0.12);
@@ -175,8 +176,8 @@ function lighthouse(): Piece[] {
   {
     const th = Math.PI / 2 - LH.doorA, rO = LH.plinthR + 0.22;
     for (const s of [-1, 1]) {
-      const hx = x + Math.cos(LH.doorA) * rO + s * (LH.doorW / 2) * Math.cos(th), hz = z + Math.sin(LH.doorA) * rO - s * (LH.doorW / 2) * Math.sin(th);
-      const ly = th + s * 1.9, cx = hx + Math.cos(ly) * (-s * 0.475), cz = hz - Math.sin(ly) * (-s * 0.475);
+      const hx = x + dmath.cos(LH.doorA) * rO + s * (LH.doorW / 2) * dmath.cos(th), hz = z + dmath.sin(LH.doorA) * rO - s * (LH.doorW / 2) * dmath.sin(th);
+      const ly = th + s * 1.9, cx = hx + dmath.cos(ly) * (-s * 0.475), cz = hz - dmath.sin(ly) * (-s * 0.475);
       out.push({ k: "lh:leaf", c: [cx, y + 1.38, cz], h: [0.475, 1.36, 0.05], yaw: ly, col: true, surf: "wood" });
     }
   }
@@ -188,8 +189,8 @@ function lighthouse(): Piece[] {
     const a = da * (i + 0.5);
     const rel = norm(a - hatch0), open = rel < norm(aEnd - hatch0) + 0.05;
     const seg = (r0: number, r1: number, k: string, th: number) => {
-      const rm = (r0 + r1) / 2, w = 2 * r1 * Math.tan(da / 2) + 0.06;
-      out.push({ k, c: [x + Math.cos(a) * rm, LH.top - th / 2, z + Math.sin(a) * rm], h: [(r1 - r0) / 2, th / 2, w / 2], yaw: -a, surf: "concrete" });
+      const rm = (r0 + r1) / 2, w = 2 * r1 * dmath.tan(da / 2) + 0.06;
+      out.push({ k, c: [x + dmath.cos(a) * rm, LH.top - th / 2, z + dmath.sin(a) * rm], h: [(r1 - r0) / 2, th / 2, w / 2], yaw: -a, surf: "concrete" });
     };
     // (the lantern-room floor is a 0.25 m steel-plate floor — with a 0.5 m slab the treads just short of the hatch
     // have 1.83 m under it and the solver refuses the climb: the lantern room is unreachable)
@@ -204,8 +205,8 @@ function lighthouse(): Piece[] {
   //  whose centre falls in the door gap, which would leave ~8° of drawn glass on each side of the door with no
   //  collider. Every drawn pane is a breakable pane.)
   const arc = (k: string, y0: number, h: number, t: number, o: Partial<Piece>) => {
-    const a0 = gap[1], a1 = gap[0] + Math.PI * 2, n = 18, da = (a1 - a0) / n, rm = LH.roomR - t / 2, w = 2 * LH.roomR * Math.tan(da / 2) + 0.05;
-    for (let i = 0; i < n; i++) { const a = a0 + da * (i + 0.5); out.push({ k, c: [x + Math.cos(a) * rm, y0 + h / 2, z + Math.sin(a) * rm], h: [t / 2, h / 2, w / 2], yaw: -a, ...o }); }
+    const a0 = gap[1], a1 = gap[0] + Math.PI * 2, n = 18, da = (a1 - a0) / n, rm = LH.roomR - t / 2, w = 2 * LH.roomR * dmath.tan(da / 2) + 0.05;
+    for (let i = 0; i < n; i++) { const a = a0 + da * (i + 0.5); out.push({ k, c: [x + dmath.cos(a) * rm, y0 + h / 2, z + dmath.sin(a) * rm], h: [t / 2, h / 2, w / 2], yaw: -a, ...o }); }
   };
   arc("lh:roomwall", LH.top, LH.roomWall, 0.3, { surf: "metal" });
   arc("lh:glass", LH.top + LH.roomWall, LH.glassH + LH.ringH, 0.12, { surf: "glass", noShoot: true });
@@ -217,7 +218,7 @@ function lighthouse(): Piece[] {
   // entrance steps (3 curved stone steps, as flat boxes) in front of the door
   for (let s = 0; s < 3; s++) {
     const r = LH.plinthR + 0.45 + (2 - s) * 0.45;
-    out.push({ k: "step:stone", c: [x + Math.cos(LH.doorA) * r, y + 0.09 + s * 0.18 - 0.09 * s, z + Math.sin(LH.doorA) * r], h: [0.23 + (2 - s) * 0.22, 0.09 + s * 0.09, 1.5 - s * 0.15], yaw: -LH.doorA, surf: "stone" });
+    out.push({ k: "step:stone", c: [x + dmath.cos(LH.doorA) * r, y + 0.09 + s * 0.18 - 0.09 * s, z + dmath.sin(LH.doorA) * r], h: [0.23 + (2 - s) * 0.22, 0.09 + s * 0.09, 1.5 - s * 0.15], yaw: -LH.doorA, surf: "stone" });
   }
   return out;
 }
@@ -230,7 +231,7 @@ export const COT = {
   frame: F(CX, CY, CZ, CYAW) as Frame,
 };
 export const COT_EAVE = COT.floor + COT.wallH;
-export const COT_RISE = (COT.D / 2) * Math.tan(COT.pitch);
+export const COT_RISE = (COT.D / 2) * dmath.tan(COT.pitch);
 /** openings in local metres along each wall (u from the wall's start corner) */
 export const COT_OPEN = {
   front: [{ u: 2.0, w: 1.3, y0: 1.0, h: 1.5, kind: "window" }, { u: 4.3, w: 1.7, y0: 0, h: 2.7, kind: "door" }, { u: 8.4, w: 1.4, y0: 1.0, h: 1.5, kind: "window" }, { u: 10.3, w: 1.4, y0: 1.0, h: 1.5, kind: "window" }],
@@ -288,7 +289,7 @@ function cottage(): Piece[] {
     out.push(bx("cot:step", S2.x0, floor, treadZ, S2.x1, floor + (eave - floor) * (i + 1) / S2.n, treadZ + run, { surf: "wood" }));
     treadZ += run;
   }
-  const kTop = (z: number) => eave + (hd - Math.abs(z)) * Math.tan(COT.pitch) - 0.08;
+  const kTop = (z: number) => eave + (hd - Math.abs(z)) * dmath.tan(COT.pitch) - 0.08;
   const dx0 = COT_DORMER.x - COT_DORMER.w / 2 - 0.1, dx1 = COT_DORMER.x + COT_DORMER.w / 2 + 0.1;
   // back knee wall (full length), front knee wall with the dormer bay (low sill wall = the window seat under it)
   // (stops short of the stair lane — across it, the knee wall would be a head-height wall over the upper flight)
@@ -301,9 +302,9 @@ function cottage(): Piece[] {
   // inward at front (+1.7 rad), outward at rear (−1.7 rad)) get their colliders
   for (const [wk, bxp, bzp, byaw] of [["front", -hl, hd, 0], ["back", -hl, -hd, Math.PI]] as Array<["front" | "back", number, number, number]>) for (const op of COT_OPEN[wk]) {
     if (op.kind !== "door") continue;
-    const c0 = Math.cos(byaw), s0 = Math.sin(byaw), hx0 = bxp + op.u + (-op.w / 2) * c0 + (-0.1) * s0, hz0 = bzp - (-op.w / 2) * s0 + (-0.1) * c0;
+    const c0 = dmath.cos(byaw), s0 = dmath.sin(byaw), hx0 = bxp + op.u + (-op.w / 2) * c0 + (-0.1) * s0, hz0 = bzp - (-op.w / 2) * s0 + (-0.1) * c0;
     const ly = byaw + (wk === "front" ? 1.7 : -1.7), w2 = (op.w - 0.05) / 2;
-    out.push({ k: "cot:leaf", c: [hx0 + Math.cos(ly) * w2, floor + op.h / 2, hz0 - Math.sin(ly) * w2], h: [w2, (op.h - 0.05) / 2, 0.045], yaw: ly, col: true, surf: "wood" });
+    out.push({ k: "cot:leaf", c: [hx0 + dmath.cos(ly) * w2, floor + op.h / 2, hz0 - dmath.sin(ly) * w2], h: [w2, (op.h - 0.05) / 2, 0.045], yaw: ly, col: true, surf: "wood" });
   }
   // porch deck + awning posts + rails (with a gap for 2 steps at the right end)
   const P = PORCH, pz0 = hd, pz1 = hd + P.depth;
@@ -382,8 +383,8 @@ export function treads(f: Run): { n: number; run: number; rise: number; list: Ar
 /** pitched railing collider between two zone-local points (bottom follows y0 → y1). NB the sim treats a pitched box
  *  as its vertical bounding box (shared/sim/world.ts) — fine for a thin noShoot rail at a band edge. */
 function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.05): Piece {
-  const L = Math.hypot(x1 - x0, z1 - z0), yaw = Math.atan2(x1 - x0, z1 - z0), pitch = -Math.atan2(y1 - y0, L);
-  return { k: "crail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, Math.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "metal" };
+  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
+  return { k: "crail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "metal" };
 }
 function cliff(): Piece[] {
   const out: Piece[] = [];
@@ -429,21 +430,21 @@ export function pathDist(x: number, z: number): number {
   let best = Infinity;
   for (let i = 0; i + 1 < LK_PATH.length; i++) {
     const [ax, az] = LK_PATH[i], [bx2, bz] = LK_PATH[i + 1], dx = bx2 - ax, dz = bz - az, u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-    best = Math.min(best, Math.hypot(x - ax - dx * u, z - az - dz * u));
+    best = Math.min(best, dmath.hypot(x - ax - dx * u, z - az - dz * u));
   }
   return best;
 }
 /** the view camera (bearing / distance / height from the lighthouse — the client derives its aim from it);
  *  here so the plateau planting keeps its sight lines: nothing tall BEHIND the tower + cottage as seen from it */
 export const VIEW_BEARING = 133.5, VIEW_DIST = 57.5, VIEW_H = 13.2;
-export const VIEW_POS: [number, number, number] = [LH.x + Math.cos(VIEW_BEARING * Math.PI / 180) * VIEW_DIST, TOP + VIEW_H, LH.z + Math.sin(VIEW_BEARING * Math.PI / 180) * VIEW_DIST];
+export const VIEW_POS: [number, number, number] = [LH.x + dmath.cos(VIEW_BEARING * Math.PI / 180) * VIEW_DIST, TOP + VIEW_H, LH.z + dmath.sin(VIEW_BEARING * Math.PI / 180) * VIEW_DIST];
 /** "front" = between the camera and the tower/cottage, "behind" = the backdrop behind them, else "clear" */
 export function viewSight(x: number, z: number): "front" | "behind" | "clear" {
-  const [cx0, , cz0] = VIEW_POS, bearing = (px: number, pz: number) => Math.atan2(px - cx0, pz - cz0);
+  const [cx0, , cz0] = VIEW_POS, bearing = (px: number, pz: number) => dmath.atan2(px - cx0, pz - cz0);
   const tgt: Array<[number, number]> = [[LH.x, LH.z], ...[[-6.5, -4.5], [6.5, -4.5], [-6.5, 7], [6.5, 7]].map(([lx, lz]) => { const p = toWorld(COT.frame, lx, 0, lz); return [p[0], p[2]] as [number, number]; })];
   const tc = bearing(LH.x, LH.z), rel = (a: number) => { let d = a - tc; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
   const tb = tgt.map(([px, pz]) => rel(bearing(px, pz))), s0 = Math.min(...tb) - 0.07, s1 = Math.max(...tb) + 0.07;
-  const d = rel(bearing(x, z)), dist = Math.hypot(x - cx0, z - cz0), dT = Math.hypot(LH.x - cx0, LH.z - cz0);
+  const d = rel(bearing(x, z)), dist = dmath.hypot(x - cx0, z - cz0), dT = dmath.hypot(LH.x - cx0, LH.z - cz0);
   if (dist < dT - 6) return d > s0 - 0.14 && d < s1 + 0.1 ? "front" : "clear";
   if (d < s0 || d > s1) return "clear";
   return dist > dT - 2 ? "behind" : "clear";
@@ -510,12 +511,12 @@ export const FLORA: Flora[] = [];
 (() => {
   // (thinning roll per lattice cell — its own hash, so the r() sequence and every other placement stay put)
   const thin = (gx: number, gz: number) => { let h = Math.imul((gx * 73856093) ^ (gz * 19349663), 2654435761) >>> 0; h ^= h >>> 15; h = Math.imul(h, 2246822519) >>> 0; h ^= h >>> 13; return (h >>> 0) / 4294967296; };
-  const r = rng(4747), hutAt = (x: number, z: number) => Math.hypot(x - HUT.frame.x, z - HUT.frame.z) < 7.5;
-  const wallAt = (x: number, z: number) => LK_WALLS.some(([wx, wz, , L]) => Math.hypot(x - wx, z - wz) < L / 2 + 2.5);
-  const yard = (x: number, z: number) => { const f = COT.frame, dx = x - f.x, dz = z - f.z, c = Math.cos(f.yaw), sn = Math.sin(f.yaw), lx = dx * c - dz * sn, lz = dx * sn + dz * c; return lx > -33 && lx < 19 && lz > -15 && lz < 20; };
+  const r = rng(4747), hutAt = (x: number, z: number) => dmath.hypot(x - HUT.frame.x, z - HUT.frame.z) < 7.5;
+  const wallAt = (x: number, z: number) => LK_WALLS.some(([wx, wz, , L]) => dmath.hypot(x - wx, z - wz) < L / 2 + 2.5);
+  const yard = (x: number, z: number) => { const f = COT.frame, dx = x - f.x, dz = z - f.z, c = dmath.cos(f.yaw), sn = dmath.sin(f.yaw), lx = dx * c - dz * sn, lz = dx * sn + dz * c; return lx > -33 && lx < 19 && lz > -15 && lz < 20; };
   for (let gx = -689; gx <= -482; gx += 9) for (let gz = 371; gz <= 569; gz += 9) {
     const x = gx + (r() - 0.5) * 5, z = gz + (r() - 0.5) * 5, k = r(), s = 0.85 + r() * 0.3, yaw = r() * 6.283, roll = r(), sz = 1.25 + r() * 0.6, seed = Math.floor(r() * 1e6);
-    if (Math.hypot(x - PAD.x, z - PAD.z) > 100) continue;             // (the veg scatter's own trees start at the clearing's edge)
+    if (dmath.hypot(x - PAD.x, z - PAD.z) > 100) continue;             // (the veg scatter's own trees start at the clearing's edge)
     const y = lookoutGround(x, z);
     if (!(y > TOP - 30) || capAt(x, z) > -Infinity) continue;           // on the headland (+ its upper slopes), not on the cliff caps
     // Apply the approach guard before the steep-flank branch too: otherwise buttress trunks get planted beside
@@ -528,7 +529,7 @@ export const FLORA: Flora[] = [];
       if (!top && rl < 7 && sl !== "front" && thin(gx, gz) > 0.4) { const kd: Flora[0] = k < 0.6 || rl > 5 ? "jungle-tree" : "palm"; FLORA.push([kd, settleFlora(kd, x, z), y, z, yaw, kd === "jungle-tree" ? s * 0.85 : s]); }
       continue;
     }
-    if (pathDist(x, z) < 3.2 || hutAt(x, z) || wallAt(x, z) || yard(x, z) || Math.hypot(x - LH.x, z - LH.z) < 13) continue;
+    if (pathDist(x, z) < 3.2 || hutAt(x, z) || wallAt(x, z) || yard(x, z) || dmath.hypot(x - LH.x, z - LH.z) < 13) continue;
     // (cover ≤ 8 m everywhere): low boulders also in the camera's foreground / backdrop (≤ 1.6 m: the hero
     // camera looks down on them from 13 m) and on gentle ground (their base sinks into the slope)
     if (sl === "front" && roll > 0.55) continue;
@@ -543,7 +544,7 @@ export const FLORA: Flora[] = [];
   // hand-placed trees where the lattice left > 8 m to cover (SW lawn slope, E flank)
   for (const [x, z, kind] of [[-645, 528, "palm"], [-617, 532, "jungle-tree"], [-493, 464, "jungle-tree"], [-518, 491, "palm"], [-574, 548, "palm"]] as Array<[number, number, Flora[0]]>) {
     const y = lookoutGround(x, z);
-    if (y > TOP - 30 && !FLORA.some((f) => Math.hypot(f[1] - x, f[3] - z) < 3)) FLORA.push([kind, settleFlora(kind, x, z), y, z, (x * 0.37) % 6.28, kind === "jungle-tree" ? 0.85 : 1.0]);
+    if (y > TOP - 30 && !FLORA.some((f) => dmath.hypot(f[1] - x, f[3] - z) < 3)) FLORA.push([kind, settleFlora(kind, x, z), y, z, (x * 0.37) % 6.28, kind === "jungle-tree" ? 0.85 : 1.0]);
   }
   // cover gaps ((−565, 398) up to 21 m, (−678, 511) 19 m, (−669, 477) 14 m, (−540, 429) 13 m without them): boulder
   // clusters on the open slopes there (each ≥ 1.1 m tall — hard cover), skipped where the ground is steep or taken
@@ -554,7 +555,7 @@ export const FLORA: Flora[] = [];
     [-523, 446, 1.7], [-529, 439, 1.5], [-516, 453, 1.6], [-505, 514, 1.7], [-498, 507, 1.5], [-608, 557, 1.6], [-634, 467, 1.5]] as Array<[number, number, number]>) {
     const cap = capAt(x, z), y = cap > -Infinity ? cap : lookoutGround(x, z), rl = cap > -Infinity ? 0 : relief(x, z, 1.5);
     if (!(y > TOP - 40) || pathDist(x, z) < 3 || rl > 3.5) continue;
-    if (FLORA.some((f) => Math.hypot(f[1] - x, f[3] - z) < 2.5) || LK_BOULDERS.some((b) => Math.hypot(b[0] - x, b[2] - z) < 2.5)) continue;
+    if (FLORA.some((f) => dmath.hypot(f[1] - x, f[3] - z) < 2.5) || LK_BOULDERS.some((b) => dmath.hypot(b[0] - x, b[2] - z) < 2.5)) continue;
     // on a slope: a bigger outcrop sunk into it (its uphill side still stands ≥ 1 m proud)
     LK_BOULDERS.push([x, y - Math.min(1.2, rl * 0.45), z, sz + rl * 0.35, Math.round(x * 13 + z * 7)]);
   }
@@ -562,11 +563,11 @@ export const FLORA: Flora[] = [];
   // sides, 4.3 m off the centreline
   const r2 = rng(4848);
   for (let i = 0; i + 1 < LK_PATH.length; i++) {
-    const [ax, az] = LK_PATH[i], [bx2, bz] = LK_PATH[i + 1], L = Math.hypot(bx2 - ax, bz - az), nx = -(bz - az) / L, nz = (bx2 - ax) / L;
+    const [ax, az] = LK_PATH[i], [bx2, bz] = LK_PATH[i + 1], L = dmath.hypot(bx2 - ax, bz - az), nx = -(bz - az) / L, nz = (bx2 - ax) / L;
     for (let u = 5; u < L; u += 11) {
       const side = (Math.round(u / 11) + i) % 2 ? 1 : -1, x = ax + (bx2 - ax) * u / L + nx * side * 4.3, z = az + (bz - az) * u / L + nz * side * 4.3;
-      if (Math.hypot(x - PAD.x, z - PAD.z) > 100 || hutAt(x, z) || wallAt(x, z) || yard(x, z) || capAt(x, z) > -Infinity || Math.hypot(x - LH.x, z - LH.z) < 13 || pathDist(x, z) < 3.4) continue;
-      if (FLORA.some((f) => Math.hypot(f[1] - x, f[3] - z) < 3) || LK_BOULDERS.some((b) => Math.hypot(b[0] - x, b[2] - z) < 3)) continue;
+      if (dmath.hypot(x - PAD.x, z - PAD.z) > 100 || hutAt(x, z) || wallAt(x, z) || yard(x, z) || capAt(x, z) > -Infinity || dmath.hypot(x - LH.x, z - LH.z) < 13 || pathDist(x, z) < 3.4) continue;
+      if (FLORA.some((f) => dmath.hypot(f[1] - x, f[3] - z) < 3) || LK_BOULDERS.some((b) => dmath.hypot(b[0] - x, b[2] - z) < 3)) continue;
       const y = lookoutGround(x, z), rl = relief(x, z), sz = 1.3 + r2() * 0.5, k = r2();
       if (!(y > TOP - 30)) continue;
       if (rl < 0.45) LK_BOULDERS.push([x, y - 0.05, z, sz, Math.floor(r2() * 1e6)]);
@@ -577,7 +578,7 @@ export const FLORA: Flora[] = [];
 function plateau(): Piece[] {
   const out: Piece[] = [];
   for (const [i, [x, z, yaw, L]] of LK_WALLS.entries()) {
-    const g = [-0.5, 0, 0.5].map((u) => lookoutGround(x + Math.cos(yaw) * u * L, z - Math.sin(yaw) * u * L)), lo = Math.min(...g), hi = Math.max(...g);
+    const g = [-0.5, 0, 0.5].map((u) => lookoutGround(x + dmath.cos(yaw) * u * L, z - dmath.sin(yaw) * u * L)), lo = Math.min(...g), hi = Math.max(...g);
     const base = !(lo > 0) || hi - lo > 0.8 ? NaN : Math.min(lo, PLATEAU_Y) - 0.05;
     LK_WALL_BASE[i] = base;
     if (Number.isNaN(base)) continue;
@@ -623,7 +624,7 @@ export const colliders: Box[] = lazyBoxes([...toBoxes(PIECES), ...COT_INTERIOR.f
  *  on stair landings, at the cliff foot, in + on the signal hut; floor loot through the yard, cottage, plateau, stair */
 export const LOOT_SPOTS: LootSpots = (() => {
   const chests: LootSpots["chests"] = [], floor: LootSpots["floor"] = [];
-  const at = (a: number, r: number, y: number): [number, number, number] => [LH.x + Math.cos(a) * r, y, LH.z + Math.sin(a) * r];
+  const at = (a: number, r: number, y: number): [number, number, number] => [LH.x + dmath.cos(a) * r, y, LH.z + dmath.sin(a) * r];
   const C = (p: [number, number, number] | number[], yaw: number) => chests.push([p[0], p[1], p[2], yaw]);
   const L = (p: [number, number, number] | number[]) => floor.push([p[0], p[1], p[2]]);
   const cf = COT.frame, zf = ZONE_F;

@@ -23,19 +23,20 @@
 //   · THE HEADLAND: sculpted rocks + a waterfall on the east; boulders, cargo spill, a longboat, palms = beach cover.
 import type { Box, Surface } from "../world/colliders";
 import { furnishRoom, interiorColliders, itemColliders, itemRect, type InteriorRoom, type InteriorLayout, type InteriorItem, type RoomOpening, type Side } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 export type V3 = [number, number, number];
 export const CX = 40, CZ = -700;
 
 // ================================================================================================ the galleon frame
 /** bow direction (world xz), shore side = local −z */
-const BOW = (() => { const a = 141 * Math.PI / 180; return [Math.cos(a), Math.sin(a)] as [number, number]; })();
+const BOW = (() => { const a = 141 * Math.PI / 180; return [dmath.cos(a), dmath.sin(a)] as [number, number]; })();
 export const SHIP = {
   x: 48, z: -689,
   /** the frame's origin height: the wreck sits 0.85 m proud (the whole hold floor stays above the sea, ≥ 0.1 m at its lowest corner) */
   y: 0.85,
   /** three.js yaw: local +x → world (cos, 0, −sin) */
-  yaw: Math.atan2(-BOW[1], BOW[0]),
+  yaw: dmath.atan2(-BOW[1], BOW[0]),
   /** list (rad): the shore side (local −z) goes down */
   roll: 9 * Math.PI / 180,
   /** trim (rad): settled by the stern — the bow rises (a raised bowsprit), the stern hold floods */
@@ -66,13 +67,13 @@ export const NEST = { y: 21.6, rIn: 1.86, rOut: 2.95 };
 /** spiral peg stair around the mainmast */
 export const SPIRAL = { rise: 0.3, perTurn: 12, rIn: 0.45, rOut: 1.8, a0: Math.PI * 0.5 };
 
-const cY = Math.cos(SHIP.yaw), sY = Math.sin(SHIP.yaw);
+const cY = dmath.cos(SHIP.yaw), sY = dmath.sin(SHIP.yaw);
 /** roll angle of the ship frame about its x axis (three.js Rx): ρ = SH·roll lowers the shore side (local −z) and leans
  *  the rig toward the shore. The trim PITCH = SHIP.pitch raises the bow (Rz). The client's ship matrix is
  *  T(SHIP.x, 0, SHIP.z) · Ry(SHIP.yaw) · Rx(RHO) · Rz(PITCH) (= three.js Euler(RHO, yaw, PITCH, "YXZ")). */
 export const RHO = SH * SHIP.roll;
 export const PITCH = SHIP.pitch;
-const cr = Math.cos(RHO), sr = Math.sin(RHO), cp = Math.cos(PITCH), spt = Math.sin(PITCH);
+const cr = dmath.cos(RHO), sr = dmath.sin(RHO), cp = dmath.cos(PITCH), spt = dmath.sin(PITCH);
 /** ship frame → world */
 export function shipToWorld(x: number, y: number, z: number): V3 {
   const x0 = x * cp - y * spt, y0 = x * spt + y * cp;         // Rz(pitch): the bow up
@@ -86,15 +87,15 @@ export const shipYaw = (localYaw: number) => SHIP.yaw + localYaw;
 /** half-breadth in plan (above the bilge) at x */
 export function hbPlan(x: number): number {
   const H = HULL.half;
-  if (x < -13) { const t = (x - HULL.stern) / 5; return H * (0.76 + 0.24 * Math.sin(Math.min(1, Math.max(0, t)) * Math.PI / 2)); }
+  if (x < -13) { const t = (x - HULL.stern) / 5; return H * (0.76 + 0.24 * dmath.sin(Math.min(1, Math.max(0, t)) * Math.PI / 2)); }
   if (x <= 5) return H;
   const t = Math.min(1, (x - 5) / 13);
-  return H * Math.pow(Math.max(0, 1 - t * t), 0.55);
+  return H * dmath.pow(Math.max(0, 1 - t * t), 0.55);
 }
 /** the bow stem rakes forward (a long raked stem above the waterline, the galleon's beak): where the hull ends at y */
-export const bowEnd = (y: number) => 11.5 + 7.0 * Math.pow(Math.min(1, Math.max(0, (y - LV.keel) / (LV.main - LV.keel))), 0.8);
+export const bowEnd = (y: number) => 11.5 + 7.0 * dmath.pow(Math.min(1, Math.max(0, (y - LV.keel) / (LV.main - LV.keel))), 0.8);
 /** the stern: flat transom above the hold floor, the run sweeps up under it */
-export const sternEnd = (y: number) => HULL.stern + 3.2 * Math.pow(Math.max(0, (LV.hold - y) / (LV.hold - LV.keel)), 1.4);
+export const sternEnd = (y: number) => HULL.stern + 3.2 * dmath.pow(Math.max(0, (LV.hold - y) / (LV.hold - LV.keel)), 1.4);
 /** full hull half-breadth at (x, y): plan × bilge round × slight tumblehome above the main deck */
 export function hb(x: number, y: number): number {
   const x0 = sternEnd(y), x1 = bowEnd(y);
@@ -104,7 +105,7 @@ export function hb(x: number, y: number): number {
   let k = 1;
   if (y < LV.hold) { const u = (LV.hold - y) / (LV.hold - LV.keel); k = Math.sqrt(Math.max(0, 1 - u * u * u)) ; }
   // tumblehome: the sides lean in above the waterline (widest at the gun deck, ~9 % narrower at the castle rails)
-  else if (y > LV.gun) k = 1 - 0.09 * Math.pow(Math.min(1, (y - LV.gun) / (LV.poop + RAIL - LV.gun)), 1.2);
+  else if (y > LV.gun) k = 1 - 0.09 * dmath.pow(Math.min(1, (y - LV.gun) / (LV.poop + RAIL - LV.gun)), 1.2);
   return hbPlan(xp) * k;
 }
 /** the sheer (top of the hull side) at x */
@@ -117,8 +118,8 @@ export function sheer(x: number): number {
 /** the galleon's sheer sweep: the bulwark planking climbs toward the stem (a tall beak bulwark) and the taffrail (the
  *  carved stern) above the stepped castle rails — drawn by the shell AND solid (sheerRiseWalls) */
 export function sheerRise(x: number): number {
-  if (x > 13) return 1.3 * Math.pow(Math.min(1, (x - 13) / 5), 1.6);
-  if (x < -16) return 0.9 * Math.pow(Math.min(1, (-16 - x) / 2), 1.5);
+  if (x > 13) return 1.3 * dmath.pow(Math.min(1, (x - 13) / 5), 1.6);
+  if (x < -16) return 0.9 * dmath.pow(Math.min(1, (-16 - x) / 2), 1.5);
   return 0;
 }
 export const sheerV = (x: number) => sheer(x) + sheerRise(x);
@@ -160,11 +161,11 @@ export function wallRects(L: number, H: number, ops: Opening[]): Array<[number, 
 }
 /** wall between (ax, az) → (bx, bz) in a frame; y0..y1; thickness t centred on the line offset `inset` toward +normal */
 function wall(frame: "ship" | "world", k: string, a: [number, number], b: [number, number], y0: number, y1: number, t: number, ops: Opening[] = [], col: 0 | 1 | 2 = 1, surf: Surface = "wood", inset = 0) {
-  const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+  const dx = b[0] - a[0], dz = b[1] - a[1], L = dmath.hypot(dx, dz);
   if (L < 1e-3) return;
   const ux = dx / L, uz = dz / L, nx = -uz, nz = ux; // normal (left of a→b in xz)
   // three.js yaw so that local +x runs along the wall: (cos, −sin) = (ux, uz) → yaw = atan2(−uz, ux)
-  const yaw = Math.atan2(-uz, ux);
+  const yaw = dmath.atan2(-uz, ux);
   for (const [u0, v0, u1, v1] of wallRects(L, y1 - y0, ops)) {
     const um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
     const c: V3 = [a[0] + ux * um + nx * inset, y0 + vm, a[1] + uz * um + nz * inset];
@@ -176,7 +177,7 @@ function wall(frame: "ship" | "world", k: string, a: [number, number], b: [numbe
 function stair(frame: "ship" | "world", k: string, bottom: [number, number], dir: [number, number], w: number, yb: number, yt: number, run = 0.3, surf: Surface = "wood") {
   const n = Math.max(2, Math.round((yt - yb) / 0.29));
   const rise = (yt - yb) / n;
-  const yaw = Math.atan2(-dir[1], dir[0]);
+  const yaw = dmath.atan2(-dir[1], dir[0]);
   for (let i = 1; i < n; i++) {
     const s = (i - 0.5) * run;
     const top = yb + i * rise;
@@ -230,7 +231,7 @@ function hullWalls(y0: number, y1: number, xa: number, xb: number, k = "lining")
     const ym = (y0 + y1) / 2;
     const h0 = hb(x0, ym), h1 = hb(x1, ym);
     const a: [number, number] = [x0, side * h0], b: [number, number] = [x1, side * h1];
-    const L = Math.hypot(x1 - x0, h1 - h0);
+    const L = dmath.hypot(x1 - x0, h1 - h0);
     // openings on this segment (u measured from a along the segment ≈ x − x0 scaled)
     const ops: Opening[] = HULL_OPS.filter((o) => o.side === side && o.x1 > x0 && o.x0 < x1 && o.y1 > y0 && o.y0 < y1)
       .map((o) => ({ u0: (o.x0 - x0) * L / (x1 - x0), u1: (o.x1 - x0) * L / (x1 - x0), v0: o.y0 - y0, v1: o.y1 - y0, kind: o.kind }));
@@ -395,7 +396,7 @@ export const HATCH_GUN: Hole = { x0: -6.2, x1: -1.9, z0: -1.15, z1: 1.15 };   //
   // tread (the stair keeps its full clear width; the client draws stringer + balusters + handrail at the same face)
   const stairRail = (bx: number, zEdge: number, dx: number, yb: number, yt: number) => {
     const n = Math.max(2, Math.round((yt - yb) / 0.29)), rise = (yt - yb) / n;
-    for (let i = 1; i < n; i++) { const top = yb + i * rise; P({ k: "srail", c: [bx + dx * (i - 0.5) * 0.3, (yb + top + 0.95) / 2, zEdge], h: [0.15, (top + 0.95 - yb) / 2, 0.05], yaw: Math.atan2(0, dx), f: "ship", col: 1, surf: "wood" }); }
+    for (let i = 1; i < n; i++) { const top = yb + i * rise; P({ k: "srail", c: [bx + dx * (i - 0.5) * 0.3, (yb + top + 0.95) / 2, zEdge], h: [0.15, (top + 0.95 - yb) / 2, 0.05], yaw: dmath.atan2(0, dx), f: "ship", col: 1, surf: "wood" }); }
   };
   for (const s of [1, -1]) stairRail(H.qdFront + 2.75, s * (4.6 - 0.6 - 0.05), -1, LV.main, LV.qd);
   stairRail(H.poopFront + 2.75, -SH * (4.0 - 0.6 - 0.05), -1, LV.qd, LV.poop);
@@ -427,23 +428,23 @@ export const HATCH_GUN: Hole = { x0: -6.2, x1: -1.9, z0: -1.15, z1: 1.15 };   //
     for (let i = 1; i < n; i++) {
       const a = SPIRAL.a0 + i * da, top = LV.main + i * rise;
       // tread: radial board (local x = radial), thin, 0.36 m wide (tangential)
-      S("peg", [mm.x + Math.cos(a) * rm, top - 0.06, Math.sin(a) * rm], [hr, 0.06, 0.26], 1, -a, "wood");
+      S("peg", [mm.x + dmath.cos(a) * rm, top - 0.06, dmath.sin(a) * rm], [hr, 0.06, 0.26], 1, -a, "wood");
       // the outer guard rail (rope + stanchions): a kong running round the spiral slides along it instead of flying off
       // (open for the first 2 treads = the way on, and the last 3 = the way off onto the nest ring)
-      if (i > 2 && i < n - 3) S("spiralrail", [mm.x + Math.cos(a) * (SPIRAL.rOut + 0.06), top + 0.55, Math.sin(a) * (SPIRAL.rOut + 0.06)], [0.04, 0.55, 0.42], 1, -a, "wood", { noShoot: true });
+      if (i > 2 && i < n - 3) S("spiralrail", [mm.x + dmath.cos(a) * (SPIRAL.rOut + 0.06), top + 0.55, dmath.sin(a) * (SPIRAL.rOut + 0.06)], [0.04, 0.55, 0.42], 1, -a, "wood", { noShoot: true });
     }
     // the nest ring: 10 boards around the mast between rIn and rOut (the spiral comes up inside it)
     const NS = 10;
     for (let i = 0; i < NS; i++) {
       const a = (i + 0.5) * (Math.PI * 2) / NS, r = (NEST.rIn + NEST.rOut) / 2;
-      const half = Math.tan(Math.PI / NS) * NEST.rOut + 0.05;
-      S("nest", [mm.x + Math.cos(a) * r, NEST.y - 0.1, Math.sin(a) * r], [(NEST.rOut - NEST.rIn) / 2, 0.1, half], 1, -a);
+      const half = dmath.tan(Math.PI / NS) * NEST.rOut + 0.05;
+      S("nest", [mm.x + dmath.cos(a) * r, NEST.y - 0.1, dmath.sin(a) * r], [(NEST.rOut - NEST.rIn) / 2, 0.1, half], 1, -a);
       // rail (1.05 m) on the outer edge
-      S("nestrail", [mm.x + Math.cos(a) * (NEST.rOut - 0.06), NEST.y + RAIL / 2, Math.sin(a) * (NEST.rOut - 0.06)], [0.06, RAIL / 2, half], 1, -a);
+      S("nestrail", [mm.x + dmath.cos(a) * (NEST.rOut - 0.06), NEST.y + RAIL / 2, dmath.sin(a) * (NEST.rOut - 0.06)], [0.06, RAIL / 2, half], 1, -a);
     }
     // the landing board where the last tread meets the ring
     const aL = SPIRAL.a0 + n * da;
-    S("nest", [mm.x + Math.cos(aL) * rm, NEST.y - 0.1, Math.sin(aL) * rm], [hr, 0.1, 0.32], 1, -aL);
+    S("nest", [mm.x + dmath.cos(aL) * rm, NEST.y - 0.1, dmath.sin(aL) * rm], [hr, 0.1, 0.32], 1, -aL);
   }
   // ---- the bowsprit (visual; a thin collider so bullets hit it)
   // ---- furniture & cover (ship frame): cannons on the gun deck, cargo in the hold, cabin furniture, deck cargo
@@ -479,7 +480,7 @@ export const HATCH_GUN: Hole = { x0: -6.2, x1: -1.9, z0: -1.15, z1: 1.15 };   //
   // the fallen main course yard across the waist (collides in 4 segments: step over its low end, vault the rest)
   {
     const [ax, ay, az] = FALLEN_YARD.a, [bx, by, bz] = FALLEN_YARD.b;
-    const yaw = Math.atan2(-(bz - az), bx - ax), L = Math.hypot(bx - ax, bz - az);
+    const yaw = dmath.atan2(-(bz - az), bx - ax), L = dmath.hypot(bx - ax, bz - az);
     for (let i = 0; i < 4; i++) {
       const t0 = i / 4, t1 = (i + 1) / 4, tm = (t0 + t1) / 2;
       const top = ay + (by - ay) * t1 + 0.2;
@@ -496,15 +497,15 @@ export const LANDING = { x: 64.0, z: -668.0, top: 3.4, hx: 2.6, hz: 2.2, yaw: 0.
 /** the rope bridge planks (world): from the landing's platform edge up to the gangway, sagging */
 export interface Plank { x: number; y: number; z: number; yaw: number; len: number }
 export const BRIDGE: { planks: Plank[]; a: V3; b: V3; w: number } = (() => {
-  const cy = Math.cos(LANDING.yaw), sy = Math.sin(LANDING.yaw);
+  const cy = dmath.cos(LANDING.yaw), sy = dmath.sin(LANDING.yaw);
   void cy; void sy;
   const b: V3 = GANGWAY;
   // start: the landing's north-west edge, toward the ship
-  const dirx = b[0] - LANDING.x, dirz = b[2] - LANDING.z, dl = Math.hypot(dirx, dirz);
+  const dirx = b[0] - LANDING.x, dirz = b[2] - LANDING.z, dl = dmath.hypot(dirx, dirz);
   const a: V3 = [LANDING.x + (dirx / dl) * 1.9, LANDING.top, LANDING.z + (dirz / dl) * 1.9];
-  const L = Math.hypot(b[0] - a[0], b[2] - a[2]);
+  const L = dmath.hypot(b[0] - a[0], b[2] - a[2]);
   const n = Math.round(L / 0.42);
-  const yaw = Math.atan2(-(b[2] - a[2]), b[0] - a[0]);
+  const yaw = dmath.atan2(-(b[2] - a[2]), b[0] - a[0]);
   const planks: Plank[] = [];
   const sag = 0.18;   // (a taut, sure-footed gangway, not a wobbly rope bridge)
   for (let i = 0; i <= n; i++) {
@@ -520,11 +521,11 @@ export const BRIDGE: { planks: Plank[]; a: V3; b: V3; w: number } = (() => {
   for (let i = 0; i < pl.length - 1; i += 2) {
     const j = Math.min(pl.length - 1, i + 2);
     const x = (pl[i].x + pl[j].x) / 2, z = (pl[i].z + pl[j].z) / 2, y = (pl[i].y + pl[j].y) / 2;
-    const len = Math.hypot(pl[j].x - pl[i].x, pl[j].z - pl[i].z) + 0.42;
+    const len = dmath.hypot(pl[j].x - pl[i].x, pl[j].z - pl[i].z) + 0.42;
     Wd("bridgecol", [x, y - 0.06, z], [len / 2, 0.06, BRIDGE.w / 2], 2, pl[i].yaw);
     for (const s of [1, -1]) {
-      const nx = -Math.sin(pl[i].yaw) * 0 + Math.sin(pl[i].yaw) * s * (BRIDGE.w / 2 + 0.05);
-      const nz = Math.cos(pl[i].yaw) * s * (BRIDGE.w / 2 + 0.05);
+      const nx = -dmath.sin(pl[i].yaw) * 0 + dmath.sin(pl[i].yaw) * s * (BRIDGE.w / 2 + 0.05);
+      const nz = dmath.cos(pl[i].yaw) * s * (BRIDGE.w / 2 + 0.05);
       Wd("ropewall", [x + nx, y + 0.5, z + nz], [len / 2, 0.5, 0.04], 2, pl[i].yaw, "fabric", { noShoot: true });
     }
   }
@@ -539,8 +540,8 @@ export const BOARDWALK = { a: [65.7, -664.6] as [number, number], b: [64.2, -652
 {
   // cover on the landing: a barrel pair on each of the two platform corners off the boardwalk → bridge line
   // (so the bridge's approach is no bare deck): the corners farthest from that line
-  const L = LANDING, c = Math.cos(L.yaw), sn = Math.sin(L.yaw), A = BOARDWALK.a, Bq = BRIDGE.a;
-  const ux = Bq[0] - A[0], uz = Bq[2] - A[1], ul = Math.hypot(ux, uz);
+  const L = LANDING, c = dmath.cos(L.yaw), sn = dmath.sin(L.yaw), A = BOARDWALK.a, Bq = BRIDGE.a;
+  const ux = Bq[0] - A[0], uz = Bq[2] - A[1], ul = dmath.hypot(ux, uz);
   const off = (x: number, z: number) => Math.abs(((x - A[0]) * uz - (z - A[1]) * ux) / ul);
   const corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sz]) => { const lx = sx * (L.hx - 0.55), lz = sz * (L.hz - 0.55); return [L.x + lx * c + lz * sn, L.z - lx * sn + lz * c] as [number, number]; })
     .sort((p, q) => off(q[0], q[1]) - off(p[0], p[1])).slice(0, 2);
@@ -548,8 +549,8 @@ export const BOARDWALK = { a: [65.7, -664.6] as [number, number], b: [64.2, -652
 }
 {
   const B = BOARDWALK, L = LANDING;
-  const dx = B.b[0] - B.a[0], dz = B.b[1] - B.a[1], len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len;
-  const yaw = Math.atan2(-uz, ux);
+  const dx = B.b[0] - B.a[0], dz = B.b[1] - B.a[1], len = dmath.hypot(dx, dz), ux = dx / len, uz = dz / len;
+  const yaw = dmath.atan2(-uz, ux);
   // deck (collider + visual) in 3 m sections (piles drawn by the client under each joint)
   const nSec = Math.ceil(len / 3);
   for (let i = 0; i < nSec; i++) {
@@ -557,7 +558,7 @@ export const BOARDWALK = { a: [65.7, -664.6] as [number, number], b: [64.2, -652
     Wd("bwdeck", [B.a[0] + ux * sm, B.y - 0.1, B.a[1] + uz * sm], [(s1 - s0) / 2 + 0.01, 0.1, B.w / 2], 1, yaw);
     // the piles the client draws at each section's start (r 0.13): inscribed colliders down into the seabed
     for (const sd of [-1, 1]) {
-      const lx = -(s1 - s0) / 2 - 0.01 + 0.1, lz = sd * (B.w / 2 - 0.1), c = Math.cos(yaw), sn = Math.sin(yaw);
+      const lx = -(s1 - s0) / 2 - 0.01 + 0.1, lz = sd * (B.w / 2 - 0.1), c = dmath.cos(yaw), sn = dmath.sin(yaw);
       Wd("pile", [B.a[0] + ux * sm + lx * c + lz * sn, (B.y - 0.2 - 3.5) / 2, B.a[1] + uz * sm - lx * sn + lz * c], [0.09, (B.y - 0.2 + 3.5) / 2, 0.09], 2, yaw);
     }
   }
@@ -606,7 +607,7 @@ export const BOARDING = (() => {
   return { n, rise, run, W, yLow, yTop, cOff, k0, out, edgeOff: seaOff(edge), at };
 })();
 {
-  const Bd = BOARDING, yaw = Math.atan2(-KEEL[1], KEEL[0]);
+  const Bd = BOARDING, yaw = dmath.atan2(-KEEL[1], KEEL[0]);
   // treads: 0.24 m planks, the top one level with the deck; each overlaps the next by 2 cm
   for (let i = 0; i < Bd.n; i++) {
     const top = Bd.yTop - (Bd.n - 1 - i) * Bd.rise, k = Bd.k0 - (Bd.n - 1 - i) * Bd.run - Bd.run / 2;
@@ -641,7 +642,7 @@ export const BOARDING = (() => {
 /** the breach steps: crates stacked from the seabed, each a step (0.3 m) lower than the last, outward from the hull */
 export const BREACH_STEPS: Array<{ x: number; z: number; top: number }> = [];
 {
-  const xm = -4.9, floorW = shipToWorld(xm, LV.hold, -(hb(xm, LV.hold) - 0.3)), yaw = Math.atan2(-KEEL[1], KEEL[0]);
+  const xm = -4.9, floorW = shipToWorld(xm, LV.hold, -(hb(xm, LV.hold) - 0.3)), yaw = dmath.atan2(-KEEL[1], KEEL[0]);
   // the hull's shore-side reach (world, negative along SEA_N) between the waterline and the hold floor
   let out = 0;
   for (let y = LV.keel; y <= LV.hold + 0.4; y += 0.2) for (const x of [-6.4, -4.9, -3.4]) { const w = shipToWorld(x, y, -hb(x, y)); if (w[1] > -1.6 && w[1] < floorW[1] + 0.2) out = Math.min(out, seaOff(w)); }
@@ -680,7 +681,7 @@ export const SHACKS: Shack[] = [
 ];
 /** hut footprint → world (three yaw) */
 export function shackToWorld(s: Shack, lx: number, lz: number): [number, number] {
-  const c = Math.cos(s.yaw), sn = Math.sin(s.yaw);
+  const c = dmath.cos(s.yaw), sn = dmath.sin(s.yaw);
   return [s.x + lx * c + lz * sn, s.z - lx * sn + lz * c];
 }
 function shack(s: Shack) {
@@ -717,7 +718,7 @@ function shack(s: Shack) {
   if (s.porch > 0) {
     wp("porch", 0, s.y - 0.1, hd + s.porch / 2, [hw, 0.1, s.porch / 2]);
     wp("stiltskirt", 0, (s.y - 0.2 + s.groundY - 1.2) / 2, hd + s.porch / 2, [hw - 0.3, (s.y - 0.2 - (s.groundY - 1.2)) / 2, s.porch / 2 - 0.2], 2);
-    const c = Math.cos(s.yaw), sn = Math.sin(s.yaw);
+    const c = dmath.cos(s.yaw), sn = dmath.sin(s.yaw);
     // the stair climbs from the ground toward the porch (−local z), its top at the porch's front edge, in line with the door
     const dirW: [number, number] = [-sn, -c];
     const n = Math.max(2, Math.round((s.y - (s.groundY - 0.15)) / 0.29)), run = 0.3;
@@ -746,12 +747,12 @@ for (const s of SHACKS) shack(s);
  *  climbs to L1, an inside stair along −x (under a hole in L2) climbs to L2; a plank canopy tops it */
 export const TOWER = { x: 104.5, z: -642.5, yaw: 0.35, g: 1.2, w: 5.0, l1: 4.4, l2: 7.6, roof: 11.0 };
 export function towerToWorld(lx: number, lz: number): [number, number] {
-  const c = Math.cos(TOWER.yaw), sn = Math.sin(TOWER.yaw);
+  const c = dmath.cos(TOWER.yaw), sn = dmath.sin(TOWER.yaw);
   return [TOWER.x + lx * c + lz * sn, TOWER.z - lx * sn + lz * c];
 }
 {
   const T = TOWER, hw = T.w / 2;
-  const c = Math.cos(T.yaw), sn = Math.sin(T.yaw);
+  const c = dmath.cos(T.yaw), sn = dmath.sin(T.yaw);
   const toW = towerToWorld;
   /** the L2 stair hole spans lz HOLE_Z → hw (the inner stair's top meets its −z edge) */
   const HOLE_Z = hw - 1.0 - (Math.max(2, Math.round((T.l2 - T.l1) / 0.29)) - 1) * 0.27;
@@ -800,7 +801,7 @@ export const TREASURE: Array<[number, number, number]> = [[-4.3, -0.9, 1.25], [-
 /** the bonfire ring (front of the camp, between the boardwalk and the tent) */
 export const FIRE = { x: 51.5, z: -642.5, r: 1.25 };
 export function tentToWorld(lx: number, lz: number): [number, number] {
-  const c = Math.cos(TENT.yaw), sn = Math.sin(TENT.yaw);
+  const c = dmath.cos(TENT.yaw), sn = dmath.sin(TENT.yaw);
   return [TENT.x + lx * c + lz * sn, TENT.z - lx * sn + lz * c];
 }
 {
@@ -921,7 +922,7 @@ export function bluntCorners(p: P2[], minDeg = 105, f = 0.22): P2[] {
     for (let i = 0; i < q.length; i++) {
       const a = q[(i + q.length - 1) % q.length], b = q[i], c = q[(i + 1) % q.length];
       const ux = a[0] - b[0], uz = a[1] - b[1], vx = c[0] - b[0], vz = c[1] - b[1];
-      const ang = (Math.acos(Math.max(-1, Math.min(1, (ux * vx + uz * vz) / ((Math.hypot(ux, uz) * Math.hypot(vx, vz)) || 1)))) * 180) / Math.PI;
+      const ang = (dmath.acos(Math.max(-1, Math.min(1, (ux * vx + uz * vz) / ((dmath.hypot(ux, uz) * dmath.hypot(vx, vz)) || 1)))) * 180) / Math.PI;
       if (ang < minDeg) { out.push([b[0] + ux * f, b[1] + uz * f], [b[0] + vx * f, b[1] + vz * f]); cut = true; } else out.push(b);
     }
     q = out; if (!cut) break;
@@ -931,10 +932,10 @@ export function bluntCorners(p: P2[], minDeg = 105, f = 0.22): P2[] {
 export const centroid2 = (p: P2[]): P2 => { let x = 0, z = 0; for (const q of p) { x += q[0]; z += q[1]; } return [x / p.length, z / p.length]; };
 /** an irregular convex n-gon inscribed in the ellipse (sx, sz) at (x, z), rotated by the three.js yaw */
 export function rockPlan(x: number, z: number, sx: number, sz: number, yaw: number, seed: number, n: number, rough = 0.16): P2[] {
-  const rnd = rngOf(seed * 7 + 3), c = Math.cos(yaw), s = Math.sin(yaw), pts: P2[] = [];
+  const rnd = rngOf(seed * 7 + 3), c = dmath.cos(yaw), s = dmath.sin(yaw), pts: P2[] = [];
   for (let i = 0; i < n; i++) {
     const a = ((i + (rnd() - 0.5) * 0.5) / n) * Math.PI * 2, rho = 1 - rough + rough * rnd();
-    const lx = Math.cos(a) * rho * sx, lz = Math.sin(a) * rho * sz;
+    const lx = dmath.cos(a) * rho * sx, lz = dmath.sin(a) * rho * sz;
     pts.push([x + lx * c + lz * s, z - lx * s + lz * c]);
   }
   return bluntCorners(hull2(pts), 112, 0.25);
@@ -942,7 +943,7 @@ export function rockPlan(x: number, z: number, sx: number, sz: number, yaw: numb
 /** move every vertex toward the centroid by d[i] metres */
 export function shrink2(p: P2[], d: number[] | number): P2[] {
   const c = centroid2(p);
-  return p.map((q, i) => { const dx = c[0] - q[0], dz = c[1] - q[1], l = Math.hypot(dx, dz) || 1, k = Math.min(l * 0.9, typeof d === "number" ? d : d[i]) / l; return [q[0] + dx * k, q[1] + dz * k] as P2; });
+  return p.map((q, i) => { const dx = c[0] - q[0], dz = c[1] - q[1], l = dmath.hypot(dx, dz) || 1, k = Math.min(l * 0.9, typeof d === "number" ? d : d[i]) / l; return [q[0] + dx * k, q[1] + dz * k] as P2; });
 }
 export function inPoly2(p: P2[], x: number, z: number, pad = 0): boolean {
   return polyInside(p)(x, z, pad);
@@ -952,7 +953,7 @@ export function inPoly2(p: P2[], x: number, z: number, pad = 0): boolean {
 function polyInside(p: P2[]): (x: number, z: number, pad: number) => boolean {
   const c = centroid2(p), n = p.length, ax = new Float64Array(n), az = new Float64Array(n), nxs = new Float64Array(n), nzs = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    const a = p[i], b = p[(i + 1) % n], ex = b[0] - a[0], ez = b[1] - a[1], l = Math.hypot(ex, ez) || 1;
+    const a = p[i], b = p[(i + 1) % n], ex = b[0] - a[0], ez = b[1] - a[1], l = dmath.hypot(ex, ez) || 1;
     let nx = -ez / l, nz = ex / l; if ((c[0] - a[0]) * nx + (c[1] - a[1]) * nz < 0) { nx = -nx; nz = -nz; }
     ax[i] = a[0]; az[i] = a[1]; nxs[i] = nx; nzs[i] = nz;
   }
@@ -966,16 +967,16 @@ export function polyBoxes(p: P2[], y0: number, y1: number, surf: Surface = "ston
   const c = centroid2(p), out: Box[] = [], hy = (y1 - y0) / 2, cy = (y0 + y1) / 2, inside = polyInside(p);
   let minAp = Infinity;
   for (let i = 0; i < p.length; i++) {
-    const a = p[i], b = p[(i + 1) % p.length], ex = b[0] - a[0], ez = b[1] - a[1], l = Math.hypot(ex, ez);
+    const a = p[i], b = p[(i + 1) % p.length], ex = b[0] - a[0], ez = b[1] - a[1], l = dmath.hypot(ex, ez);
     if (l < 0.05) continue;
     let nx = -ez / l, nz = ex / l; if ((c[0] - a[0]) * nx + (c[1] - a[1]) * nz < 0) { nx = -nx; nz = -nz; }
     let d = (c[0] - a[0]) * nx + (c[1] - a[1]) * nz; minAp = Math.min(minAp, d);
     // the inner corners must stay inside the polygon (an acute neighbour would push them out)
     for (let k = 0; k < 12 && !(inside(a[0] + nx * d, a[1] + nz * d, -0.01) && inside(b[0] + nx * d, b[1] + nz * d, -0.01)); k++) d *= 0.85;
-    out.push({ c: [(a[0] + b[0]) / 2 + (nx * d) / 2, cy, (a[1] + b[1]) / 2 + (nz * d) / 2], h: [l / 2, hy, d / 2], yaw: Math.atan2(ez, ex), surf });
+    out.push({ c: [(a[0] + b[0]) / 2 + (nx * d) / 2, cy, (a[1] + b[1]) / 2 + (nz * d) / 2], h: [l / 2, hy, d / 2], yaw: dmath.atan2(ez, ex), surf });
   }
   // the centre: a square around the centroid (closes the fan where an edge's foot falls outside it)
-  const q = minAp * 0.68, yaw0 = Math.atan2(p[1][1] - p[0][1], p[1][0] - p[0][0]);
+  const q = minAp * 0.68, yaw0 = dmath.atan2(p[1][1] - p[0][1], p[1][0] - p[0][0]);
   if (q > 0.1) out.push({ c: [c[0], cy, c[1]], h: [q, hy, q], yaw: yaw0, surf });
   // any hole left (a short edge next to a long one): inscribed strips across the polygon, only where a hole is
   // (each box's cos / sin once: `out` only grows, so box i's pair is computed the first time a test reaches it)
@@ -983,13 +984,13 @@ export function polyBoxes(p: P2[], y0: number, y1: number, surf: Surface = "ston
   const inAny = (x: number, z: number) => {
     for (let i = 0; i < out.length; i++) {
       const b = out[i];
-      if (i === cs.length) { const yw = b.yaw ?? 0; cs.push(Math.cos(yw)); sn.push(Math.sin(yw)); }
+      if (i === cs.length) { const yw = b.yaw ?? 0; cs.push(dmath.cos(yw)); sn.push(dmath.sin(yw)); }
       const dx = x - b.c[0], dz = z - b.c[2];
       if (Math.abs(dx * cs[i] + dz * sn[i]) <= b.h[0] + 1e-3 && Math.abs(-dx * sn[i] + dz * cs[i]) <= b.h[2] + 1e-3) return true;
     }
     return false;
   };
-  const ux = Math.cos(yaw0), uz = Math.sin(yaw0), vx = -uz, vz = ux;
+  const ux = dmath.cos(yaw0), uz = dmath.sin(yaw0), vx = -uz, vz = ux;
   let v0 = Infinity, v1 = -Infinity, u0 = Infinity, u1 = -Infinity;
   for (const [x, z] of p) { const u = (x - c[0]) * ux + (z - c[1]) * uz, v = (x - c[0]) * vx + (z - c[1]) * vz; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
   // the chord of the polygon along u at a given v
@@ -1040,20 +1041,20 @@ function rockSolid(s: SolidSpec): RockSolid {
   const tp = s.plan.map(() => s.taper[0] + (s.taper[1] - s.taper[0]) * rnd());
   const ci = s.plan.map(() => s.chIn * (0.7 + 0.6 * rnd()));
   const dk = s.plan.map(() => 0.6 + 0.8 * rnd());
-  const c0 = centroid2(s.plan), Rv = s.plan.map((q) => Math.hypot(q[0] - c0[0], q[1] - c0[1]));
+  const c0 = centroid2(s.plan), Rv = s.plan.map((q) => dmath.hypot(q[0] - c0[0], q[1] - c0[1]));
   const la = rnd() * Math.PI * 2, lean = s.lean ?? 0, tw = (s.twist ?? 0) * (rnd() < 0.5 ? -1 : 1), dome = s.dome ?? 0;
   const yw = s.top - s.ch, H = Math.max(0.1, s.top - s.yg);
   const ring = (y: number): P2[] => {
     const h = Math.max(0, Math.min(1, (y - s.yg) / H));
-    const sh = shrink2(s.plan, s.plan.map((_, i) => tp[i] * Math.max(0, Math.min(y, yw) - s.yg) + dome * Rv[i] * dk[i] * Math.pow(h, 2.4) + (y > yw ? (ci[i] * (y - yw)) / s.ch : 0)));
-    const ang = tw * h, ca = Math.cos(ang), sa = Math.sin(ang), ox = Math.cos(la) * lean * Math.pow(h, 1.5), oz = Math.sin(la) * lean * Math.pow(h, 1.5);
+    const sh = shrink2(s.plan, s.plan.map((_, i) => tp[i] * Math.max(0, Math.min(y, yw) - s.yg) + dome * Rv[i] * dk[i] * dmath.pow(h, 2.4) + (y > yw ? (ci[i] * (y - yw)) / s.ch : 0)));
+    const ang = tw * h, ca = dmath.cos(ang), sa = dmath.sin(ang), ox = dmath.cos(la) * lean * dmath.pow(h, 1.5), oz = dmath.sin(la) * lean * dmath.pow(h, 1.5);
     return convexify(sh.map(([x, z]) => { const dx = x - c0[0], dz = z - c0[1]; return [c0[0] + dx * ca - dz * sa + ox, c0[1] + dx * sa + dz * ca + oz] as P2; }));
   };
   // adaptive rings: a ring where the shape has moved maxStep (the drawn facet between two rings is their lerp; the
   // sim band = that lerp at mid-height → |drawn − collider| ≤ maxStep / 2)
   const rings = [{ y: s.y0, pts: ring(s.y0) }, { y: s.yg, pts: ring(s.yg) }];
   let last = rings[1];
-  const dist = (a: P2[], b: P2[]) => Math.max(...a.map((q, i) => Math.hypot(q[0] - b[i][0], q[1] - b[i][1])));
+  const dist = (a: P2[], b: P2[]) => Math.max(...a.map((q, i) => dmath.hypot(q[0] - b[i][0], q[1] - b[i][1])));
   for (let y = s.yg + 0.02; y < s.top - 1e-6; y += 0.02) {
     const cand = ring(y), nxt = ring(Math.min(s.top, y + 0.02));
     const crossW = y < yw && y + 0.02 >= yw;
@@ -1192,7 +1193,7 @@ export const HEADLAND_PALMS: Array<{ x: number; z: number; y: number; yaw: numbe
     const n = Math.max(2, Math.round(((x1 - x0) * (z1 - z0)) / 70));
     for (let k = 0, t = 0; k < n && t < 200; t++) {
       const x = x0 + rnd() * (x1 - x0), z = z0 + rnd() * (z1 - z0);
-      if (!inPoly2(ring, x, z, 2.0) || out.some((p) => Math.hypot(p.x - x, p.z - z) < 3.5)) continue;
+      if (!inPoly2(ring, x, z, 2.0) || out.some((p) => dmath.hypot(p.x - x, p.z - z) < 3.5)) continue;
       out.push({ x, z, y: T.top, yaw: rnd() * 6.28, s: 0.9 + rnd() * 0.35 }); k++;
     }
   });
@@ -1201,7 +1202,7 @@ export const HEADLAND_PALMS: Array<{ x: number; z: number; y: number; yaw: numbe
 for (const p of HEADLAND_PALMS) Wd("trunk", [p.x, p.y + 2.0, p.z], [0.17, 2.6, 0.17], 2, 0, "wood");
 /** THE LANDING rock under the bridge platform: a chamfered block (its top = the platform's underside) */
 export const LANDING_SOLID: RockSolid = (() => {
-  const L = LANDING, c = Math.cos(L.yaw), s = Math.sin(L.yaw), k = 0.55, hx = L.hx, hz = L.hz;
+  const L = LANDING, c = dmath.cos(L.yaw), s = dmath.sin(L.yaw), k = 0.55, hx = L.hx, hz = L.hz;
   const loc: P2[] = [[-hx + k, -hz], [hx - k, -hz], [hx, -hz + k], [hx, hz - k], [hx - k, hz], [-hx + k, hz], [-hx, hz - k], [-hx, -hz + k]];
   const plan = hull2(loc.map(([lx, lz]) => [L.x + lx * c + lz * s, L.z - lx * s + lz * c] as P2));
   return rockSolid({ plan, y0: -5.5, yg: -3.2, top: L.top - 0.24, taper: [0.03, 0.09], ch: 0.3, chIn: 0.25, maxStep: 0.24, band: 2.4, seed: 31, colBot: -5.5, kind: "landing" });
@@ -1325,7 +1326,7 @@ function liningZ(sd: number, x: number, y: number): number | null {
   let best: number | null = null;
   for (const p of PIECES) {
     if (p.k !== "lining" || p.f !== "ship" || Math.sign(p.c[2]) !== sd || Math.abs(y - p.c[1]) > p.h[1] + 0.3) continue;
-    const yw = p.yaw ?? 0, cs = Math.cos(yw), sn = Math.sin(yw);
+    const yw = p.yaw ?? 0, cs = dmath.cos(yw), sn = dmath.sin(yw);
     // along-wall coordinate of x (local x axis = (cos, −sin) in (x, z)) — the chord spans ±hx
     const u = (x - p.c[0]) / Math.max(0.2, cs);
     if (Math.abs(u) > p.h[0] + 0.05) continue;
@@ -1346,7 +1347,7 @@ export const SHIP_LAYOUTS: InteriorLayout[] = SHIP_ROOMS.map((room) => {
   // the wall an item stands against: its rect touches that wall AND it faces away from it (kit wall yaw: side 0 → π,
   // 1 → −π/2, 2 → 0, 3 → π/2); decor faces the same way
   const SIDE_YAW = [Math.PI, -Math.PI / 2, 0, Math.PI / 2];
-  const yawIs = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 0.35;
+  const yawIs = (a: number, b: number) => Math.abs(dmath.atan2(dmath.sin(a - b), dmath.cos(a - b))) < 0.35;
   const sideOf = (r: { x0: number; z0: number; x1: number; z1: number }, yaw: number): Side | -1 => {
     const touch = [r.z1 > hd - 0.12, r.x1 > hw - 0.12, r.z0 < -hd + 0.12, r.x0 < -hw + 0.12];
     for (const s of [0, 1, 2, 3] as Side[]) if (touch[s] && yawIs(yaw, SIDE_YAW[s])) return s;
@@ -1441,7 +1442,7 @@ let _seamWalls: WPiece[] | null = null;
 export function inHullWall(x: number, y: number, z: number): boolean {
   _seamWalls ??= PIECES.filter((p) => p.f === "ship" && SEAM_WALLS.has(p.k));
   return _seamWalls.some((p) => {
-    const yaw = p.yaw ?? 0, c = Math.cos(yaw), s = Math.sin(yaw), dx = x - p.c[0], dz = z - p.c[2];
+    const yaw = p.yaw ?? 0, c = dmath.cos(yaw), s = dmath.sin(yaw), dx = x - p.c[0], dz = z - p.c[2];
     const drop = p.k === "lining" ? 0.35 : 0;
     return Math.abs(dx * c - dz * s) <= p.h[0] + 1e-3 && Math.abs(dx * s + dz * c) <= p.h[2] + 1e-3 && y >= p.c[1] - p.h[1] - drop && y <= p.c[1] + p.h[1];
   });
@@ -1454,7 +1455,7 @@ function wallFrom(x: number, y: number, sd: 1 | -1, zmin: number): number {
   for (const p of _seamWalls) {
     const drop = p.k === "lining" ? 0.35 : 0;
     if (y < p.c[1] - p.h[1] - drop || y > p.c[1] + p.h[1]) continue;
-    const yaw = p.yaw ?? 0, c = Math.cos(yaw), s = Math.sin(yaw), dx = x - p.c[0];
+    const yaw = p.yaw ?? 0, c = dmath.cos(yaw), s = dmath.sin(yaw), dx = x - p.c[0];
     // u = dx·c − dz·s, v = dx·s + dz·c with dz = sd·z − pz  →  |A + B·z| ≤ h
     let lo = -Infinity, hi = Infinity;
     for (const [A, B, h] of [[dx * c + p.c[2] * s, -sd * s, p.h[0] + 1e-3], [dx * s - p.c[2] * c, sd * c, p.h[2] + 1e-3]] as Array<[number, number, number]>) {
@@ -1500,7 +1501,7 @@ export function deckSkirts(d: Deck): Array<{ sd: 1 | -1; pts: Array<[number, num
  *  each placed at its own rolled centre: a drawn face and its collider then agree within sin(9°)·0.85 ≈ 0.13 m across the
  *  beam, sin(4.5°)·0.85 ≈ 0.07 m along it and ±0.08 m up and down (tolerance 0.15 m). */
 export function shipBoxes(c: V3, h: V3, yaw: number, surf: Surface, noShoot = false, split = true): Box[] {
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cy = dmath.cos(yaw), sy = dmath.sin(yaw);
   // local x spans (cos, −sin)·2hx of the frame's (x, z), local z (sin, cos)·2hz: both the list (across the beam, z)
   // and the trim (along the keel, x) tilt a long box, so its footprint is cut to ≤ 1.7 m along both frame axes
   // (cells ≤ 1.25 m across the beam — the list — and ≤ 1.4 m along it — the trim: 0.63·sin 9° + 0.7·sin 4.5° < 0.15 m)
@@ -1550,9 +1551,9 @@ export const clearings: Array<{ x: number; z: number; r: number } | { x: number;
 /** the nearest spot (≤ 0.9 m away) where a loot capsule rests on ONE collider top without touching anything else — the
  *  match generator's validateSpot test (no push, no lift, no head bump), done analytically on this POI's own boxes */
 function settleSpot(p: V3): V3 {
-  const R = 0.36, near = colliders.filter((b) => Math.hypot(b.c[0] - p[0], b.c[2] - p[2]) < Math.hypot(b.h[0], b.h[2]) + 1.5 && Math.abs(b.c[1] - p[1]) < b.h[1] + 3);
-  const loc = (b: Box, x: number, z: number) => { const yw = b.yaw ?? 0, c = Math.cos(yw), s = Math.sin(yw), dx = x - b.c[0], dz = z - b.c[2]; return [dx * c + dz * s, -dx * s + dz * c]; };
-  const dist = (b: Box, x: number, z: number) => { const [lx, lz] = loc(b, x, z); return Math.hypot(Math.max(0, Math.abs(lx) - b.h[0]), Math.max(0, Math.abs(lz) - b.h[2])); };
+  const R = 0.36, near = colliders.filter((b) => dmath.hypot(b.c[0] - p[0], b.c[2] - p[2]) < dmath.hypot(b.h[0], b.h[2]) + 1.5 && Math.abs(b.c[1] - p[1]) < b.h[1] + 3);
+  const loc = (b: Box, x: number, z: number) => { const yw = b.yaw ?? 0, c = dmath.cos(yw), s = dmath.sin(yw), dx = x - b.c[0], dz = z - b.c[2]; return [dx * c + dz * s, -dx * s + dz * c]; };
+  const dist = (b: Box, x: number, z: number) => { const [lx, lz] = loc(b, x, z); return dmath.hypot(Math.max(0, Math.abs(lx) - b.h[0]), Math.max(0, Math.abs(lz) - b.h[2])); };
   // well inside (5 cm): the spot is rounded to the centimetre when exported
   const inside = (b: Box, x: number, z: number) => { const [lx, lz] = loc(b, x, z); return Math.abs(lx) < b.h[0] - 0.05 && Math.abs(lz) < b.h[2] - 0.05; };
   const ok = (x: number, z: number): number | null => {
@@ -1569,7 +1570,7 @@ function settleSpot(p: V3): V3 {
   for (let r = 0; r <= 0.9 + 1e-6; r += 0.1) {
     const n = r ? 16 : 1;
     for (let k = 0; k < n; k++) {
-      const a = (k / n) * Math.PI * 2, x = p[0] + Math.cos(a) * r, z = p[2] + Math.sin(a) * r, fy = ok(x, z);
+      const a = (k / n) * Math.PI * 2, x = p[0] + dmath.cos(a) * r, z = p[2] + dmath.sin(a) * r, fy = ok(x, z);
       if (fy !== null) return [x, fy, z];
     }
   }
@@ -1610,7 +1611,7 @@ export const LOOT_SPOTS: { chests: [number, number, number, number][]; floor: [n
         const lz = side === 1 || side === 3 ? u : side === 0 ? hd - 0.55 : -hd + 0.55;
         if (r.openings.some((o) => o.side === side && o.kind !== "window" && Math.abs(u - o.at) < o.w / 2 + 0.7)) continue;
         if (rects.some((q) => lx > q[0] && lx < q[2] && lz > q[1] && lz < q[3])) continue;
-        if (took.some((t) => Math.hypot(t[0] - lx, t[1] - lz) < 2.4)) continue;
+        if (took.some((t) => dmath.hypot(t[0] - lx, t[1] - lz) < 2.4)) continue;
         // the hull lining curves in: keep the slot inside the hull at the room's height (0.55 m clear of it)
         if (Math.abs(r.z + lz) > hb(r.x + lx, r.y + 0.5) - 0.85) continue;
         took.push([lx, lz]);
@@ -1619,7 +1620,7 @@ export const LOOT_SPOTS: { chests: [number, number, number, number][]; floor: [n
     }
   });
   // crow's nest
-  { const a = Math.PI * 1.25, r = (NEST.rIn + NEST.rOut) / 2, w = sp(MASTS[1].x + Math.cos(a) * r, NEST.y, Math.sin(a) * r); chests.push([+w[0].toFixed(2), +w[1].toFixed(2), +w[2].toFixed(2), +shipYaw(-a).toFixed(3)]); }
+  { const a = Math.PI * 1.25, r = (NEST.rIn + NEST.rOut) / 2, w = sp(MASTS[1].x + dmath.cos(a) * r, NEST.y, dmath.sin(a) * r); chests.push([+w[0].toFixed(2), +w[1].toFixed(2), +w[2].toFixed(2), +shipYaw(-a).toFixed(3)]); }
   // the stilt huts: the interiors kit's slots (world frame)
   for (const room of INTERIOR_ROOMS) {
     const l = furnishRoom(room).loot;
@@ -1628,7 +1629,7 @@ export const LOOT_SPOTS: { chests: [number, number, number, number][]; floor: [n
   }
   // camp: the tent stores, the lookout top
   { const [x, z] = tentToWorld(-0.3, -1.3); chests.push([+x.toFixed(2), 0.49, +z.toFixed(2), TENT.yaw]); }
-  { const T = TOWER, c = Math.cos(T.yaw), s = Math.sin(T.yaw); chests.push([+(T.x + 0.9 * c - 0.9 * s).toFixed(2), T.l2, +(T.z - 0.9 * s - 0.9 * c).toFixed(2), T.yaw]); }
+  { const T = TOWER, c = dmath.cos(T.yaw), s = dmath.sin(T.yaw); chests.push([+(T.x + 0.9 * c - 0.9 * s).toFixed(2), T.l2, +(T.z - 0.9 * s - 0.9 * c).toFixed(2), T.yaw]); }
   // floor loot: open decks, the hold waist, the bridge landing, the camp, the beach
   fl(-3.0, LV.main, SH * 1.5); fl(8.0, LV.main, 0.5); fl(-8.0, LV.qd, SH * 2.2); fl(13.2, LV.fc, 1.0);
   fl(-15.0, LV.poop, 0); fl(-0.5, LV.hold, -SH * 1.5); fl(2.0, LV.gun, SH * 2.2);

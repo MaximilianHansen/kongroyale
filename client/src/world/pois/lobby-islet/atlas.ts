@@ -6,8 +6,7 @@
 //   TARMAC / ROCK = small tiling sheets (repeat wrap).
 // Every region is painted in metres (see paint.ts) so geometry maps real sizes without stretching.
 import * as THREE from "three";
-import { KTX2Loader } from "three/addons/loaders/KTX2Loader.js";
-import { assetUrl } from "../../../engine/assets";
+import type { Assets } from "../../../engine/assets";
 import { Sheet, type Region, type UVRect, type Px, fbm, vnoise, cell, clamp01, sstep, mix, hex, rng } from "./paint";
 
 const R = (x: number, y: number, w: number, h: number, mu: number, mv: number): Region => ({ x, y, w, h, mu, mv });
@@ -645,16 +644,12 @@ export function bakeSheetPNGs(): Record<string, string> {
   return out;
 }
 
-let ktx2: KTX2Loader | null = null;
 /** load the baked KTX2 atlases (≈0.1–0.3 s, GPU-compressed); falls back to painting them (≈3.4 s) */
-export async function loadAtlases(renderer: THREE.WebGLRenderer, aniso: number): Promise<AtlasSet> {
+export async function loadAtlases(assets: Assets, aniso: number): Promise<AtlasSet> {
   const t0 = performance.now();
   try {
-    // local copy of three r186 examples/jsm/libs/basis (no CDN round trip on the critical path)
-    ktx2 ??= new KTX2Loader().setTranscoderPath(assetUrl("assets/actors/basis/")).setWorkerLimit(4).detectSupport(renderer);
-    const base = assetUrl(`assets/actors/lobby/`);
     const one = async (id: SheetId, kind: "color" | "normal" | "orm") => {
-      const t = await ktx2!.loadAsync(`${base}lobby-${ATLAS_BAKE}-${id}-${kind}.ktx2`);
+      const t = await assets.compressedTexture(`assets/actors/lobby/lobby-${ATLAS_BAKE}-${id}-${kind}.ktx2`);
       t.colorSpace = kind === "color" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       t.anisotropy = aniso; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
       t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;

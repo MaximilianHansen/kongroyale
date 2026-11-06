@@ -1,4 +1,4 @@
-export { lowMemoryDevice, nextNearModule } from "./low-mem";
+export { lowMemoryDevice, nextNearModule, evictStreamed, trimStreamed, moduleCtx } from "./low-mem";
 const POST_BUILD_EXPECT_MS = { afterBuild: 750, game: 11200, settle: 4300 };
 const POST_MS_PER_PRE_READY_BUILD_MS = 0.27;
 const POST_BUILD_STORE_KEY = "kr-boot-post-v1";
@@ -12,10 +12,29 @@ function storedPostBuildMs(): number | null {
   } catch { return null; }
 }
 
-export function postBuildEstimate(factor: number) {
+function postBuildEstimate(factor: number) {
   const stored = storedPostBuildMs();
   const ms = stored ?? (POST_BUILD_EXPECT_MS.afterBuild + POST_BUILD_EXPECT_MS.game + POST_BUILD_EXPECT_MS.settle) * factor;
   return { ms, stored: stored !== null, rest: (preMs: number) => ms + POST_MS_PER_PRE_READY_BUILD_MS * preMs };
+}
+
+export function preReadyPlanner(est: (id: string) => number, factor: number, readyBy: number, fixedMs: number, measured: boolean) {
+  const post = postBuildEstimate(factor);
+  const fixedRest = (n: number) => (fixedMs + 120 * n) * factor;
+  const rest = measured ? (_n: number, preMs: number) => post.rest(preMs) : fixedRest;
+  const plan = (ids: string[], restMs: (n: number, preMs: number) => number) => {
+    const out: string[] = [];
+    let t = performance.now(), preMs = 0;
+    for (const id of [...ids].sort((a, b) => est(b) - est(a))) if (t + est(id) * factor + restMs(out.length + 1, preMs + est(id) * factor) <= readyBy) { out.push(id); t += est(id) * factor; preMs += est(id) * factor; }
+    return out;
+  };
+  let fixed: string[] = [];
+  return {
+    estimate: { ms: Math.round(post.ms), stored: post.stored },
+    plan: (ids: string[]) => { fixed = measured ? plan(ids, fixedRest) : []; return plan(ids, rest); },
+    fits: (id: string, pre: number, preMs: number) => performance.now() + est(id) * factor + rest(pre + 1, preMs + est(id) * factor) <= readyBy,
+    owed: (ids: string[], pre: number) => plan(ids.filter((id) => fixed.includes(id)), (n) => fixedRest(pre + n)),
+  };
 }
 
 export function measurePostBuild(noFrameWaitCount: () => number) {

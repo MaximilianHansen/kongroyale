@@ -18,7 +18,10 @@ function wrap(name: string, k: string, img: ImageBitmap | HTMLCanvasElement | Of
   t.anisotropy = name === "heli" || name === "sign" ? 16 : name === "chain" ? 4 : 8;
   t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter;
   t.needsUpdate = true;
-  return releaseAfterUpload(t);
+  return releaseAfterUpload(t, () => {
+    const c = LAB_PAINT[name]()[k as "map" | "normalMap" | "emissiveMap"] as HTMLCanvasElement;
+    return bitmap ? createImageBitmap(c, { imageOrientation: "flipY", premultiplyAlpha: "none" }) : c;
+  });
 }
 function paintHere(name: string): TexSet {
   const s = LAB_PAINT[name]();

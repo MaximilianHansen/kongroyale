@@ -904,6 +904,14 @@ const BAKE_HULL = /* glsl */ `
 /** GLSL pieces reused by the impostor material (same lighting as the meshes → no LOD pop) */
 export const VEG_GLSL = { F_PARS, F_DIRECT, F_FILL, F_GRADE };
 
+const keptPrograms = new WeakSet<object>();
+
+export function retireMaterial(renderer: THREE.WebGLRenderer, m: THREE.Material) {
+  const program = (renderer.properties.get(m) as { currentProgram?: object }).currentProgram;
+  if (program && !keptPrograms.has(program)) keptPrograms.add(program);
+  else m.dispose();
+}
+
 /**
  * Impostor bake materials for a foliage material: same vertex path (wind, billboard cards — which face the bake
  * camera), unlit output of either the graded albedo (alpha kept hard) or the object-space normal (toward the camera).

@@ -33,10 +33,16 @@ pieces fit; read it before changing networking, the simulation or world loading.
 | `npm run dev` | Dev client on <http://localhost:5317/>. It listens on your network too (`--host`). Hot reload is off: reload the page after a change. |
 | `npm run server` | Game server on port 3020, restarted when a file changes. Add `KR_EVENT_MODE=0` to allow creating rooms. |
 | `npm run build` | Production build into `dist/` and `dist-admin/`, then precompression. About 15 s. |
-| `npm test` | Every check that needs no GPU, network or database. Run `npm run build` first. About 2 min. |
+| `npm test` | Every check that needs no GPU, network or database. Run `npm run build` first. About 6 min (8 on 2 vCPU). |
+| `npm test -- --fast` | Skips the nine slow checks (solver, glass, parity, sim, nettail, redteam, planeview, wt, wtbrowser). About 30 s. `--list` shows each check's id and `--only lint,sim` runs some of them. |
 | `npm run typecheck` | The TypeScript check alone (the first step of `npm test`). |
 | `npm run sim` | A headless 50-bot match (trios, seed 42). Fast feedback for simulation changes. |
-| `npm run netlab` | Hit registration under simulated latency, using the real client and server code. |
+| `npm run netlab` | Hit registration under simulated latency, using the real client and server code. Add `-- --check` to fail on a regression. |
+| `npx tsx tools/verify-online-match.mts` | A whole online match over real WebSockets against the real server. |
+| `npx tsx tools/verify-boot.mts` | The production client boots and plays a short match on SwiftShader, no GPU needed. |
+| `node --import tsx tools/verify-assets.mts` | Every file under `public/assets/` has a recorded source or licence. `npm test` runs it with `--baseline tools/verify-assets.baseline.json`, which lists today's unattributed files by name and fails on any file not in it. |
+| `npx tsx tools/check-size.mts` | What a production build makes the browser download: entry, boot JS, workers, lazy chunks. `npm test` runs it with `--budgets tools/size-budgets.json`. |
+| `npm run bench:host`, `bench:server`, `bench:verify` | Host tick cost, a 50-player socket load test against a local server, and the parity checks. |
 | `npm start` | Serve `dist/` and the game server on one port. See [HOSTING.md](HOSTING.md). |
 
 ## Rules
@@ -45,7 +51,9 @@ pieces fit; read it before changing networking, the simulation or world loading.
    who wins. Never trust a value the client sends without checking it on the server.
 2. **`shared/` runs on both sides, so it must stay deterministic.** Same inputs, same result, on Node and in every
    browser. No DOM APIs, no Node APIs (`node:*`, `process`), no `Math.random()` (use `Rng` from `shared/sim/rng.ts`
-   with the match seed), and no wall-clock time in game logic. Keep hot paths (`stepPlayer`, collision, hit tests)
+   with the match seed), no wall-clock time in game logic, and no built-in `Math.sin`, `cos`, `tan`, `atan2`, `exp`,
+   `pow`, `hypot`, `**` or other libm functions: they differ in the last bit between CPUs and JS engines, so call them
+   through `shared/sim/dmath.ts`. Keep hot paths (`stepPlayer`, collision, hit tests)
    free of per-tick allocations.
 3. **Never commit secrets.** No `.env` files, keys, tokens or `.admin-key`. CI scans every pull request for them.
 4. **Every asset needs a source and a licence.** Art, models, sounds and fonts must be your own or clearly free to use
@@ -103,19 +111,22 @@ catching it; turn it into a check when the same mistake shows up twice.
 |---|---|
 | 1. The server is authoritative | Review only. The `redteam` step of `npm test` attacks the admin lobby. |
 | 2. `shared/` is deterministic: no `Math.random`, wall-clock time, Node or DOM APIs | Lint rule `shared-determinism`; the `sim` step of `npm test` fails when the headless match's state hash changes |
+| 2. `shared/` math gives the same bits everywhere: transcendental functions, `hypot` and `**` go through `shared/sim/dmath.ts` | Lint rule `shared-math` (empty baseline); the `dmath` step of `npm test` checks every dmath function bit for bit against recorded vectors |
 | 2. Hot paths don't allocate | Lint rule `hot-alloc` over `*.hot.ts` and `tools/lint/hot.json` |
 | 3. Never commit secrets | CI job "no secrets" (key and env file check, gitleaks) |
-| 4. Every asset needs a source and a licence | Review only |
+| 4. Every asset needs a source and a licence | `npm test` (`assets` step): no new unattributed asset beyond `tools/verify-assets.baseline.json`, which only shrinks |
 | 5. One change per pull request | Review only |
 | 6. Build and test before the pull request | CI job "build and test" runs `npm run build` and `npm test` |
 | 7. Only test against servers you run | Review only |
 | Constants carry their unit | Lint rule `unit-suffix`, report only: `npm test` prints the count and never fails on it |
 | Tunable numbers live in `shared/sim/const.ts` | Review only |
 | `import type` for type-only imports | Lint rule `import-type` (also flags unused imports) |
+| Download size only goes down | `npm test` (`size` step): gzip bytes for entry, boot, worker and lazy JS against `tools/size-budgets.json`. Over budget fails, and so does more than 5% under until the budget is lowered |
 | Memory at the title only goes down | CI job "no-GPU boot smoke" (`memory.mts --budgets tools/memory-budgets.json`): WebGL bytes, textures, buffers and CPU copies the game holds at the playable title on SwiftShader. Over budget fails, and so does more than 5% under until the budget is lowered |
 | A match leaves nothing behind | CI job "no-GPU match-to-match memory" (`memory.mts --warmup --budgets tools/memory-leak-budgets.json`): three practice matches entered and left in their warm-up. WebGL bytes, textures, geometries and ledger bytes may not grow from the second to the third past the `leak` ceilings, and the match scope must be closed after leaving |
 | The renderer holds no unowned resource | The same job with `?resaudit`: geometries, textures and render targets the renderer holds that no resource scope owns stay under the `left3` ceiling, which is lowered as owners move to scopes |
 | URL flags are read through `client/src/flags.ts` | Lint rule `url-flags`: no `location.search` read anywhere in `client/src/` outside the registry. Lint rule `url-params`: no reads of the page URL's `searchParams`. Both rules have empty baselines, so any raw read fails |
+| Every GPU texture, render target and worker has an owner, and files load through one cache | Lint rule `resource-owner`: outside `client/src/engine/res/`, a `new` of a `*Texture`, `*RenderTarget` or `Worker` must be handed straight to a resource scope (`scope.texture(cat, new ...)`, `scope.target(new ...)`, `scope.worker(new Worker(...))`) named `scope`, `res`, `<name>Scope` or `resources.root`; a `new *Loader` belongs only in `client/src/engine/assets.ts`. Today's sites are in `tools/lint/baseline.json`, which only shrinks. |
 | Wire ids are `const enum`s | Review only |
 | No new dependencies without discussion | Review only (`package.json` is on the Ask first list) |
 

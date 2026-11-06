@@ -1,6 +1,7 @@
 // poi-harbor kit — canvas painting helpers. Everything with text/logos/wear in the harbor + wreck is painted in code
 // with these (no baked text). All functions draw into a 2D context in CSS pixels; textures come out via `tex()`.
 import * as THREE from "three";
+import { capped } from "../../../engine/tex-cap";
 
 export type Rng = () => number;
 
@@ -340,6 +341,7 @@ export function normalFromHeight(src: HTMLCanvasElement, strength = 2, wrap = tr
 export interface TexOpts { srgb?: boolean; repeat?: boolean; aniso?: number; flipY?: boolean; mipmaps?: boolean }
 /** wrap a canvas as a texture. Colour canvases are sRGB; data (normal/roughness) pass { srgb: false } */
 export function tex(el: HTMLCanvasElement, o: TexOpts = {}): THREE.CanvasTexture {
+  el = capped(el);
   const t = new THREE.CanvasTexture(el);
   t.colorSpace = (o.srgb ?? true) ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   if (o.repeat ?? true) t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -430,4 +432,13 @@ export function drawBananaBunch(c: CanvasRenderingContext2D, cx: number, cy: num
   c.fillStyle = o.stem ?? o.color; c.beginPath(); c.ellipse(len * 0.47, -len * 0.08, len * 0.07, len * 0.1, 0.3, 0, Math.PI * 2); c.fill();
   if (o.outline) { c.lineWidth = Math.max(1.5, len * 0.02); c.strokeStyle = o.outline; c.stroke(); }
   c.restore();
+}
+
+/** a worker-painted bitmap downscaled to poicap; the original is closed */
+export async function cappedBitmap(bm: ImageBitmap): Promise<ImageBitmap> {
+  const c = capped(bm);
+  if (c === bm) return bm;
+  const out = await createImageBitmap(c, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+  bm.close();
+  return out;
 }

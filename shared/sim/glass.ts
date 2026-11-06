@@ -13,6 +13,7 @@
 // Zero allocations after construction: every query writes into preallocated registers.
 import { GLASS_SURF, isPaneBox, makeHit, type StaticWorld } from "./world";
 import { CROUCH_H, PLAYER_R } from "./const";
+import * as dmath from "./dmath";
 
 const CELL = 8;
 /** pane geometry stride: cx, cy, cz, nx, nz, ux, uz, hw (half width along u), hh (half height), ht (half thickness) */
@@ -188,7 +189,7 @@ export function glassBlast(st: GlassState, x: number, y: number, z: number, r: n
 export const BODY_V = 2.2;
 export function glassBody(st: GlassState, x: number, y: number, z: number, h: number, vx: number, vz: number, dt: number, by = 255): number {
   const P = st.panes; if (P.n === 0 || st.count >= P.n) return 0;
-  const g = P.geo, reach = PLAYER_R + Math.hypot(vx, vz) * dt + 0.06;
+  const g = P.geo, reach = PLAYER_R + dmath.hypot(vx, vz) * dt + 0.06;
   const x0 = cellOf(P, x - reach), x1 = cellOf(P, x + reach), z0 = cellOf(P, z - reach), z1 = cellOf(P, z + reach);
   const gen = nextGen(P);
   let n = 0;
@@ -294,7 +295,7 @@ export function findVault(st: GlassState, x: number, y: number, z: number, fx: n
     w.resolveCapsule(ex, sill, ez, PLAYER_R, CROUCH_H, false);
     // a small push-out (a stair tread, a stall rail beside the exit) is fine as long as it stays clear of the wall
     const px = w.P[0] - ex, pz = w.P[2] - ez, depth = (w.P[0] - cxp) * g[o + 3] * sg + (w.P[2] - czp) * g[o + 4] * sg;
-    if (w.headBump || Math.hypot(px, pz) > 0.35 || w.P[1] - sill > 0.6 || depth < PLAYER_R + 0.2) continue;
+    if (w.headBump || dmath.hypot(px, pz) > 0.35 || w.P[1] - sill > 0.6 || depth < PLAYER_R + 0.2) continue;
     ex = w.P[0]; ez = w.P[2];
     let clear = true;
     for (let k = 0; k < 2 && clear; k++) {
@@ -307,7 +308,7 @@ export function findVault(st: GlassState, x: number, y: number, z: number, fx: n
   st.noWalk[bi] = keep;
   if (!ok) return -1;
   if (!wasBroken) st.breakPane(best, GC.Body, -sg, by);
-  const px = exX - x, pz = exZ - z, len = Math.hypot(px, pz) || 1;
+  const px = exX - x, pz = exZ - z, len = dmath.hypot(px, pz) || 1;
   V[0] = sill - dip; V[1] = exX; V[2] = exZ; V[3] = len; V[4] = px / len; V[5] = pz / len;
   return best;
 }
