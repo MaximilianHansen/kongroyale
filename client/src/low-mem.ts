@@ -1,10 +1,9 @@
 import type * as THREE from "three";
 import type { Poi } from "../../shared/world/map";
+import { isLowMemory } from "./low-mem-device";
 
 export function lowMemoryDevice(forced: string | null, fullPrepare: boolean): boolean {
-  const ua = navigator.userAgent;
-  const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  const on = !fullPrepare && (forced !== null ? forced === "1" : (/AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg|OPR/.test(ua)) || (mem !== undefined && mem < 8));
+  const on = isLowMemory(forced, fullPrepare);
   const kr = (globalThis as unknown as { __kr?: { lowMem?: boolean; streamed?: boolean } }).__kr;
   if (kr) { kr.lowMem = on; if (on) kr.streamed = true; }
   return on;

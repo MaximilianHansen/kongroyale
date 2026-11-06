@@ -77,4 +77,40 @@ async function load(env: Env): Promise<typeof Flags> {
   assert.equal(flag("splres"), 64);
 }
 
+{
+  // the low-memory rule behind ?lowmem and the savers that default on with it (?geofree, ?audioevict): Safari, Chromium's
+  // deviceMemory < 8, else (Firefox: no deviceMemory) at most 4 cores; ?lowmem forces, ?prepare=full wins, never off a page
+  const g = globalThis as Record<string, unknown>;
+  const nav = (n: Record<string, unknown>) => Object.defineProperty(globalThis, "navigator", { value: n, configurable: true, writable: true });
+  const FF = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0";
+  const CR = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+  const SF = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  await load({ search: "", document: false });
+  const { isLowMemory, lowMemSaver } = await import("../../client/src/low-mem-device.ts");
+  nav({ userAgent: FF, hardwareConcurrency: 2 });
+  assert.equal(isLowMemory(null, false), false);
+  g.document = {};
+  const cases: Array<[Record<string, unknown>, string | null, boolean, boolean]> = [
+    [{ userAgent: FF, hardwareConcurrency: 4 }, null, false, true],
+    [{ userAgent: FF, hardwareConcurrency: 8 }, null, false, false],
+    [{ userAgent: FF }, null, false, false],
+    [{ userAgent: CR, deviceMemory: 4, hardwareConcurrency: 16 }, null, false, true],
+    [{ userAgent: CR, deviceMemory: 8, hardwareConcurrency: 4 }, null, false, false],
+    [{ userAgent: SF, hardwareConcurrency: 10 }, null, false, true],
+    [{ userAgent: SF }, "0", false, false],
+    [{ userAgent: FF, hardwareConcurrency: 16 }, "1", false, true],
+    [{ userAgent: FF, hardwareConcurrency: 2 }, "1", true, false],
+  ];
+  for (const [n, forced, full, want] of cases) { nav(n); assert.equal(isLowMemory(forced, full), want, JSON.stringify([n, forced, full])); }
+  nav({ userAgent: FF, hardwareConcurrency: 2 });
+  assert.equal(lowMemSaver(null), true);
+  assert.equal(lowMemSaver("0"), false);
+  nav({ userAgent: FF, hardwareConcurrency: 16 });
+  assert.equal(lowMemSaver(null), false);
+  assert.equal(lowMemSaver("1"), true);
+  if (saved) Object.defineProperty(globalThis, "navigator", saved);
+  delete g.document;
+}
+
 console.log("flags: ok");

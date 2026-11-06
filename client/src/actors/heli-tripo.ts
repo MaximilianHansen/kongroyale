@@ -15,6 +15,7 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { assetUrl } from "../engine/assets";
 import { releaseAfterUpload } from "../engine/texture-release";
 import { flag } from "../flags";
+import { isLowMemory } from "../low-mem-device";
 import type { TukDraw, TukView } from "./tuktuk";
 import { VF, VS } from "../../../shared/sim/vehicle";
 
@@ -147,8 +148,7 @@ export function loadHeli(): Promise<Kit> {
 function loadsLazily() {
   const f = flag("helilazy");
   if (f !== null) return f === "1";
-  const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
-  return mem < 8 || /^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
+  return isLowMemory(flag("lowmem"), flag("prepare") === "full");
 }
 if (typeof document !== "undefined" && !loadsLazily()) void loadHeli().catch((e) => console.error("[heli] model failed", e));
 
