@@ -12,6 +12,7 @@ import { hash32 } from "./rng";
 import { MYTHIC_POI_SHARE, MYTHIC_R, MYTHICS, mythicIndexOfPoi } from "./mythic";
 import { bananaStands } from "./economy";
 import type { StormState } from "./storm";
+import * as dmath from "./dmath";
 
 export const enum IK { Weapon = 0, Consumable = 1, Ammo = 2,
   /** a stack of Banana Bucks: count × $10 */ Cash = 3 }
@@ -63,16 +64,16 @@ export const rollConsumable = (rng: Rng) => rollWeighted(rng, CONSUMABLES.map((c
 function findSpot(rng: Rng, world: StaticWorld, cx: number, cz: number, r: number, used: Array<[number, number]>, minGap: number): [number, number, number] | null {
   for (let tries = 0; tries < 40; tries++) {
     const a = rng.next() * Math.PI * 2, d = Math.sqrt(rng.next()) * r;
-    const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+    const x = cx + dmath.cos(a) * d, z = cz + dmath.sin(a) * d;
     const h = world.ground(x, z);
     if (h < 0.9) continue;
     const n = world.terrain.normal(x, z); if (n[1] < 0.8) continue;
     let ok = true;
-    for (const u of used) if ((u[0] - x) ** 2 + (u[1] - z) ** 2 < minGap * minGap) { ok = false; break; }
+    for (const u of used) if (dmath.pow(u[0] - x, 2) + dmath.pow(u[1] - z, 2) < minGap * minGap) { ok = false; break; }
     if (!ok) continue;
     world.velY = 0; world.resolveCapsule(x, h + 0.02, z, PLAYER_R, PLAYER_H, false);
     // stand on top of a box if there is one; reject if pushed sideways
-    if (Math.hypot(world.P[0] - x, world.P[2] - z) > 0.05) continue;
+    if (dmath.hypot(world.P[0] - x, world.P[2] - z) > 0.05) continue;
     const y = world.P[1];
     used.push([x, z]);
     return [x, y, z];
@@ -279,7 +280,7 @@ export function placeLoot(seed: number, world: StaticWorld): { chests: Chest[]; 
   // one Coconut Cove room) sit off every walk cell, and a house must not lose its floor gun to a chest that is not in it
   const inHouse = (k: number, b: number) => { const q = set.spots[k], c = navCellAt(set.nav, q.x, q.y + 0.05, q.z); return c >= 0 && set.nav.bld[c] === b; };
   for (const s of set.spots) if (on[s.id] && s.kind === SpotKind.Chest && s.bld >= 0 && s.unit !== undefined && s.unit >= 0 && set.buildings[s.bld].enterable && inHouse(s.id, s.bld)) { let l = chestIn.get(s.bld); if (!l) chestIn.set(s.bld, l = []); l.push(s.id); }
-  for (const s of set.spots) if (houseOn[s.id] && chestIn.get(s.bld)?.some((k) => Math.abs(set.spots[k].y - s.y) < 1.6 && Math.hypot(set.spots[k].x - s.x, set.spots[k].z - s.z) < 14)) gun[s.id] = 0;
+  for (const s of set.spots) if (houseOn[s.id] && chestIn.get(s.bld)?.some((k) => Math.abs(set.spots[k].y - s.y) < 1.6 && dmath.hypot(set.spots[k].x - s.x, set.spots[k].z - s.z) < 14)) gun[s.id] = 0;
   const sig = new Map<number, [number, number]>();
   // nothing spawns inside a Banana Stand's counter
   const stands = bananaStands(world), atStand = (s: { x: number; y: number; z: number }) => stands.some((q) => Math.abs(q.x - s.x) < 2.6 && Math.abs(q.z - s.z) < 2.6 && Math.abs(q.y - s.y) < 2.5);
@@ -354,7 +355,7 @@ function extraHeals(seed: number, world: StaticWorld, set: ReturnType<typeof loo
   const add = (x: number, y: number, z: number) => { const k = key(x, z); let l = grid.get(k); if (!l) grid.set(k, l = []); l.push([x, y, z]); };
   const clear = (x: number, y: number, z: number) => {
     const g2 = HEALS.gap * HEALS.gap, cx = Math.floor(x / 8), cz = Math.floor(z / 8);
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const q of grid.get((cx + i + 512) * 1024 + cz + j + 512) ?? []) if (Math.abs(q[1] - y) < 2 && (q[0] - x) ** 2 + (q[2] - z) ** 2 < g2) return false;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const q of grid.get((cx + i + 512) * 1024 + cz + j + 512) ?? []) if (Math.abs(q[1] - y) < 2 && dmath.pow(q[0] - x, 2) + dmath.pow(q[2] - z, 2) < g2) return false;
     return true;
   };
   for (const it of items) add(it.x, it.y, it.z);
@@ -409,14 +410,14 @@ export function settleLoot(world: StaticWorld, x: number, y: number, z: number, 
     world.velY = 0; world.headBump = false;
     world.resolveCapsule(fx, fy + 0.02, fz, 0.2, 0.4, false);
     const px = world.P[0], py = world.P[1], pz = world.P[2];
-    if (Math.hypot(px - fx, pz - fz) < 0.02 && py - (fy + 0.02) < 0.05) break;
+    if (dmath.hypot(px - fx, pz - fz) < 0.02 && py - (fy + 0.02) < 0.05) break;
     fx = px; fz = pz; top = py + 0.3;
   }
   if (ny < SLOPE_LIMIT) {
     let bd = Infinity, bx = fx, by = fy, bz = fz;
     for (const r of [0.5, 1.0, 1.6]) {
       for (let a = 0; a < 8; a++) {
-        const qx = fx + Math.cos(a * Math.PI / 4) * r, qz = fz + Math.sin(a * Math.PI / 4) * r;
+        const qx = fx + dmath.cos(a * Math.PI / 4) * r, qz = fz + dmath.sin(a * Math.PI / 4) * r;
         world.raycast(qx, fy + 0.4, qz, 0, -1, 0, 60, SH, false);
         if (!SH.hit || SH.ny < SLOPE_LIMIT || SH.y > fy + 0.1) continue;
         const d = r + (fy - SH.y) * 0.25; if (d < bd) { bd = d; bx = qx; by = SH.y; bz = qz; }
@@ -430,7 +431,7 @@ export function settleLoot(world: StaticWorld, x: number, y: number, z: number, 
 /** the part of a toss from (ax, ay, az) to (bx, *, bz) at height ay that is clear of walls: the item lands on this side
  * of a wall / door / railing between its source and where it was thrown (a chest against a wall spills into the room) */
 export function tossClear(world: StaticWorld, ax: number, ay: number, az: number, bx: number, bz: number, out: Float64Array | number[]): void {
-  const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz);
+  const dx = bx - ax, dz = bz - az, l = dmath.hypot(dx, dz);
   out[0] = bx; out[1] = ay; out[2] = bz;
   if (l < 1e-4) return;
   world.raycast(ax, ay, az, dx, 0, dz, 1, SH, false);
@@ -526,7 +527,7 @@ export function chestRegen(chests: Chest[], storm: StormState, time: number, see
     // decided once per opening: whether it comes back, and when (≥ delayS after its looting; the backlog spread out)
     c.regenAt ??= regenCoin(seed, 0x2e6e, c.id, n) < R.share ? Math.max((c.openedAt ?? 0) + R.delayS, time + regenCoin(seed, 0x2e6f, c.id, n) * R.spreadS) : Infinity;
     if (time < c.regenAt) continue;
-    if (R.zone && (c.x - zx) ** 2 + (c.z - zz) ** 2 > Math.max(0, zr) ** 2) continue;
+    if (R.zone && dmath.pow(c.x - zx, 2) + dmath.pow(c.z - zz, 2) > dmath.pow(Math.max(0, zr), 2)) continue;
     if (occupied(c)) continue;
     c.opened = false; c.regens = n + 1; c.regenAt = undefined; c.openedAt = undefined;
     out.push(c.id);

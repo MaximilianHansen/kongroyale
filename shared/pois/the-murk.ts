@@ -16,6 +16,7 @@ import type { Box, Surface } from "../world/colliders";
 import { poiById } from "../world/map";
 import { toWorld, dirYaw, wallPieces, slabPieces, mulberry, type Side, type Opening, type WallPiece } from "./town-kit";
 import { interiorColliders, interiorLoot, furnishRoom, itemRect, type InteriorRoom, type RoomOpening, type InteriorStyle, type RoomRole, type RoomFinish } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 /** three.js yaw (rotation.y: local +X → world (cos, 0, −sin)) → the SIM's Box.yaw (local +X → world (cos, 0, +sin)),
  *  see shared/sim/world.ts pushOut and harbor-kit / jungle-layout `simYaw`. Every collider below goes through this. */
@@ -181,8 +182,8 @@ export interface Plant { kind: "jungle-tree" | "mangrove" | "monstera" | "fern" 
 
 // ================================================================================================ helpers
 const walkDeck = (a: V2, b: V2, w = 2.4, y = WALK_Y, extra: Partial<MDeck> = {}): MDeck => {
-  const dx = b[0] - a[0], dz = b[1] - a[1], d = Math.hypot(dx, dz);
-  return { x: (a[0] + b[0]) / 2, z: (a[1] + b[1]) / 2, yaw: Math.atan2(dx, dz), w, d, y, planksZ: false, rails: { nx: true, px: true }, kind: "walk", ...extra };
+  const dx = b[0] - a[0], dz = b[1] - a[1], d = dmath.hypot(dx, dz);
+  return { x: (a[0] + b[0]) / 2, z: (a[1] + b[1]) / 2, yaw: dmath.atan2(dx, dz), w, d, y, planksZ: false, rails: { nx: true, px: true }, kind: "walk", ...extra };
 };
 /** point on a deck in its local frame */
 const deckPt = (k: { x: number; z: number; yaw: number }, lx: number, lz: number): V2 => toWorld(k, lx, lz);
@@ -201,11 +202,11 @@ export const GM = {
   hollowTop: 16.2,
   wallT: 0.72,
   /** entrance arch: world angle (atan2 dz, dx), half-width (rad), height above floorY */
-  inA: Math.atan2(-0.32, -0.95), inHalf: 0.36, inH: 3.3,
+  inA: dmath.atan2(-0.32, -0.95), inHalf: 0.36, inH: 3.3,
   /** platform exit door in the trunk wall (angle, half-width) */
-  outA: Math.atan2(0.15, 0.99), outHalf: 0.42,
+  outA: dmath.atan2(0.15, 0.99), outHalf: 0.42,
   /** knot-hole window (angle, y range) — a sniper nook on the spiral */
-  winA: Math.atan2(0.9, -0.43), winHalf: 0.3, winY0: 7.6, winY1: 8.8,
+  winA: dmath.atan2(0.9, -0.43), winHalf: 0.3, winY0: 7.6, winY1: 8.8,
   /** spiral: steps per turn (12 → 2.8 m per turn: head room under the turn above) */
   perTurn: 12,
 };
@@ -213,7 +214,7 @@ export const GM = {
 // knot window are placed where the flight actually arrives / passes (derived, not guessed)
 const SP_N = Math.round((GM.platY - GM.floorY) / 0.235), SP_DA = TAU / GM.perTurn, SP_A1 = GM.inA + GM.inHalf + SP_DA * 0.55;
 {
-  const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+  const wrap = (a: number) => dmath.atan2(dmath.sin(a), dmath.cos(a));
   GM.outA = wrap(SP_A1 + (SP_N - 1) * SP_DA + SP_DA * 0.62);
   const dy = (GM.platY - GM.floorY) / SP_N, iw = Math.round((8.2 - GM.floorY) / dy);
   GM.winA = wrap(SP_A1 + (iw - 1) * SP_DA + SP_DA * 0.5);
@@ -535,7 +536,7 @@ function genLayout(): MurkLayout {
   const dock: MDeck = { x: 566.5, z: -263.5, yaw: 0.05, w: 6.5, d: 12, y: WALK_Y, rails: { nx: [[3, 9]] }, kind: "dock", pile: 2.6 };
   decks.push(dock);
   // root gate deck: from the jetty walk into the mangrove's arch (floor 1.15 = one small step down)
-  const gateDir: V2 = [Math.cos(GM.inA), Math.sin(GM.inA)];
+  const gateDir: V2 = [dmath.cos(GM.inA), dmath.sin(GM.inA)];
   const gateR = gmRadius(GM.floorY) - 0.2;
   const gateA: V2 = [GM.x + gateDir[0] * gateR, GM.z + gateDir[1] * gateR];
   const gateB: V2 = [GM.x + gateDir[0] * (gateR + 6.4), GM.z + gateDir[1] * (gateR + 6.4)];
@@ -596,7 +597,7 @@ function genLayout(): MurkLayout {
   // ---------------------------------------------------------------- flights (stairs)
   /** a flight DOWN from a deck edge point along a direction to the swamp bed (solid treads) */
   const down = (x: number, z: number, dx: number, dz: number, yTop: number, _yBot = 0.35, w = 1.6) => {
-    const L2 = Math.hypot(dx, dz), ux = dx / L2, uz = dz / L2, tread = 0.32;
+    const L2 = dmath.hypot(dx, dz), ux = dx / L2, uz = dz / L2, tread = 0.32;
     // the foot lands on the swamp bed (baked ground; never deeper than −1.2 — a swimmer can walk up out of the lagoon)
     let yBot = 0.35, n = 4;
     for (let it = 0; it < 3; it++) {
@@ -607,7 +608,7 @@ function genLayout(): MurkLayout {
   };
   /** a flight on a deck's side at local u (m from the −z end), going away from the deck; opens that side's rail */
   const sideDown = (k: MDeck, side: "nx" | "px" | "pz" | "nz", u: number, yBot = 0.35, w = 1.6) => {
-    const c = Math.cos(k.yaw), s = Math.sin(k.yaw);
+    const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw);
     let lx = 0, lz = 0, dxl = 0, dzl = 0;
     if (side === "nx") { lx = -k.w / 2; lz = -k.d / 2 + u; dxl = -1; }
     if (side === "px") { lx = k.w / 2; lz = -k.d / 2 + u; dxl = 1; }
@@ -639,13 +640,13 @@ function genLayout(): MurkLayout {
   down(668.5 + 0.4, -200.5 + 0.05, 1, 0.02, WALK_Y, 0.9, 2.4);
   down(484.5 - 0.4, -212.5, -1, -0.08, WALK_Y, 0.9, 2.4);
   for (const w of decks.filter((k) => k.kind === "walk")) {
-    const c = Math.cos(w.yaw), sn = Math.sin(w.yaw);
+    const c = dmath.cos(w.yaw), sn = dmath.sin(w.yaw);
     for (const end of [1, -1]) {
       const ex = w.x + sn * end * w.d / 2, ez = w.z + c * end * w.d / 2;
       for (const k of decks) {
         if (k === w || k.y - w.y < 0.12) continue;
         // walk end inside k (local rect, small margin)?
-        const kc = Math.cos(k.yaw), ks = Math.sin(k.yaw), dx = ex - k.x, dz = ez - k.z;
+        const kc = dmath.cos(k.yaw), ks = dmath.sin(k.yaw), dx = ex - k.x, dz = ez - k.z;
         const lx = dx * kc - dz * ks, lz = dx * ks + dz * kc;
         if (Math.abs(lx) > k.w / 2 + 0.2 || Math.abs(lz) > k.d / 2 + 0.2) continue;
         // march back along the walk from its end until we leave k: that is k's edge on the walk's centreline
@@ -664,7 +665,7 @@ function genLayout(): MurkLayout {
 
   // exterior ROOF STAIRS (gable / shed huts): from the porch / side deck up to the eave
   const roofStair = (p: HutParts, lx: number, lz: number, dirLx: number, dirLz: number, yBot: number, w = 1.2) => {
-    const h = p.h, [x, z] = toWorld(h, lx, lz), c = Math.cos(h.yaw), s = Math.sin(h.yaw);
+    const h = p.h, [x, z] = toWorld(h, lx, lz), c = dmath.cos(h.yaw), s = dmath.sin(h.yaw);
     // the flight's TOP is at (lx, lz), stepping DOWN along dir
     const dx = dirLx * c + dirLz * s, dz = -dirLx * s + dirLz * c;
     const yTop = p.tipY + 0.12, n = Math.ceil((yTop - yBot) / 0.22);
@@ -705,14 +706,14 @@ function genLayout(): MurkLayout {
     const pts: V3[] = [];
     // leave the trunk, bow UP and out (a tall arch), then dive steeply into the water
     const P6: Array<[number, number]> = [[rTop, y0], [rTop + reach * 0.2, y0 + 0.7 + gr() * 0.6], [rTop + reach * 0.45, y0 * 0.85 + 0.5], [rTop + reach * 0.7, y0 * 0.45 + 0.4], [rTop + reach * 0.9, 0.5], [rTop + reach * 0.96, -1.0]];
-    P6.forEach(([r, y], k) => { const aa = a + tw * (k / 5) + (k === 3 ? kink * 0.12 : 0); pts.push([GM.x + Math.cos(aa) * r, y, GM.z + Math.sin(aa) * r]); });
+    P6.forEach(([r, y], k) => { const aa = a + tw * (k / 5) + (k === 3 ? kink * 0.12 : 0); pts.push([GM.x + dmath.cos(aa) * r, y, GM.z + dmath.sin(aa) * r]); });
     roots.push({ pts, r0: 0.5 + gr() * 0.28, r1: 0.2, kind: "prop" });
     // secondary roots branching off the arch, down to either side; some with a tertiary
     const nb2 = gr() < 0.75 ? 1 + (gr() < 0.4 ? 1 : 0) : 0;
     for (let q = 0; q < nb2; q++) {
-      const k = 3 + q, b = pts[k], sgn = (q ? -1 : 1) * (gr() < 0.5 ? -1 : 1), aa = a + sgn * (0.22 + gr() * 0.3), r2 = Math.hypot(b[0] - GM.x, b[2] - GM.z) + 1.6 + gr() * 2.5;
-      const mid: V3 = [GM.x + Math.cos(aa) * (r2 * 0.85), b[1] * 0.6 + 0.3, GM.z + Math.sin(aa) * (r2 * 0.85)];
-      roots.push({ pts: [b, mid, [GM.x + Math.cos(aa) * r2, 0.3, GM.z + Math.sin(aa) * r2], [GM.x + Math.cos(aa) * r2 * 1.02, -1.2, GM.z + Math.sin(aa) * r2 * 1.02]], r0: 0.26, r1: 0.12, kind: "prop" });
+      const k = 3 + q, b = pts[k], sgn = (q ? -1 : 1) * (gr() < 0.5 ? -1 : 1), aa = a + sgn * (0.22 + gr() * 0.3), r2 = dmath.hypot(b[0] - GM.x, b[2] - GM.z) + 1.6 + gr() * 2.5;
+      const mid: V3 = [GM.x + dmath.cos(aa) * (r2 * 0.85), b[1] * 0.6 + 0.3, GM.z + dmath.sin(aa) * (r2 * 0.85)];
+      roots.push({ pts: [b, mid, [GM.x + dmath.cos(aa) * r2, 0.3, GM.z + dmath.sin(aa) * r2], [GM.x + dmath.cos(aa) * r2 * 1.02, -1.2, GM.z + dmath.sin(aa) * r2 * 1.02]], r0: 0.26, r1: 0.12, kind: "prop" });
     }
   }
   // buttress roots: the trunk's foot flows out into 11 massive roots sweeping down into the water (a giant
@@ -721,7 +722,7 @@ function genLayout(): MurkLayout {
     const a = (i / 11) * TAU + 0.15 + (gr() - 0.5) * 0.15;
     if (Math.abs(angDiff(a, GM.inA)) < 0.5) continue;
     const r0 = gmRadius(3) - 0.5, len = 4.2 + gr() * 3.2, sw = (gr() - 0.5) * 0.35, y0 = 3.6 + gr() * 1.6;
-    const P = (t: number, y: number): V3 => { const aa = a + sw * t; const r = r0 + len * t; return [GM.x + Math.cos(aa) * r, y, GM.z + Math.sin(aa) * r]; };
+    const P = (t: number, y: number): V3 => { const aa = a + sw * t; const r = r0 + len * t; return [GM.x + dmath.cos(aa) * r, y, GM.z + dmath.sin(aa) * r]; };
     // (the flare IS the buttress mass now — its ribs are the trunk's flutes; only the knees beyond it remain)
     void P(0, y0);
     // a knee (pneumatophore) or two poking out of the water beyond it
@@ -731,29 +732,29 @@ function genLayout(): MurkLayout {
   const limbEnds: V3[] = [];
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * TAU + 0.6 + (gr() - 0.5) * 0.4, reach = 11 + gr() * 6, top = 25 + gr() * 4;
-    const c = Math.cos(a), s = Math.sin(a);
+    const c = dmath.cos(a), s = dmath.sin(a);
     const pts: V3[] = [[GM.x + c * 0.6, 18.2, GM.z + s * 0.6], [GM.x + c * reach * 0.3, 21 + gr(), GM.z + s * reach * 0.3], [GM.x + c * reach * 0.65, top - 0.6, GM.z + s * reach * 0.65], [GM.x + c * reach, top, GM.z + s * reach]];
     roots.push({ pts, r0: 1.25, r1: 0.35, kind: "limb" });
     limbEnds.push(pts[3]);
     // lower side limb over the platform (moss hangs from it) — ≥ 1.9 m clear over the smokehouse ridge (walkable roof)
     if (i % 2 === 0) {
       const a2 = a + 0.5, r2 = 7 + gr() * 3;
-      roots.push({ pts: [[GM.x + Math.cos(a2) * 1.6, 19.4, GM.z + Math.sin(a2) * 1.6], [GM.x + Math.cos(a2) * r2 * 0.5, 20.0, GM.z + Math.sin(a2) * r2 * 0.5], [GM.x + Math.cos(a2) * r2, 19.3 + gr(), GM.z + Math.sin(a2) * r2]], r0: 0.6, r1: 0.22, kind: "limb" });
+      roots.push({ pts: [[GM.x + dmath.cos(a2) * 1.6, 19.4, GM.z + dmath.sin(a2) * 1.6], [GM.x + dmath.cos(a2) * r2 * 0.5, 20.0, GM.z + dmath.sin(a2) * r2 * 0.5], [GM.x + dmath.cos(a2) * r2, 19.3 + gr(), GM.z + dmath.sin(a2) * r2]], r0: 0.6, r1: 0.22, kind: "limb" });
     }
   }
   // (they stay ≥ 1.9 m under the platform slab while beneath it, so the perch under the nest is a walkable, covered
   // spot — reached by dropping through the rail gap above the limb, see nestRails)
   // two LOW limbs leave the trunk under the Crow's Nest and sweep out over the channel (toward the shack and the
   // poi-13-the-murk view's camera): a giant limb arching over the water with moss curtains
-  for (const [a, reach, yEnd] of [[Math.atan2(12.5, -15.5), 15, 13.5], [Math.atan2(-2.5, -1), 13, 14.5]] as Array<[number, number, number]>) {
-    const c = Math.cos(a), sn = Math.sin(a), r0 = gmRadius(9) - 0.4;
+  for (const [a, reach, yEnd] of [[dmath.atan2(12.5, -15.5), 15, 13.5], [dmath.atan2(-2.5, -1), 13, 14.5]] as Array<[number, number, number]>) {
+    const c = dmath.cos(a), sn = dmath.sin(a), r0 = gmRadius(9) - 0.4;
     const pts: V3[] = [[GM.x + c * r0, 9.2, GM.z + sn * r0], [GM.x + c * (r0 + reach * 0.3), 9.5, GM.z + sn * (r0 + reach * 0.3)], [GM.x + c * (r0 + reach * 0.62), 10.9, GM.z + sn * (r0 + reach * 0.62)], [GM.x + c * (r0 + reach), yEnd, GM.z + sn * (r0 + reach)]];
     roots.push({ pts, r0: 0.95, r1: 0.4, kind: "limb" });
     for (let k = 0; k < 16; k++) { const t = 0.25 + gr() * 0.75, q = pts[Math.min(3, Math.round(t * 3))]; moss.push({ x: q[0] + (gr() - 0.5) * 2, y: q[1] - 0.3, z: q[2] + (gr() - 0.5) * 2, len: 1.6 + gr() * 2.8, w: 0.5 + gr() * 0.5 }); }
   }
   // aerial roots: short drops under the platform edge and the lowest limbs (no long "wires" from the crown)
   for (let k = 0; k < 14; k++) {
-    const a = gr() * TAU, r = GM.platH * (0.75 + gr() * 0.3), x = GM.x + Math.cos(a) * r, z = GM.z + Math.sin(a) * r, y = GM.platY - 0.4;
+    const a = gr() * TAU, r = GM.platH * (0.75 + gr() * 0.3), x = GM.x + dmath.cos(a) * r, z = GM.z + dmath.sin(a) * r, y = GM.platY - 0.4;
     roots.push({ pts: [[x, y, z], [x + (gr() - 0.5) * 0.3, y - 1.2 - gr(), z + (gr() - 0.5) * 0.3], [x + (gr() - 0.5) * 0.5, y - 2.2 - gr() * 2.2, z + (gr() - 0.5) * 0.5]], r0: 0.06, r1: 0.035, kind: "aerial" });
   }
   void limbEnds;
@@ -763,7 +764,7 @@ function genLayout(): MurkLayout {
     const tr = mulberry(seed);
     for (let i = 0; i < n; i++) {
       const a = (i / n) * TAU + tr() * 0.8, reach = s * (1.2 + tr() * 0.9), h = s * (1.2 + tr() * 0.9);
-      const c = Math.cos(a), sn = Math.sin(a), bx = x + (tr() - 0.5) * 0.6, bz = z + (tr() - 0.5) * 0.6;
+      const c = dmath.cos(a), sn = dmath.sin(a), bx = x + (tr() - 0.5) * 0.6, bz = z + (tr() - 0.5) * 0.6;
       roots.push({ pts: [[bx, h, bz], [bx + c * reach * 0.35, h + 0.25, bz + sn * reach * 0.35], [bx + c * reach * 0.75, h * 0.55, bz + sn * reach * 0.75], [bx + c * reach, -0.3, bz + sn * reach], [bx + c * reach * 1.05, -1.3, bz + sn * reach * 1.05]], r0: 0.2 * s + 0.08, r1: 0.1, kind: "tangle" });
     }
     // the stem the arches spring from (+ a mangrove crown planted on it by the client)
@@ -789,9 +790,9 @@ function genLayout(): MurkLayout {
     // the tube never folds into creases; the thickest leave lowest)
     const N = 8;
     for (let i = 0; i < N; i++) {
-      const a = Math.atan2(0.55, -1) + (i / N - 0.5) * 5.0 + (tr() - 0.5) * 0.3;
-      const toCh = Math.max(0, Math.cos(a - Math.atan2(0.55, -1)));
-      const reach = 3.4 + toCh * 1.0 + tr() * 0.8, h0 = 1.7 + tr() * 1.1, c = Math.cos(a), sn = Math.sin(a);
+      const a = dmath.atan2(0.55, -1) + (i / N - 0.5) * 5.0 + (tr() - 0.5) * 0.3;
+      const toCh = Math.max(0, dmath.cos(a - dmath.atan2(0.55, -1)));
+      const reach = 3.4 + toCh * 1.0 + tr() * 0.8, h0 = 1.7 + tr() * 1.1, c = dmath.cos(a), sn = dmath.sin(a);
       const r0 = 0.38 + tr() * 0.14, rt = 1.15;
       roots.push({ pts: [[bx + lx * 0.1, h0 + 1.2, bz + lz * 0.1], [bx + c * 0.5, h0 + 0.1, bz + sn * 0.5], [bx + c * rt, h0 * 0.55, bz + sn * rt], [bx + c * (rt + (reach - rt) * 0.45), 0.95 + tr() * 0.2, bz + sn * (rt + (reach - rt) * 0.45)], [bx + c * reach, 0.1, bz + sn * reach], [bx + c * (reach + 0.6), -1.3, bz + sn * (reach + 0.6)]], r0, r1: 0.16, kind: "buttress" });
     }
@@ -918,14 +919,14 @@ function genLayout(): MurkLayout {
   const foot: Array<{ x: number; z: number; yaw: number; hx: number; hz: number }> = [
     ...decks.map((k) => ({ x: k.x, z: k.z, yaw: k.yaw, hx: k.w / 2, hz: k.d / 2 })),
     ...huts.map((h) => ({ x: h.x, z: h.z, yaw: h.yaw, hx: h.w / 2 + h.overhang, hz: h.d / 2 + h.overhang })),
-    ...flights.map((f) => ({ x: f.x + f.dx * f.n * f.tread / 2, z: f.z + f.dz * f.n * f.tread / 2, yaw: Math.atan2(f.dx, f.dz), hx: f.w / 2, hz: f.n * f.tread / 2 })),
+    ...flights.map((f) => ({ x: f.x + f.dx * f.n * f.tread / 2, z: f.z + f.dz * f.n * f.tread / 2, yaw: dmath.atan2(f.dx, f.dz), hx: f.w / 2, hz: f.n * f.tread / 2 })),
   ];
   const clearance = (x: number, z: number) => {
-    let d = Math.hypot(x - GM.x, z - GM.z) - 12;
+    let d = dmath.hypot(x - GM.x, z - GM.z) - 12;
     for (const q of foot) {
-      const c = Math.cos(q.yaw), sn = Math.sin(q.yaw), dx = x - q.x, dz = z - q.z;
+      const c = dmath.cos(q.yaw), sn = dmath.sin(q.yaw), dx = x - q.x, dz = z - q.z;
       const lx = dx * c - dz * sn, lz = dx * sn + dz * c;
-      d = Math.min(d, Math.hypot(Math.max(0, Math.abs(lx) - q.hx), Math.max(0, Math.abs(lz) - q.hz)));
+      d = Math.min(d, dmath.hypot(Math.max(0, Math.abs(lx) - q.hx), Math.max(0, Math.abs(lz) - q.hz)));
     }
     return d;
   };
@@ -954,11 +955,11 @@ function genLayout(): MurkLayout {
       const n = Math.round(TAU * ring / 26);
       for (let i = 0; i < n; i++) {
         const a = (i + (ring === 92 ? 0.5 : 0) + (rr() - 0.5) * 0.4) / n * TAU, rad = ring + (rr() - 0.5) * 6;
-        const x = 577 + Math.cos(a) * rad * 1.05, z = -213 + Math.sin(a) * rad * 0.82;
+        const x = 577 + dmath.cos(a) * rad * 1.05, z = -213 + dmath.sin(a) * rad * 0.82;
         const g = groundAt(x, z);
         // (mangroves stand in the lagoon's edge too — up to ~2.4 m of water: the dock's view north is not open sea)
         if (g < -2.4 || g > 2.6) continue;
-        if (TREES.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 9)) continue;
+        if (TREES.some(([tx, tz]) => dmath.hypot(tx - x, tz - z) < 9)) continue;
         TREES.push([x, z, 19 + rr() * 6, 1.15 + rr() * 0.25]);
       }
     }
@@ -973,10 +974,10 @@ function genLayout(): MurkLayout {
       const n = Math.round(TAU * ring / 15);
       for (let i = 0; i < n; i++) {
         const a = (i + (ring === 78 ? 0.5 : 0) + (rr() - 0.5) * 0.4) / n * TAU, rad = ring + (rr() - 0.5) * 6;
-        const x = 577 + Math.cos(a) * rad * 1.05, z = -213 + Math.sin(a) * rad * 0.82;
+        const x = 577 + dmath.cos(a) * rad * 1.05, z = -213 + dmath.sin(a) * rad * 0.82;
         const g = groundAt(x, z);
         if (g < -1.0 || g > 2.6) continue;
-        if (TREES.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 9)) continue;
+        if (TREES.some(([tx, tz]) => dmath.hypot(tx - x, tz - z) < 9)) continue;
         RING_COVER.push([x, z]);
       }
     }
@@ -1001,7 +1002,7 @@ function genLayout(): MurkLayout {
       // unreachable root-top pockets at the waterline; its root mass still flares)
       if (g0 < -1.0) continue;
       const a = a0, bx = x + lean[0] * 0.1, bz = z + lean[1] * 0.1;
-      roots.push({ pts: [[bx + Math.cos(a) * 0.35, y0, bz + Math.sin(a) * 0.35], [bx + Math.cos(a) * reach * 0.4, y0 + 0.35, bz + Math.sin(a) * reach * 0.4], [bx + Math.cos(a) * reach * 0.8, g0 + 0.6, bz + Math.sin(a) * reach * 0.8], [bx + Math.cos(a) * reach, g0 - 1.0, bz + Math.sin(a) * reach]], r0: 0.2 * s + 0.06, r1: 0.08, kind: "prop" });
+      roots.push({ pts: [[bx + dmath.cos(a) * 0.35, y0, bz + dmath.sin(a) * 0.35], [bx + dmath.cos(a) * reach * 0.4, y0 + 0.35, bz + dmath.sin(a) * reach * 0.4], [bx + dmath.cos(a) * reach * 0.8, g0 + 0.6, bz + dmath.sin(a) * reach * 0.8], [bx + dmath.cos(a) * reach, g0 - 1.0, bz + dmath.sin(a) * reach]], r0: 0.2 * s + 0.06, r1: 0.08, kind: "prop" });
     }
     // (tight crowns — 5.0 s, four limbs reaching 4.5–7 s: gaps of sky between
     // the trees, the channels and walks read from the air and the sun reaches the tea)
@@ -1009,10 +1010,10 @@ function genLayout(): MurkLayout {
     const nl = 4;
     for (let i = 0; i < nl; i++) {
       const a = (i / nl) * TAU + tr() * 1.0, reach = (4.5 + tr() * 2.5) * s, y = top[1] - 1.2 + tr() * 2.2;
-      const e: V3 = [top[0] + Math.cos(a) * reach, y + 1.6, top[2] + Math.sin(a) * reach];
-      roots.push({ pts: [[top[0], top[1] - 2.5, top[2]], [top[0] + Math.cos(a) * reach * 0.5, y + 0.8, top[2] + Math.sin(a) * reach * 0.5], e], r0: 0.24 * s, r1: 0.1, kind: "limb" });
+      const e: V3 = [top[0] + dmath.cos(a) * reach, y + 1.6, top[2] + dmath.sin(a) * reach];
+      roots.push({ pts: [[top[0], top[1] - 2.5, top[2]], [top[0] + dmath.cos(a) * reach * 0.5, y + 0.8, top[2] + dmath.sin(a) * reach * 0.5], e], r0: 0.24 * s, r1: 0.1, kind: "limb" });
       canopies.push({ c: [e[0], e[1] + 1.1, e[2]], r: (3.5 + tr() * 1.1) * s });
-      if (tr() < 0.7) moss.push({ x: top[0] + Math.cos(a) * reach * 0.6, y: y + 0.9, z: top[2] + Math.sin(a) * reach * 0.6, len: 1.4 + tr() * 2.2, w: 0.5 + tr() * 0.4 });
+      if (tr() < 0.7) moss.push({ x: top[0] + dmath.cos(a) * reach * 0.6, y: y + 0.9, z: top[2] + dmath.sin(a) * reach * 0.6, len: 1.4 + tr() * 2.2, w: 0.5 + tr() * 0.4 });
     }
   }
 
@@ -1029,10 +1030,10 @@ function genLayout(): MurkLayout {
     for (const [a] of LOGS) pts.push([a[0], a[2]]);
     for (const h of huts) pts.push([h.x, h.z]);
     for (const p of props) if (p.kind === "crates" || p.kind === "barrel" || p.kind === "drum" || p.kind === "trap" || p.kind === "logpile") pts.push([p.x, p.z]);
-    const hutR = (x: number, z: number) => huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.w, h.d) / 2 + 7);
+    const hutR = (x: number, z: number) => huts.some((h) => dmath.hypot(h.x - x, h.z - z) < Math.max(h.w, h.d) / 2 + 7);
     const cr = mulberry(0xc0e7);
     const y0Of = (g: number) => Math.max(g, -0.8);
-    const near = (x: number, z: number, r: number) => pts.some(([px, pz]) => Math.hypot(px - x, pz - z) < r) || Math.hypot(GM.x - x, GM.z - z) < 14 || hutR(x, z);
+    const near = (x: number, z: number, r: number) => pts.some(([px, pz]) => dmath.hypot(px - x, pz - z) < r) || dmath.hypot(GM.x - x, GM.z - z) < 14 || hutR(x, z);
     // forced spots: cover gaps a real-sim walk scan finds at wading level —
     // the south walk's shallows, the west / east shores, the SW and E channels
     const FORCED: Array<[number, number]> = [[546.5, -156.0], [516.0, -222.0], [569.0, -255.5], [648.5, -209.0], [638.5, -240.0], [582.0, -239.0], [631.0, -227.0], [550.5, -303.5],
@@ -1044,12 +1045,12 @@ function genLayout(): MurkLayout {
     // with more room), it shields a kong standing on the planks
     for (const [wx, wz] of [[568.5, -225.5], [539.5, -217.5], [632.5, -225.6], [628.3, -242.3], [550.5, -167.5]] as Array<[number, number]>) {
       const k = decks.find((q) => inRect(q, wx, wz, 0.3)); if (!k) continue;
-      const c = Math.cos(k.yaw), sn = Math.sin(k.yaw), lz = (wx - k.x) * sn + (wz - k.z) * c;
+      const c = dmath.cos(k.yaw), sn = dmath.sin(k.yaw), lz = (wx - k.x) * sn + (wz - k.z) * c;
       const cand = [1, -1].map((sd) => toWorld(k, sd * (k.w / 2 + 2.2), lz)).sort((a, b) => clearance(b[0], b[1]) - clearance(a[0], a[1]));
       FORCED.push(cand[0] as [number, number]);
     }
     const place = (x: number, z: number, forced: boolean): void => {
-      if (Math.hypot(x - CX, z - CZ) > 92 && !forced) return;
+      if (dmath.hypot(x - CX, z - CZ) > 92 && !forced) return;
         // (forced points stand on the wadeable bed: the silt shelf over the deep lagoon flats counts)
         const g = forced ? Math.max(groundAt(x, z), shelfTop(x, z)) : groundAt(x, z);
         if (g < -1.0 || g > (forced ? 4.2 : 3.2)) return;           // deep lagoon / the plateau (the town's edge) — not swamp
@@ -1060,11 +1061,11 @@ function genLayout(): MurkLayout {
         // (invisible colliders, no cover): a fallen trunk lying ON the ground, its root plate up-ended, or a dead snag
         if (g > 1.0) {
           const a = cr() * TAU, L = 4 + cr() * 2.5, r = 0.58 + cr() * 0.14;
-          const ax = x - Math.cos(a) * L / 2, az = z - Math.sin(a) * L / 2, bx = x + Math.cos(a) * L / 2, bz = z + Math.sin(a) * L / 2;
+          const ax = x - dmath.cos(a) * L / 2, az = z - dmath.sin(a) * L / 2, bx = x + dmath.cos(a) * L / 2, bz = z + dmath.sin(a) * L / 2;
           const ga = groundAt(ax, az), gb = groundAt(bx, bz);
           if (Math.abs(ga - gb) < 1.0 && Math.abs(ga - g) < 0.8 && clearance(ax, az) > 2 && clearance(bx, bz) > 2) {
             roots.push({ pts: [[ax, ga + r * 0.8, az], [x, g + r * 0.85, z], [bx, gb + r * 0.75, bz]], r0: r, r1: r * 0.85, kind: "log" });
-            roots.push({ pts: [[ax, ga - 0.5, az], [ax - Math.cos(a) * 0.3, ga + 1.3, az - Math.sin(a) * 0.3], [ax - Math.cos(a) * 0.5, ga + 2.0, az - Math.sin(a) * 0.5]], r0: 0.48, r1: 0.26, kind: "trunk" });
+            roots.push({ pts: [[ax, ga - 0.5, az], [ax - dmath.cos(a) * 0.3, ga + 1.3, az - dmath.sin(a) * 0.3], [ax - dmath.cos(a) * 0.5, ga + 2.0, az - dmath.sin(a) * 0.5]], r0: 0.48, r1: 0.26, kind: "trunk" });
           } else {
             const hgt = 3 + cr() * 2;
             roots.push({ pts: [[x, g - 0.8, z], [x + (cr() - 0.5) * 0.3, g + hgt * 0.5, z + (cr() - 0.5) * 0.3], [x + (cr() - 0.5) * 0.6, g + hgt, z + (cr() - 0.5) * 0.6]], r0: 0.55, r1: 0.3, kind: "trunk" });
@@ -1087,10 +1088,10 @@ function genLayout(): MurkLayout {
         } else if (q < 0.8) {
           // a fallen trunk (1.0–1.3 m tall), its root plate up-ended at one end
           const a = cr() * TAU, L = 4 + cr() * 3, r = 0.5 + cr() * 0.2;
-          const ax = x - Math.cos(a) * L / 2, az = z - Math.sin(a) * L / 2, bx = x + Math.cos(a) * L / 2, bz = z + Math.sin(a) * L / 2;
+          const ax = x - dmath.cos(a) * L / 2, az = z - dmath.sin(a) * L / 2, bx = x + dmath.cos(a) * L / 2, bz = z + dmath.sin(a) * L / 2;
           if (groundAt(ax, az) < -0.9 || groundAt(bx, bz) < -0.9 || clearance(ax, az) < 2 || clearance(bx, bz) < 2) return;
           roots.push({ pts: [[ax, WATER_Y + 0.3, az], [x, WATER_Y + 0.42, z], [bx, WATER_Y + 0.28, bz]], r0: r, r1: r * 0.85, kind: "log" });
-          roots.push({ pts: [[ax, y0 - 0.5, az], [ax - Math.cos(a) * 0.3, WATER_Y + 1.2, az - Math.sin(a) * 0.3], [ax - Math.cos(a) * 0.5, WATER_Y + 1.9, az - Math.sin(a) * 0.5]], r0: 0.45, r1: 0.25, kind: "trunk" });
+          roots.push({ pts: [[ax, y0 - 0.5, az], [ax - dmath.cos(a) * 0.3, WATER_Y + 1.2, az - dmath.sin(a) * 0.3], [ax - dmath.cos(a) * 0.5, WATER_Y + 1.9, az - dmath.sin(a) * 0.5]], r0: 0.45, r1: 0.25, kind: "trunk" });
         } else {
           // a dead snag: a broken grey trunk 3–5 m tall
           const hgt = 3 + cr() * 2;
@@ -1110,7 +1111,7 @@ function genLayout(): MurkLayout {
   const bA: V3 = [GM.x + GM.platH - 0.1, GM.platY, GM.z - 3.8];
   const sRoof = toWorld(S, -S.w / 2 + 0.6, 0.4);
   const bB: V3 = [sRoof[0], PS.roofY + 0.0, sRoof[1]];
-  const bl = Math.hypot(bB[0] - bA[0], bB[2] - bA[2]);
+  const bl = dmath.hypot(bB[0] - bA[0], bB[2] - bA[2]);
   const bridge = { a: bA, b: bB, w: 1.5, sag: 0.9, n: Math.ceil(bl / 0.34) };
 
   // ---------------------------------------------------------------- mooring lines + moss anchors
@@ -1123,20 +1124,20 @@ function genLayout(): MurkLayout {
   }
   for (let i = 0; i < 44; i++) {
     const a = gr() * TAU, r = 4 + gr() * 10, y = 16 + gr() * 5;
-    moss.push({ x: GM.x + Math.cos(a) * r, y, z: GM.z + Math.sin(a) * r, len: 1.4 + gr() * 2.4, w: 0.5 + gr() * 0.5 });
+    moss.push({ x: GM.x + dmath.cos(a) * r, y, z: GM.z + dmath.sin(a) * r, len: 1.4 + gr() * 2.4, w: 0.5 + gr() * 0.5 });
   }
 
   // walkable roofs keep a clear sky: crown lobes over a hut's roof sit ≥ ~3.4 m above it (no leaf cards in a player's face)
   for (const c of canopies) for (const p of parts) {
     const h = p.h, top = h.roof === "flat" ? p.roofY : p.ridgeY;
-    if (Math.hypot(c.c[0] - h.x, c.c[2] - h.z) > c.r + Math.hypot(h.w, h.d) / 2) continue;
+    if (dmath.hypot(c.c[0] - h.x, c.c[2] - h.z) > c.r + dmath.hypot(h.w, h.d) / 2) continue;
     c.c[1] = Math.max(c.c[1], top + 3.4 + c.r * 0.55);
   }
   fixRails(decks, flights);
   // keep stair heads + door approaches clear of cover props
   {
     const zones: Array<{ x: number; z: number; yaw: number; w: number; d: number }> = [];
-    for (const f of flights) { const run = f.n * f.tread; zones.push({ x: f.x + f.dx * (run / 2 - 0.6), z: f.z + f.dz * (run / 2 - 0.6), yaw: Math.atan2(f.dx, f.dz), w: f.w + 1.2, d: run + 2.4 }); }
+    for (const f of flights) { const run = f.n * f.tread; zones.push({ x: f.x + f.dx * (run / 2 - 0.6), z: f.z + f.dz * (run / 2 - 0.6), yaw: dmath.atan2(f.dx, f.dz), w: f.w + 1.2, d: run + 2.4 }); }
     for (const h of huts) for (const o of h.openings) {
       if (o.kind !== "door" && o.kind !== "wide") continue;
       const S = [[0, 1, h.w], [1, 0, h.d], [0, -1, h.w], [-1, 0, h.d]][o.side];
@@ -1172,14 +1173,14 @@ function genLayout(): MurkLayout {
   for (const [x, z, sc] of TANGLES) cages.push({ x, z, r: 1.5 * sc + 0.35, y0: BED, y1: sc * 1.6 + 0.9 });
   // drop crown lobes buried inside a bigger lobe (centre within 0.5 r of it): they add stacked leaf-card layers
   // (the crown's overdraw = its GPU cost) without changing the canopy's silhouette or cover
-  const kept = canopies.filter((a) => !canopies.some((b) => b !== a && b.r > a.r + 0.01 && Math.hypot(a.c[0] - b.c[0], a.c[1] - b.c[1], a.c[2] - b.c[2]) < b.r * 0.5));
+  const kept = canopies.filter((a) => !canopies.some((b) => b !== a && b.r > a.r + 0.01 && dmath.hypot3(a.c[0] - b.c[0], a.c[1] - b.c[1], a.c[2] - b.c[2]) < b.r * 0.5));
   canopies.length = 0; canopies.push(...kept);
   return { decks, flights, huts, parts, roots, props, plants, bridge, spiral, ropes, moss, trees, canopies, cages };
 }
 
 /** point in an oriented rect (three.js frame yaw), grown by m */
 function inRect(k: { x: number; z: number; yaw: number; w: number; d: number }, x: number, z: number, m = 0): boolean {
-  const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = x - k.x, dz = z - k.z;
+  const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = x - k.x, dz = z - k.z;
   const lx = dx * c - dz * s, lz = dx * s + dz * c;
   return Math.abs(lx) <= k.w / 2 + m && Math.abs(lz) <= k.d / 2 + m;
 }
@@ -1187,8 +1188,8 @@ function inRect(k: { x: number; z: number; yaw: number; w: number; d: number }, 
  *  on a deck the walk overlaps) is removed, so walks open onto the decks they join and decks open where walks and
  *  stairs meet them. Spans shorter than 0.6 m are dropped. */
 function fixRails(decks: MDeck[], flights: Flight[]) {
-  const fr = flights.map((f) => { const run = f.n * f.tread; return { x: f.x + f.dx * run / 2, z: f.z + f.dz * run / 2, yaw: Math.atan2(f.dx, f.dz), w: f.w + 0.2, d: run + 0.3, y: f.yTop }; });
-  const bR = new Map(decks.map((o) => [o, (o.w + o.d) ** 2 / 4 + 0.5]));
+  const fr = flights.map((f) => { const run = f.n * f.tread; return { x: f.x + f.dx * run / 2, z: f.z + f.dz * run / 2, yaw: dmath.atan2(f.dx, f.dz), w: f.w + 0.2, d: run + 0.3, y: f.yTop }; });
+  const bR = new Map(decks.map((o) => [o, dmath.pow(o.w + o.d, 2) / 4 + 0.5]));
   for (const k of decks) {
     const r = k.rails; if (!r) continue;
     for (const key of ["nx", "px", "nz", "pz"] as const) {
@@ -1204,8 +1205,8 @@ function fixRails(decks: MDeck[], flights: Flight[]) {
           const [x, z] = toWorld(k, lx, lz);
           let blocked = false;
           // (bounding-circle reject first: this ran 27 ms of the module's import on the client's main thread)
-          for (const o of decks) if (o !== k && Math.abs(o.y - k.y) < 0.75 && (x - o.x) ** 2 + (z - o.z) ** 2 < bR.get(o)! && inRect(o, x, z, 0.12)) { blocked = true; break; }
-          if (!blocked) for (const f of fr) if (Math.abs(f.y - k.y) < 0.3 && (x - f.x) ** 2 + (z - f.z) ** 2 < (f.w + f.d) ** 2 / 4 + 0.5 && inRect(f, x, z, 0.1)) { blocked = true; break; }
+          for (const o of decks) if (o !== k && Math.abs(o.y - k.y) < 0.75 && dmath.pow(x - o.x, 2) + dmath.pow(z - o.z, 2) < bR.get(o)! && inRect(o, x, z, 0.12)) { blocked = true; break; }
+          if (!blocked) for (const f of fr) if (Math.abs(f.y - k.y) < 0.3 && dmath.pow(x - f.x, 2) + dmath.pow(z - f.z, 2) < dmath.pow(f.w + f.d, 2) / 4 + 0.5 && inRect(f, x, z, 0.1)) { blocked = true; break; }
           if (!blocked && cur === null) cur = Math.min(u, b);
           if ((blocked || u >= b - 1e-6) && cur !== null) { const e = blocked ? u - 0.1 : b; if (e - cur > 0.6) out.push([cur, e]); cur = null; }
         }
@@ -1345,7 +1346,7 @@ function dressRoom(room: InteriorRoom): Dress[] {
     const cands: Array<[number, number]> = [];
     for (let s = 0; s < 4; s++) { const Lw = s % 2 === 0 ? W : D; for (let a = -Lw / 2 + w / 2 + 0.1; a <= Lw / 2 - w / 2 - 0.1; a += 0.15) cands.push([s, a]); }
     for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
-    if (kind === "firewood" && stove) cands.sort((p, q) => { const P = sideRect(p[0], p[1] - w / 2, p[1] + w / 2, 0, d), Q = sideRect(q[0], q[1] - w / 2, q[1] + w / 2, 0, d); return Math.hypot((P.x0 + P.x1) / 2 - stove.x, (P.z0 + P.z1) / 2 - stove.z) - Math.hypot((Q.x0 + Q.x1) / 2 - stove.x, (Q.z0 + Q.z1) / 2 - stove.z); });
+    if (kind === "firewood" && stove) cands.sort((p, q) => { const P = sideRect(p[0], p[1] - w / 2, p[1] + w / 2, 0, d), Q = sideRect(q[0], q[1] - w / 2, q[1] + w / 2, 0, d); return dmath.hypot((P.x0 + P.x1) / 2 - stove.x, (P.z0 + P.z1) / 2 - stove.z) - dmath.hypot((Q.x0 + Q.x1) / 2 - stove.x, (Q.z0 + Q.z1) / 2 - stove.z); });
     // wall gear: at its usual height, else hung higher (over the window heads) where the room is tall enough
     let placed = false;
     for (const lift of wallHung ? [0, 0.7] : [0]) for (const [s, a] of placed ? [] : cands) {
@@ -1381,20 +1382,20 @@ export const ROOM_DRESS: Dress[] = INTERIOR_ROOMS.flatMap(dressRoom);
       const roofY = roofAt(part, lz), [wx, wz] = toWorld(h, lx, lz);
       // the hut's nearest chimney moves over the stove
       let best: MProp | null = null, bd = 1e9;
-      for (const c of chims) { const d = Math.hypot(c.x - h.x, c.z - h.z); if (d < Math.max(h.w, h.d) && d < bd + 1e9) { const dd = Math.hypot(c.x - wx, c.z - wz); if (dd < bd) { bd = dd; best = c; } } }
+      for (const c of chims) { const d = dmath.hypot(c.x - h.x, c.z - h.z); if (d < Math.max(h.w, h.d) && d < bd + 1e9) { const dd = dmath.hypot(c.x - wx, c.z - wz); if (dd < bd) { bd = dd; best = c; } } }
       if (best) { best.x = wx; best.z = wz; best.y = roofY - 0.35; best.h = Math.max(1.9, part.ridgeY - best.y + 1.2); chims.splice(chims.indexOf(best), 1); }
       ROOM_DRESS.push({ room: room.id!, kind: "flue", x: s.x, z: s.z, y: s.top, yaw: 0, w: 0.16, d: 0.16, h: roofY - room.y - s.top, col: false, v: 0 });
     }
   }
   // a chimney left without a stove (its hut has fewer stoves than chimneys) is removed
-  for (const c of chims) if (LAYOUT.parts.some((p) => p.h.roof !== "flat" && p.h.id !== "smokehouse" && Math.hypot(c.x - p.h.x, c.z - p.h.z) < Math.max(p.h.w, p.h.d))) LAYOUT.props.splice(LAYOUT.props.indexOf(c), 1);
+  for (const c of chims) if (LAYOUT.parts.some((p) => p.h.roof !== "flat" && p.h.id !== "smokehouse" && dmath.hypot(c.x - p.h.x, c.z - p.h.z) < Math.max(p.h.w, p.h.d))) LAYOUT.props.splice(LAYOUT.props.indexOf(c), 1);
 }
 /** colliders of the solid dressing pieces (axis-aligned in the room frame: every piece faces a wall) */
 function dressBoxes(): Box[] {
   const out: Box[] = [];
   for (const dr of ROOM_DRESS) {
     if (!dr.col) continue;
-    const room = INTERIOR_ROOMS.find((r) => r.id === dr.room)!, along = Math.abs(Math.sin(dr.yaw)) > 0.5;
+    const room = INTERIOR_ROOMS.find((r) => r.id === dr.room)!, along = Math.abs(dmath.sin(dr.yaw)) > 0.5;
     const hx = (along ? dr.d : dr.w) / 2, hz = (along ? dr.w : dr.d) / 2;
     out.push(lbox(room, dr.x - hx, dr.z - hz, dr.x + hx, dr.z + hz, room.y + dr.y, room.y + dr.y + dr.h, "wood"));
   }
@@ -1447,7 +1448,7 @@ export function flightPosts(f: Flight): Array<[number, number, number, number]> 
 }
 export function flightBoxes(f: Flight): Box[] {
   const out: Box[] = [];
-  const yaw = simYaw(Math.atan2(f.dx, f.dz)), rise = (f.yTop - f.yBot) / f.n;
+  const yaw = simYaw(dmath.atan2(f.dx, f.dz)), rise = (f.yTop - f.yBot) / f.n;
   for (let i = 0; i < f.n; i++) {
     const top = f.yTop - (i + 1) * rise;
     if (top < f.yBot - 1e-3) break;
@@ -1595,7 +1596,7 @@ export function rootCurve(pts: V3[], perM = 1.6): V3[] {
   const T = 0.4;
   for (let i = 0; i < n - 1; i++) {
     const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
-    const L = Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]), k = Math.max(2, Math.ceil(L * perM));
+    const L = dmath.hypot3(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]), k = Math.max(2, Math.ceil(L * perM));
     for (let j = 0; j < k; j++) {
       const t = j / k, t2 = t * t, t3 = t2 * t;
       const h = (a: number, b: number, c: number, d: number) => { const m0 = T * (c - a), m1 = T * (d - b); return (2 * t3 - 3 * t2 + 1) * b + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * c + (t3 - t2) * m1; };
@@ -1615,13 +1616,13 @@ export function rootBoxes(r: Root): Box[] {
   const total = pts.length - 1;
   // arc-length fraction per sample (the client tapers by arc length)
   const cum = [0];
-  for (let i = 0; i < total; i++) cum.push(cum[i] + Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]));
+  for (let i = 0; i < total; i++) cum.push(cum[i] + dmath.hypot3(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]));
   const Ltot = cum[total] || 1;
   for (let i = 0; i < total; i++) {
     const a = pts[i], b = pts[i + 1];
     if (Math.max(a[1], b[1]) < -0.4) continue;
-    const t = (cum[i] + cum[i + 1]) / 2 / Ltot, rad = (r.r0 + (r.r1 - r.r0) * Math.pow(t, 0.8)) * (1 + 0.35 * Math.max(0, 1 - t * 6));
-    const dx = b[0] - a[0], dz = b[2] - a[2], hl = Math.hypot(dx, dz) / 2;
+    const t = (cum[i] + cum[i + 1]) / 2 / Ltot, rad = (r.r0 + (r.r1 - r.r0) * dmath.pow(t, 0.8)) * (1 + 0.35 * Math.max(0, 1 - t * 6));
+    const dx = b[0] - a[0], dz = b[2] - a[2], hl = dmath.hypot(dx, dz) / 2;
     // a shallow segment's walkable top sits at the drawn bark's top at its middle (the max end would overshoot the
     // drawn surface by half the segment's rise: floor mismatches on limbs / prop roots)
     const dy = Math.abs(a[1] - b[1]), shallow = dy < hl * 1.4;
@@ -1630,7 +1631,7 @@ export function rootBoxes(r: Root): Box[] {
     // so bullets and kongs pass through the sides of drawn trunks)
     // (a shallow END segment stops at the drawn (capped) end — otherwise it overshoots a log's end face by up to 0.4 m)
     const end = i === 0 || i === total - 1, along = shallow ? hl + (end ? 0 : rad * 0.25) : Math.max(hl + rad * 0.25, rad * 0.85);
-    out.push({ c: [(a[0] + b[0]) / 2, (y0 + y1) / 2, (a[2] + b[2]) / 2], h: [rad * 0.85, (y1 - y0) / 2, along], yaw: simYaw(Math.atan2(dx, dz)), surf: "wood" });
+    out.push({ c: [(a[0] + b[0]) / 2, (y0 + y1) / 2, (a[2] + b[2]) / 2], h: [rad * 0.85, (y1 - y0) / 2, along], yaw: simYaw(dmath.atan2(dx, dz)), surf: "wood" });
   }
   return out;
 }
@@ -1650,7 +1651,7 @@ export function gmBoxes(): Box[] {
         const a = (i + 0.5) / Nl * TAU;
         if (gmOpen(a, ym)) continue;
         const half = Math.PI * r1 / Nl * 1.04;
-        out.push({ c: [GM.x + Math.cos(a) * rc, ym, GM.z + Math.sin(a) * rc], h: [half, dy / 2 + 0.02, (r1 - r0) / 2], yaw: a + Math.PI / 2, surf: "wood" });
+        out.push({ c: [GM.x + dmath.cos(a) * rc, ym, GM.z + dmath.sin(a) * rc], h: [half, dy / 2 + 0.02, (r1 - r0) / 2], yaw: a + Math.PI / 2, surf: "wood" });
       }
     }
   }
@@ -1668,14 +1669,14 @@ export function gmBoxes(): Box[] {
   // thresholds through the wall thickness at the gate (floorY) and the platform exit (platY)
   for (const [a, y] of [[GM.inA, GM.floorY], [GM.outA, GM.platY]] as Array<[number, number]>) {
     const r0 = gmInner(y) - 0.35, r1 = gmRadius(y) + 0.1, rm = (r0 + r1) / 2;
-    out.push({ c: [GM.x + Math.cos(a) * rm, y - 0.12, GM.z + Math.sin(a) * rm], h: [(r1 - r0) / 2, 0.12, 1.1], yaw: a, surf: "wood" });
+    out.push({ c: [GM.x + dmath.cos(a) * rm, y - 0.12, GM.z + dmath.sin(a) * rm], h: [(r1 - r0) / 2, 0.12, 1.1], yaw: a, surf: "wood" });
   }
   // hollow ceiling (just above the exit lintel)
   out.push({ c: [GM.x, GM.platY + 2.7, GM.z], h: [gmInner(GM.platY + 2.7), 0.12, gmInner(GM.platY + 2.7)], yaw: 0, surf: "wood" });
   // spiral treads: thin radial boards
   for (const s of LAYOUT.spiral) {
-    const rm = (s.r0 + s.r1) / 2, hl = (s.r1 - s.r0) / 2, ht = Math.tan(s.da / 2) * s.r1 * 1.05;
-    out.push({ c: [GM.x + Math.cos(s.a) * rm, s.y - 0.08, GM.z + Math.sin(s.a) * rm], h: [hl, 0.08, ht], yaw: s.a, surf: "wood" });
+    const rm = (s.r0 + s.r1) / 2, hl = (s.r1 - s.r0) / 2, ht = dmath.tan(s.da / 2) * s.r1 * 1.05;
+    out.push({ c: [GM.x + dmath.cos(s.a) * rm, s.y - 0.08, GM.z + dmath.sin(s.a) * rm], h: [hl, 0.08, ht], yaw: s.a, surf: "wood" });
   }
   // the Crow's Nest platform: four slabs around the trunk (world-axis square), rails (a gap for the bridge)
   const ph = GM.platH, rt = gmRadius(GM.platY) - 0.35, y = GM.platY;
@@ -1714,7 +1715,7 @@ export function nestRails(): Array<[number, number, number, number]> {
 }
 export function bridgeBoxes(): Box[] {
   const b = LAYOUT.bridge, out: Box[] = [];
-  const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], L = Math.hypot(dx, dz), yaw = simYaw(Math.atan2(dx, dz));
+  const dx = b.b[0] - b.a[0], dz = b.b[2] - b.a[2], L = dmath.hypot(dx, dz), yaw = simYaw(dmath.atan2(dx, dz));
   for (let i = 0; i < b.n; i++) {
     const t = (i + 0.5) / b.n, y = bridgeY(t);
     out.push({ c: [b.a[0] + dx * t, y - 0.06, b.a[2] + dz * t], h: [b.w / 2, 0.06, L / b.n / 2 + 0.01], yaw, surf: "wood" });
@@ -1737,7 +1738,7 @@ export function deckPiles(k: MDeck): Array<[number, number, number]> {
   if (k.noPiles) return [];
   const nb = Math.max(2, Math.round(k.d / 1.6)), step = k.pile ?? (k.kind === "walk" ? 2 : 1), out: Array<[number, number, number]> = [];
   // (never inside a stair's footprint: the flights leave the decks exactly where piles would stand)
-  const fl = LAYOUT.flights.map((f) => { const run = f.n * f.tread; return { x: f.x + f.dx * run / 2, z: f.z + f.dz * run / 2, yaw: Math.atan2(f.dx, f.dz), w: f.w + 0.5, d: run + 0.5 }; });
+  const fl = LAYOUT.flights.map((f) => { const run = f.n * f.tread; return { x: f.x + f.dx * run / 2, z: f.z + f.dz * run / 2, yaw: dmath.atan2(f.dx, f.dz), w: f.w + 0.5, d: run + 0.5 }; });
   for (let i = 0; i <= nb; i += step) for (const s of [-1, 1]) {
     const [x, z] = toWorld(k, s * (k.w / 2 + 0.05), -k.d / 2 + 0.1 + (k.d - 0.2) * i / nb);
     if (fl.some((q) => inRect(q, x, z, 0.2))) continue;
@@ -1761,8 +1762,8 @@ const postBox = (x: number, z: number, r: number, top: number): Box => ({ c: [x,
 /** a longboat hull's colliders (len = the kit's `len`, sxz / sy = the drawn scale): mirrors town-boat.ts hullLines */
 function boatBoxes(p: MProp, len: number, sxz: number, sy: number, roll: number): Box[] {
   const f = { x: p.x, z: p.z, yaw: p.yaw }, HB = 0.82, RAKE = 0.62, XS = -len / 2 + 0.08, XB = len / 2 - RAKE;
-  const hb = (u: number) => (u <= 0.42 ? HB * (1 - 0.22 * ((0.42 - u) / 0.42) ** 2) : HB * Math.max(0, 1 - ((u - 0.42) / 0.58) ** 1.9) ** 0.72);
-  const ys = (u: number) => (u < 0.4 ? 0.58 + 0.2 * ((0.4 - u) / 0.4) ** 2 : 0.58 + 0.52 * ((u - 0.4) / 0.6) ** 2.2);
+  const hb = (u: number) => (u <= 0.42 ? HB * (1 - 0.22 * dmath.pow((0.42 - u) / 0.42, 2)) : HB * dmath.pow(Math.max(0, 1 - dmath.pow((u - 0.42) / 0.58, 1.9)), 0.72));
+  const ys = (u: number) => (u < 0.4 ? 0.58 + 0.2 * dmath.pow((0.4 - u) / 0.4, 2) : 0.58 + 0.52 * dmath.pow((u - 0.4) / 0.6, 2.2));
   const out: Box[] = [], T = 0.07, floorY = p.y + (-0.25 + 0.09) * sy, x0 = XS * sxz, x1 = (XB + RAKE * 0.6) * sxz;
   const n = Math.max(4, Math.ceil((x1 - x0) / 0.45));
   for (let i = 0; i < n; i++) {
@@ -1826,8 +1827,8 @@ let massCache: RootMass[] | null = null;
 export function rootMasses(): RootMass[] {
   if (massCache) return massCache;
   massCache = LAYOUT.cages.map((c) => {
-    const g = groundAt(c.x, c.z), tree = LAYOUT.trees.some((t) => Math.hypot(t.x - c.x, t.z - c.z) < 0.5);
-    const t = tree ? LAYOUT.trees.find((q) => Math.hypot(q.x - c.x, q.z - c.z) < 0.5)! : null;
+    const g = groundAt(c.x, c.z), tree = LAYOUT.trees.some((t) => dmath.hypot(t.x - c.x, t.z - c.z) < 0.5);
+    const t = tree ? LAYOUT.trees.find((q) => dmath.hypot(q.x - c.x, q.z - c.z) < 0.5)! : null;
     return mass(c.x, c.z, g - 0.4, c.y1, c.r * 0.72, c.rt ?? (t ? (0.55 * t.s + 0.1) * 1.15 : 0.3), !!t || !!c.rt);
   });
   return massCache;
@@ -1928,7 +1929,7 @@ function buildLoot(): { chests: Array<[number, number, number, number]>; floor: 
   // room: the Crow's Nest at the top of the Great Mangrove's spiral is THE risky climb of the swamp, so it always pays;
   // the hollow's chest at the stair foot is listed second)
   chests.push([GM.x - GM.platH + 1.3, GM.platY, GM.z + GM.platH - 1.3, Math.PI / 4]);
-  chests.push([GM.x + Math.cos(GM.inA - 0.95) * 1.7, GM.floorY, GM.z + Math.sin(GM.inA - 0.95) * 1.7, GM.inA]);
+  chests.push([GM.x + dmath.cos(GM.inA - 0.95) * 1.7, GM.floorY, GM.z + dmath.sin(GM.inA - 0.95) * 1.7, GM.inA]);
   for (const h of LAYOUT.huts) for (const f of h.furniture) if (f.kind === "chest") {
     const [x, z] = toWorld(h, f.x, f.z);
     chests.push([x, h.y + f.y, z, h.yaw + f.yaw]);
@@ -1971,12 +1972,12 @@ function buildLoot(): { chests: Array<[number, number, number, number]>; floor: 
   // floor spots on the dry bank (the nearest point ≥ 0.15 m above the tea within 7 m of each mark)
   for (const [mx, mz] of [[608, -134]] as V2[]) {
     let best: V2 | null = null, bd = 1e9;
-    for (let dz = -7; dz <= 7; dz += 0.5) for (let dx = -7; dx <= 7; dx += 0.5) { const x = mx + dx, z = mz + dz, d = Math.hypot(dx, dz); if (d < bd && groundAt(x, z) > WATER_Y + 0.15) { bd = d; best = [x, z]; } }
+    for (let dz = -7; dz <= 7; dz += 0.5) for (let dx = -7; dx <= 7; dx += 0.5) { const x = mx + dx, z = mz + dz, d = dmath.hypot(dx, dz); if (d < bd && groundAt(x, z) > WATER_Y + 0.15) { bd = d; best = [x, z]; } }
     if (best) floor.push([best[0], groundAt(best[0], best[1]), best[1]]);
   }
   // spiral nook at the knot window
   const sw = LAYOUT.spiral.reduce((b, s) => Math.abs(s.y - GM.winY0) < Math.abs(b.y - GM.winY0) ? s : b, LAYOUT.spiral[0]);
-  floor.push([GM.x + Math.cos(sw.a) * 1.3, sw.y, GM.z + Math.sin(sw.a) * 1.3]);
+  floor.push([GM.x + dmath.cos(sw.a) * 1.3, sw.y, GM.z + dmath.sin(sw.a) * 1.3]);
   return { chests, floor };
 }
 export const LOOT_SPOTS = buildLoot();

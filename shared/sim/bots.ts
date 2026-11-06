@@ -82,7 +82,7 @@ export class BotBrain {
       const st = dropState(m), mine = m.mode === "trios" ? st.team.get(p.team) : undefined;
       if (mine !== undefined) pick = POIS[mine];
       else {
-        let tot = 0; const w = (i: number) => st.src[i] ** 0.4 * Math.max(0.12, 1 - st.n[i] / Math.max(1, st.src[i] / 3));
+        let tot = 0; const w = (i: number) => dmath.pow(st.src[i], 0.4) * Math.max(0.12, 1 - st.n[i] / Math.max(1, st.src[i] / 3));
         POIS.forEach((q, i) => { if (q.id !== "lobby-islet" && off(q) < REACH) tot += w(i); });
         let r = teamRng.next() * tot;
         for (let i = 0; i < POIS.length; i++) { const q = POIS[i]; if (q.id === "lobby-islet" || off(q) >= REACH) continue; pick = q; r -= w(i); if (r <= 0) break; }
@@ -92,13 +92,13 @@ export class BotBrain {
     }
     this.poi = POIS.indexOf(pick);
     const a = this.rng.next() * Math.PI * 2, d = this.rng.next() * pick.r * (m.mode === "trios" ? 0.35 : 0.7);
-    this.tx = pick.x + Math.cos(a) * d; this.tz = pick.z + Math.sin(a) * d;
+    this.tx = pick.x + dmath.cos(a) * d; this.tz = pick.z + dmath.sin(a) * d;
     // aim the landing at loot: the nearest chest (or floor gun) to that spot. Indoor loot: land at its building's door
     // (the loot scan's walk graph), never on the roof above it; outdoor loot: beside it, on dry ground
     const nav = lootSpots(m.world).nav;
     let bd = 120 * 120, lx = NaN, lz = NaN, claims = true; this.lootChest = -1;
     const consider = (x: number, y: number, z: number, chest: number, item = -1) => {
-      const q = (x - this.tx) ** 2 + (z - this.tz) ** 2; if (q >= bd) return;
+      const q = dmath.pow(x - this.tx, 2) + dmath.pow(z - this.tz, 2); if (q >= bd) return;
       if (claims && claimedByOther(m, chest >= 0 ? chest : -1 - item, this.id)) return;
       const cell = navCellAt(nav, x, y, z);
       let ax = x, ay = y, az = z;
@@ -127,10 +127,10 @@ export class BotBrain {
     this.enemySeenT = 0;
   }
   onRespawn(m: Match, p: Player) {
-    const a = this.rng.next() * Math.PI * 2; this.tx = m.storm.tx + Math.cos(a) * m.storm.tr * 0.5; this.tz = m.storm.tz + Math.sin(a) * m.storm.tr * 0.5;
+    const a = this.rng.next() * Math.PI * 2; this.tx = m.storm.tx + dmath.cos(a) * m.storm.tr * 0.5; this.tz = m.storm.tz + dmath.sin(a) * m.storm.tr * 0.5;
     // redeployed with a pistol: glide to the nearest unopened chest near the landing spot (re-arm, then fight)
     let bd = 160 * 160; this.lootChest = -1;
-    for (const c of m.chests) { if (c.opened || c.box) continue; const q = (c.x - this.tx) ** 2 + (c.z - this.tz) ** 2; if (q < bd && Math.hypot(c.x - m.storm.tx, c.z - m.storm.tz) < m.storm.tr * 0.9) { bd = q; this.lootChest = c.id; } }
+    for (const c of m.chests) { if (c.opened || c.box) continue; const q = dmath.pow(c.x - this.tx, 2) + dmath.pow(c.z - this.tz, 2); if (q < bd && dmath.hypot(c.x - m.storm.tx, c.z - m.storm.tz) < m.storm.tr * 0.9) { bd = q; this.lootChest = c.id; } }
     const cx = this.lootChest >= 0 ? m.chests[this.lootChest] : null;
     if (cx) { this.tx = cx.x + (this.rng.next() - 0.5) * 4; this.tz = cx.z + (this.rng.next() - 0.5) * 4; }
     this.state = S.Drop; this.enemy = -1; this.landedAt = -1; this.lootItem = -1; this.idleT = this.holdT = 0; this.ringN = 0; this.detourT = 0; this.badDoor.fill(-1); this.resetRecovery(); void p;
@@ -156,12 +156,13 @@ function dropState(m: Match) {
   let st = DROP.get(m); if (st && st.plane === plane) return st;
   const src = POIS.map((q) => {
     let k = 0; const r2 = q.r * q.r;
-    for (const c of m.chests) if (!c.box && !c.opened && (c.x - q.x) ** 2 + (c.z - q.z) ** 2 < r2) k++;
-    for (const it of m.items) if (it.kind === IK.Weapon && !it.taken && (it.x - q.x) ** 2 + (it.z - q.z) ** 2 < r2) k++;
+    for (const c of m.chests) if (!c.box && !c.opened && dmath.pow(c.x - q.x, 2) + dmath.pow(c.z - q.z, 2) < r2) k++;
+    for (const it of m.items) if (it.kind === IK.Weapon && !it.taken && dmath.pow(it.x - q.x, 2) + dmath.pow(it.z - q.z, 2) < r2) k++;
     return Math.max(2, k);
   });
   DROP.set(m, st = { plane, src, n: new Int32Array(POIS.length), team: new Map() }); return st;
 }
 
 import { claimedByOther, pointLineDist } from "./bots.hot";
+import * as dmath from "./dmath";
 export { BOT_GIVEUP, BOT_UNSTICK, LANDING_GRACE_S, botThink, botThinksNow, weaponValue } from "./bots.hot";

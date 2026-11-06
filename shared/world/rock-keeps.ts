@@ -9,6 +9,7 @@
 import { POIS } from "./map";
 import { allClearings } from "../pois/index";
 import type { RockKeep, TerrainData } from "./terrain-gen";
+import * as dmath from "../sim/dmath";
 
 const q2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -16,8 +17,8 @@ export function poiRockKeeps(): RockKeep[] {
   const out: RockKeep[] = [];
   const lookout = POIS.find((p) => p.id === "lookout-point");
   for (const c of allClearings() as Array<{ x: number; z: number; r?: number; hx?: number; hz?: number; yaw?: number }>) {
-    if (lookout && Math.hypot(c.x - lookout.x, c.z - lookout.z) <= lookout.r + 20) continue;
-    if (!POIS.some((p) => p.id !== "lookout-point" && Math.hypot(c.x - p.x, c.z - p.z) <= p.r + 20)) continue;
+    if (lookout && dmath.hypot(c.x - lookout.x, c.z - lookout.z) <= lookout.r + 20) continue;
+    if (!POIS.some((p) => p.id !== "lookout-point" && dmath.hypot(c.x - p.x, c.z - p.z) <= p.r + 20)) continue;
     out.push(c.r !== undefined ? { x: q2(c.x), z: q2(c.z), r: q2(c.r), hx: 0, hz: 0, yaw: 0 }
       : { x: q2(c.x), z: q2(c.z), r: 0, hx: q2(c.hx!), hz: q2(c.hz!), yaw: Math.round((c.yaw ?? 0) * 1000) / 1000 });
   }
