@@ -17,6 +17,9 @@ import { arg,env,save,source,stats } from './common.mts';
 import { RESULT_SCHEMA, RESULT_VERSION, type Metric, type RunResult } from './schema.ts';
 const base=arg('--url','http://127.0.0.1:5795'),count=+arg('--players','50'),seconds=+arg('--seconds','25'),aux=process.argv.includes('--aux'),assets=process.argv.includes('--assets');
 const transport=arg('--transport','ws')==='wt'?'wt':'ws',wt=transport==='wt';
+// --local-address 127.0.0.N: this load's WebSockets come from their own loopback address, so several sockets.mts
+// processes against one server each count as a separate network (MAX_LOBBIES_PER_IP) in a capacity sweep
+const localAddress=arg('--local-address',''),wsOpts=localAddress?{localAddress}:undefined;
 if(wt&&aux)throw Error('--aux is the WebSocket path\'s second socket; on --transport wt the session replaces it');
 const maxSetupS=+arg('--max-setup-s','120'),warmupS=arg('--warmup-s','server default'),out=arg('--out','reports/performance/sockets.json');
 const PLAY=2, TICK_HZ=60, GEN_GAP_MAX_MS=50, RING=64;
@@ -30,7 +33,7 @@ const phaseSeen:Record<number,number>={};
 const wait=async(f:()=>boolean,label:string,ms=60000)=>{const end=performance.now()+ms;while(!f()){if(performance.now()>end)throw Error('timeout '+label);await sleep(10);}};
 try{
   for(let i=0;i<count;i++){
-    const p:any={ws:new WebSocket(base.replace(/^http/,'ws')+'/ws'),uid:0,token:'',wtw:null,code:'',pid:-1,seq:0,last:0,lastTick:-1,w:new Writer(new ArrayBuffer(64)),iw:new Writer(new ArrayBuffer(INPUTS_HEAD_BYTES+INPUT_WINDOW*INPUT_BODY_BYTES)),ring:Array.from({length:RING},makeInput),sent:new Float64Array(4096),snaps:0,acked:0,lastPong:0};peers.push(p);
+    const p:any={ws:new WebSocket(base.replace(/^http/,'ws')+'/ws',wsOpts),uid:0,token:'',wtw:null,code:'',pid:-1,seq:0,last:0,lastTick:-1,w:new Writer(new ArrayBuffer(64)),iw:new Writer(new ArrayBuffer(INPUTS_HEAD_BYTES+INPUT_WINDOW*INPUT_BODY_BYTES)),ring:Array.from({length:RING},makeInput),sent:new Float64Array(4096),snaps:0,acked:0,lastPong:0};peers.push(p);
     const onMessage=(data:any,binary:boolean)=>{
       if(active){bytes+=data.length;packets++;}
       if(!binary){const j=JSON.parse(String(data));if(j.t==='welcome'){p.uid=j.uid;p.token=j.aux;p.wtw=j.wt??null;}if(j.t==='lobby')p.code=j.code;if(j.t==='match'){p.pid=j.pids[p.uid];matchSeed=j.seed;}if(j.t==='error')errors.push(j.msg);return;}
@@ -47,7 +50,7 @@ try{
     };
     p.ws.on('message',onMessage);p.ws.on('error',(e:Error)=>errors.push(e.message));p.ws.on('close',()=>{if(active)disconnects++;});
     await wait(()=>!!p.uid,'welcome');p.ws.send(JSON.stringify({t:'hello',name:'BENCH '+i}));
-    if(aux){p.aux=new WebSocket(base.replace(/^http/,'ws')+'/ws?attach=1');p.aux.on('open',()=>p.aux.send(JSON.stringify({t:'aux',token:p.token})));p.aux.on('message',onMessage);p.aux.on('error',(e:Error)=>errors.push(e.message));p.aux.on('close',()=>{if(active)disconnects++;});await wait(()=>p.aux.readyState===WebSocket.OPEN,'aux');}
+    if(aux){p.aux=new WebSocket(base.replace(/^http/,'ws')+'/ws?attach=1',wsOpts);p.aux.on('open',()=>p.aux.send(JSON.stringify({t:'aux',token:p.token})));p.aux.on('message',onMessage);p.aux.on('error',(e:Error)=>errors.push(e.message));p.aux.on('close',()=>{if(active)disconnects++;});await wait(()=>p.aux.readyState===WebSocket.OPEN,'aux');}
     if(wt){
       if(!p.wtw)throw Error('welcome has no wt field: start the server with KR_WT=1');
       const hashes=(p.wtw.hashes??[]).map((h:string)=>({algorithm:'sha-256',value:new Uint8Array(Buffer.from(h,'base64'))}));
@@ -101,7 +104,7 @@ try{
   const minSnapshots=Math.min(...peers.map(p=>p.snaps)),serverTicksPerSecond=(lastTick-firstTick)/s,inputsPerPlayerSecond=inputsSent/count/s;
   const lifetime=(m:any):Metric=>perf1?{status:'ok',unit:'ms',better:'lower',summary:m}:{status:'unsupported',unit:'ms',reason:'server runs without KR_PERF_METRICS=1'};
   const result:RunResult={schema:RESULT_SCHEMA,version:RESULT_VERSION,tool:'bench:server',startedAt,durationMs:performance.now()-run0,source:source(process.cwd()),environment,
-    config:{players:count,seconds,transport,aux,assets,mode:'trios',warmupS},
+    config:{players:count,seconds,transport,aux,assets,mode:'trios',warmupS,...(localAddress?{localAddress}:{})},
     cases:[{
       scenario:{id:'server/trios-play',version:3,seed:-1,workload:'socket-load'},
       windows:{untimedSetupMs:Math.round(setupMs),measuredMs:Math.round(elapsed),measuredFrom:'first PLAY snapshot',serverLifetimeMetrics:'server start to end of window (includes lobby, warm-up and plane)',bytes:wt?'every frame received on the WebSocket and the session (stream frames and datagrams) in the window':'every frame received on every socket (main and aux) in the window',seed:'chosen at random by the server per match; see detail.matchSeed',transport:(wt?'real WebSocket for JSON plus a WebTransport session (QUIC, Node client) for the binary frames':'real WebSocket')+'; loopback when URL is local; no WAN inference'},
