@@ -61,7 +61,7 @@ const mod: WorldModule = {
     const group = new THREE.Group();
     group.name = "poi:stilt-town";
     ctx.scene.add(group);
-    await preloadTownTex(ctx.renderer);
+    await preloadTownTex(ctx.renderer, () => ctx.yield());
     const mats = townMats(ctx.renderer);
     const fruit = new FruitBatch(mats.fruit, { name: "stilt:fruit" });
     beginFruit(fruit);

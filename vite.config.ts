@@ -45,7 +45,7 @@ export default defineConfig({
     // and never dotfiles such as the admin key
     fs: {
       allow: [fileURLToPath(new URL(".", import.meta.url)), ...(fs.existsSync("refs") ? [fs.realpathSync("refs")] : [])],
-      deny: [".env", ".env.*", "*.{crt,pem,key}", "**/.git/**", ".admin-key*", "**/.kongbot/**", "**/.claude/**"],
+      deny: [".env", ".env.*", "*.{crt,pem,key}", "**/.git/**", ".admin-key*", "**/.kongbot/**", "**/playtest-bundles/**", "**/.claude/**"],
     },
   },
   // module workers (every `new Worker(url, { type: "module" })` in the client): ES output lets a worker code-split —
@@ -58,7 +58,9 @@ export default defineConfig({
       "/health": { target: `http://127.0.0.1:${process.env.KR_PORT || 3020}` },
     },
   },
-  worker: { format: "es" },
+  // every worker is its own Rollup build, so a chunk is only shared if all builds emit identical bytes: the baked POI JSON
+  // (shared/pois/*.json, 1.35 MB) is that, while a chunk of shared/ code differs per entry (tree-shaking, mangling)
+  worker: { format: "es", rollupOptions: { output: { manualChunks: (id) => (/\/shared\/.*\.json$/.test(id) ? "shared-data" : undefined) } } },
   build: {
     target: "es2022", outDir: "dist", sourcemap: false,
     // registry.ts in its OWN chunk: main.ts boots with top-level await, and atmos afterBuild dynamic-imports the

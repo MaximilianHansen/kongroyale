@@ -48,6 +48,9 @@ function killTree(pid) {
 // ---------------------------------------------------------------- up / down
 async function up() {
   if (state && state.pids.some(alive)) {
+    const prod = flag("--prod"), want = { prod, port: GAME_PORT, ...(prod ? {} : { web: WEB_PORT }) };
+    const differs = Object.entries(want).filter(([k, v]) => (k === "prod" ? !!state.prod : state[k]) !== v).map(([k, v]) => `${k} ${k === "prod" ? !!state.prod : state[k]} → ${v}`);
+    if (differs.length) { console.error(`an instance started by up is still running (${state.url}, ${state.prod ? "prod" : "dev"}) but this up asked for something else (${differs.join(", ")}); run down first`); return 1; }
     const healthy = state.pids.every(alive) && (await answers(state.url + "/")) === 200 && (await answers(`http://127.0.0.1:${state.port}/health`)) === 200;
     if (healthy) { console.log(JSON.stringify({ ok: true, note: "already up", ...state })); return 0; }
     console.error("a previous instance is only partly alive or not answering; run down, then up"); return 1;
@@ -161,7 +164,9 @@ async function driveRange(b, out) {
   await sleep(NOGPU ? 15_000 : 6_000);
   const before = await snap(page);
   await page.screenshot({ path: path.join(out, "range-0-spawn.png") });
-  await page.mouse.click(800, 450).catch(() => {});
+  const vp = page.viewportSize();
+  await page.mouse.click(vp.width / 2, vp.height / 2).catch(() => {});
+  const pointerLocked = await page.waitForFunction(() => !!document.pointerLockElement, null, { timeout: NOGPU ? 30_000 : 5_000, polling: 250 }).then(() => true, () => false);
   await page.keyboard.down("w"); await sleep(2000); await page.keyboard.up("w");
   await sleep(500);
   const after = await snap(page);
@@ -169,7 +174,7 @@ async function driveRange(b, out) {
   const moved = before.state && after.state ? Math.hypot(after.state.x - before.state.x, after.state.z - before.state.z) : 0;
   const errors = await krErrors(page);
   await ctx.close();
-  return { feature: "range", ok: errors.length === 0 && after.inMatch && after.snapTick > before.snapTick && moved > 1, walkedM: +moved.toFixed(1), before, after, boot, errors, consoleErrors: consoleErrors.slice(0, 20) };
+  return { feature: "range", ok: errors.length === 0 && pointerLocked && after.inMatch && after.snapTick > before.snapTick && moved > 1, pointerLocked, walkedM: +moved.toFixed(1), before, after, boot, errors, consoleErrors: consoleErrors.slice(0, 20) };
 }
 async function driveRoom(b, out) {
   const host = await openGame(b, "debug&dev"), guest = await openGame(b, "debug&dev");

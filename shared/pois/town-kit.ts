@@ -7,6 +7,7 @@
 // stairs (kind "step") so a sim without pitch support can use those instead — see `buildingColliders`.
 import type { Box, Surface } from "../world/colliders";
 import { furnishRoom, itemColliders, itemSurface, type InteriorItem, type InteriorLayout, type InteriorRoom, type InteriorStyle, type LootSlots, type RoomOpening, type RoomRole } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 export type Vec2 = [number, number];
 /** 0 = front (+z local), 1 = right (+x), 2 = back (-z), 3 = left (-x) */
@@ -154,14 +155,14 @@ export const hashXZ = (x: number, z: number) => ((Math.round(x * 7) * 73856093) 
 
 /** local → world */
 export function toWorld(b: { x: number; z: number; yaw: number }, lx: number, lz: number): Vec2 {
-  const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+  const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
   return [b.x + lx * c + lz * s, b.z - lx * s + lz * c];
 }
 /** world yaw of a local direction */
 export function dirYaw(b: { yaw: number }, d: Vec2): number {
-  const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+  const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
   const wx = d[0] * c + d[1] * s, wz = -d[0] * s + d[1] * c;
-  return Math.atan2(-wz, wx);
+  return dmath.atan2(-wz, wx);
 }
 
 const SIDES: Array<{ A: (w: number, d: number) => Vec2; B: (w: number, d: number) => Vec2; dir: Vec2; n: Vec2 }> = [
@@ -445,7 +446,7 @@ export function resolveBuilding(b: TownBuilding): BuildingParts {
   if (bulk) {
     const k = bulk;
     for (let i = props.length - 1; i >= 0; i--) {
-      const pr = props[i], hh = ROOF_PROP_HALF[pr.kind], r = Math.hypot(hh[0], hh[2]) * (pr.s ?? 1) + 0.45;
+      const pr = props[i], hh = ROOF_PROP_HALF[pr.kind], r = dmath.hypot(hh[0], hh[2]) * (pr.s ?? 1) + 0.45;
       const dm = (k.door.a0 + k.door.a1) / 2;
       if (pr.x + r > k.x0 && pr.x - r < k.x1 && pr.z + r > k.z0 && pr.z - r < k.z1) props.splice(i, 1);
       else if (k.door.side === "x" && Math.abs(pr.z - dm) < r + 0.6 && (k.door.out > 0 ? pr.x - r < k.door.at + 1.8 && pr.x > k.door.at - 0.5 : pr.x + r > k.door.at - 1.8 && pr.x < k.door.at + 0.5)) props.splice(i, 1);
@@ -502,7 +503,7 @@ export function bulkLeaf(k: Bulkhead): [number, number, Vec2] {
   // tilted 10° off it (never in the doorway, never a fin across the approach)
   const o = k.door.out, a = 10 * Math.PI / 180;
   const piv: Vec2 = k.door.side === "x" ? [k.door.at + 0.1 * o, k.door.a1] : [k.door.a1, k.door.at + 0.1 * o];
-  const dir: Vec2 = k.door.side === "x" ? [Math.sin(a) * o, Math.cos(a)] : [Math.cos(a), Math.sin(a) * o];
+  const dir: Vec2 = k.door.side === "x" ? [dmath.sin(a) * o, dmath.cos(a)] : [dmath.cos(a), dmath.sin(a) * o];
   return [piv[0] + dir[0] * 0.47, piv[1] + dir[1] * 0.47, dir];
 }
 export function buildingColliders(p: BuildingParts): Box[] {
@@ -531,9 +532,9 @@ export function buildingColliders(p: BuildingParts): Box[] {
   // stairs: one solid box per step (floor → step top). NOTE: the sim treats a pitched box as a solid block spanning
   // its full rise (shared/sim/world.ts inflates hy), so ramps are NOT walkable — steps (≤ STEP_H) are.
   for (const st of p.stairs) {
-    const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+    const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
     const wdx = st.dir[0] * c + st.dir[1] * s, wdz = -st.dir[0] * s + st.dir[1] * c;
-    const yaw = Math.atan2(wdx, wdz);
+    const yaw = dmath.atan2(wdx, wdz);
     const tread = st.run / st.steps;
     for (let i = 0; i < st.steps; i++) {
       const u = (i + 0.5) * tread, top = (i + 1) * st.rise / st.steps;
@@ -558,7 +559,7 @@ export function buildingColliders(p: BuildingParts): Box[] {
   }
   // stair-well balustrades: 1.0 m, bullets pass (a rail of balusters)
   for (const rl of p.rails) {
-    const dx = rl.x1 - rl.x0, dz = rl.z1 - rl.z0, L = Math.hypot(dx, dz); if (L < 0.2) continue;
+    const dx = rl.x1 - rl.x0, dz = rl.z1 - rl.z0, L = dmath.hypot(dx, dz); if (L < 0.2) continue;
     const [cx, cz] = toWorld(b, (rl.x0 + rl.x1) / 2, (rl.z0 + rl.z1) / 2);
     out.push({ c: [cx, rl.y + STAIR_GUARD_H / 2, cz], h: [L / 2, STAIR_GUARD_H / 2, 0.04], yaw: dirYaw(b, [dx / L, dz / L]), surf: "wood", noShoot: true });
   }
@@ -577,7 +578,7 @@ export function buildingColliders(p: BuildingParts): Box[] {
       // (the drawn shape — round tanks as octagons (two boxes), stands / towers as legs + deck + tank — plain
       //  bounding boxes are invisible walls round every tank and a solid block under every stand)
       void hh; void k;
-      const yaw = b.yaw + (pr.yaw ?? 0), c = Math.cos(yaw), s = Math.sin(yaw);
+      const yaw = b.yaw + (pr.yaw ?? 0), c = dmath.cos(yaw), s = dmath.sin(yaw);
       const [px, pz] = toWorld(b, pr.x, pr.z);
       const surf: Surface = pr.kind === "planter" ? "stone" : pr.kind === "crates" ? "wood" : "metal";
       for (const q of roofPropShape(pr)) {
@@ -700,7 +701,7 @@ export function doorLeafRect(p: BuildingParts, w: ResolvedWall, op: Opening): [n
   const pts: Vec2[] = [];
   const hinges: Array<[number, number]> = op.kind === "door" ? [[op.u, 1]] : [[op.u, 1], [op.u + op.w, -1]];
   for (const [hu, sg] of hinges) for (const e of [0, L]) {
-    const u = hu + sg * Math.cos(a) * e, off = t / 2 + Math.sin(a) * e;
+    const u = hu + sg * dmath.cos(a) * e, off = t / 2 + dmath.sin(a) * e;
     pts.push([w.A[0] + w.dir[0] * u - w.n[0] * off, w.A[1] + w.dir[1] * u - w.n[1] * off]);
   }
   const xs = pts.map((q) => q[0]), zs = pts.map((q) => q[1]);
@@ -723,10 +724,10 @@ export function openingFill(p: BuildingParts, surf: Surface = "concrete"): Box[]
           if (!closed && op.shutters !== false) for (const s of shutterLeaves(op, w.len, w.openings[f])) {
             const sw = op.w / 2 - 0.01, a = (s < 0 ? 12 : -12) * Math.PI / 180, hinge = s < 0 ? op.u - 0.15 : op.u + op.w + 0.15;
             // leaf frame: at(hinge, cy, -0.075) · RotY(a) · T(±sw/2): local (u along wall, z outward)
-            const ox = s * sw / 2, cu = hinge + ox * Math.cos(a), cz = 0.075 - ox * Math.sin(a);
+            const ox = s * sw / 2, cu = hinge + ox * dmath.cos(a), cz = 0.075 - ox * dmath.sin(a);
             const [lx, lz] = [w.A[0] + w.dir[0] * cu + w.n[0] * cz, w.A[1] + w.dir[1] * cu + w.n[1] * cz];
             const [wx, wz] = toWorld(b, lx, lz);
-            const ld: Vec2 = [w.dir[0] * Math.cos(a) + w.n[0] * -Math.sin(a), w.dir[1] * Math.cos(a) + w.n[1] * -Math.sin(a)];
+            const ld: Vec2 = [w.dir[0] * dmath.cos(a) + w.n[0] * -dmath.sin(a), w.dir[1] * dmath.cos(a) + w.n[1] * -dmath.sin(a)];
             out.push({ c: [wx, fy + op.y + op.h / 2, wz], h: [sw / 2, (op.h - 0.02) / 2, 0.03], yaw: dirYaw(b, ld), surf: "wood" });
           }
           // (a thin pane in the plane that is drawn: closed louvred leaves 0.06 m in, the glass 0.17 m in)
@@ -736,9 +737,9 @@ export function openingFill(p: BuildingParts, surf: Surface = "concrete"): Box[]
           const door = op.kind === "door", a = door ? DOOR_SWING : FRENCH_SWING, L = door ? op.w - 0.03 : op.w / 2 - 0.02;
           const hinges: Array<[number, number]> = door ? [[op.u, 1]] : [[op.u, 1], [op.u + op.w, -1]];
           for (const [hu, sg] of hinges) {
-            const u = hu + sg * Math.cos(a) * L / 2, off = t / 2 + Math.sin(a) * L / 2;
+            const u = hu + sg * dmath.cos(a) * L / 2, off = t / 2 + dmath.sin(a) * L / 2;
             const [cx, cz] = P(u, off);
-            const ld: Vec2 = [w.dir[0] * sg * Math.cos(a) - w.n[0] * Math.sin(a), w.dir[1] * sg * Math.cos(a) - w.n[1] * Math.sin(a)];
+            const ld: Vec2 = [w.dir[0] * sg * dmath.cos(a) - w.n[0] * dmath.sin(a), w.dir[1] * sg * dmath.cos(a) - w.n[1] * dmath.sin(a)];
             const hh = door ? op.h - 0.04 : op.h - 0.02;
             out.push({ c: [cx, fy + op.y + 0.02 + hh / 2, cz], h: [L / 2, hh / 2, door ? 0.04 : 0.03], yaw: dirYaw(b, ld), surf: door ? "wood" : "glass", ...(door ? {} : { noShoot: true }) });
           }
@@ -890,11 +891,11 @@ function townRoomColliders(room: InteriorRoom, L: InteriorLayout): Box[] {
   const drop = new Set<string>(), add: Box[] = [];
   const key = (b: Box) => `${b.c.map((v) => v.toFixed(3))}|${b.h.map((v) => v.toFixed(3))}`;
   const boxes = (it: InteriorItem, lb: Array<[number, number, number, number, number, number]>): Box[] => {
-    const surf = itemSurface(it.kind, room.style), yaw = room.yaw + it.yaw, ci = Math.cos(it.yaw), si = Math.sin(it.yaw), c = Math.cos(room.yaw), sn = Math.sin(room.yaw);
+    const surf = itemSurface(it.kind, room.style), yaw = room.yaw + it.yaw, ci = dmath.cos(it.yaw), si = dmath.sin(it.yaw), c = dmath.cos(room.yaw), sn = dmath.sin(room.yaw);
     return lb.map(([x0, y0, z0, x1, y1, z1]) => {
       const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, lx = it.x + mx * ci + mz * si, lz = it.z - mx * si + mz * ci;
       const b: Box = { c: [room.x + lx * c + lz * sn, room.y + it.y + (y0 + y1) / 2, room.z - lx * sn + lz * c], h: [(x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2], surf };
-      const sy = -yaw; if (Math.abs(Math.sin(sy)) > 1e-6 || Math.cos(sy) < 0) b.yaw = sy;
+      const sy = -yaw; if (Math.abs(dmath.sin(sy)) > 1e-6 || dmath.cos(sy) < 0) b.yaw = sy;
       return b;
     });
   };
@@ -966,7 +967,7 @@ function unbake(B: TownInteriorBake): { colliders: Box[]; loot: LootSlots } {
  *  The match generator activates a seeded subset per match; INTERIOR_LOOT keeps every candidate. */
 export function townLootSpots(loot: LootSlots, o: { chestSep?: number; floorSep?: number; chests?: Array<[number, number, number, number]>; floor?: Array<[number, number, number]> } = {}): { chests: Array<[number, number, number, number]>; floor: Array<[number, number, number]> } {
   const cs = o.chestSep ?? 8, fs = o.floorSep ?? 5;
-  const far = <T extends number[]>(list: T[], p: T, sep: number, ky = 2.2) => list.every((q) => Math.hypot(q[0] - p[0], (q[1] - p[1]) * ky, q[2] - p[2]) >= sep);
+  const far = <T extends number[]>(list: T[], p: T, sep: number, ky = 2.2) => list.every((q) => dmath.hypot3(q[0] - p[0], (q[1] - p[1]) * ky, q[2] - p[2]) >= sep);
   const chests: Array<[number, number, number, number]> = [...(o.chests ?? [])], floor: Array<[number, number, number]> = [...(o.floor ?? [])];
   // (chests: horizontal separation only — ≈ one per building; floor spots: storeys count apart)
   for (const c of loot.chests) if (far(chests, c, cs, 0)) chests.push(c);
@@ -993,7 +994,7 @@ export function sidePoint(k: { w: number; d: number }, s: Side, u: number, inset
 }
 /** open a rail gap of width w on the deck side nearest to the world point (x, z) */
 export function deckGap(k: Deck, x: number, z: number, w = 1.8) {
-  const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = x - k.x, dz = z - k.z;
+  const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = x - k.x, dz = z - k.z;
   const lx = dx * c - dz * s, lz = dx * s + dz * c;
   const dists = [Math.abs(lz - k.d / 2), Math.abs(lx - k.w / 2), Math.abs(lz + k.d / 2), Math.abs(lx + k.w / 2)];
   const side = dists.indexOf(Math.min(...dists)) as Side;
@@ -1003,7 +1004,7 @@ export function deckGap(k: Deck, x: number, z: number, w = 1.8) {
 /** a point on the deck's boundary facing the world point (tx, tz), kept ≥ `m` metres from the corners (a link / stair
  *  meeting a corner half-misses its rail gap) — returns the world point and the side it is on */
 export function deckAttach(k: Deck, tx: number, tz: number, m = 1.1): { x: number; z: number; side: Side } {
-  const c = Math.cos(k.yaw), s = Math.sin(k.yaw), dx = tx - k.x, dz = tz - k.z;
+  const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), dx = tx - k.x, dz = tz - k.z;
   const lx = dx * c - dz * s, lz = dx * s + dz * c;
   // side = the one the ray from the centre leaves through
   const sx = Math.abs(lx) / (k.w / 2), sz = Math.abs(lz) / (k.d / 2);
@@ -1040,8 +1041,8 @@ export function deckColliders(k: Deck): Box[] {
 
 /** a walkway is a deck between two points */
 export function walkway(ax: number, az: number, bx: number, bz: number, y: number, w = 2.2, rail: boolean | Side[] = [1, 3]): Deck {
-  const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
-  return { x: (ax + bx) / 2, z: (az + bz) / 2, yaw: Math.atan2(dx, dz), w, d: len, y, rail };
+  const dx = bx - ax, dz = bz - az, len = dmath.hypot(dx, dz);
+  return { x: (ax + bx) / 2, z: (az + bz) / 2, yaw: dmath.atan2(dx, dz), w, d: len, y, rail };
 }
 
 /** every town layout computes box yaws in the three.js convention (local +x → world
@@ -1070,10 +1071,10 @@ export function coverScatter(g: GroundGrid, o: { cx: number; cz: number; r: numb
   const rng = mulberry(o.seed), step = o.step ?? 12, out: CoverCluster[] = [], minY = o.minY ?? 0.6;
   for (let z = o.cz - o.r; z <= o.cz + o.r; z += step) for (let x = o.cx - o.r; x <= o.cx + o.r; x += step) {
     const px = x + (rng() - 0.5) * step * 0.7, pz = z + (rng() - 0.5) * step * 0.7, k = rng(), yaw = rng() * 6.283, s = 0.85 + rng() * 0.4;
-    if (Math.hypot(px - o.cx, pz - o.cz) > o.r * 0.95) continue;
+    if (dmath.hypot(px - o.cx, pz - o.cz) > o.r * 0.95) continue;
     const y = gridH(g, px, pz), sl = Math.max(Math.abs(gridH(g, px + 2, pz) - gridH(g, px - 2, pz)), Math.abs(gridH(g, px, pz + 2) - gridH(g, px, pz - 2))) / 4;
     if (y < minY || sl > 0.22 || !o.free(px, pz)) continue;   // (gentle ground only: the 4 m grid misplaces things on hillsides)
-    const band = Math.sin(px * 0.045 + 1.3) * Math.cos(pz * 0.052 - 0.4);
+    const band = dmath.sin(px * 0.045 + 1.3) * dmath.cos(pz * 0.052 - 0.4);
     out.push({ kind: band > 0.25 ? "grove" : band < -0.2 || k < 0.35 ? "rocks" : "palms", x: px, z: pz, y, yaw, s });
   }
   return out;
@@ -1106,7 +1107,7 @@ export function splinePts(ctrl: Vec2[], step = 3): Vec2[] {
   const out: Vec2[] = [];
   for (let i = 0; i < ctrl.length - 1; i++) {
     const p0 = ctrl[Math.max(0, i - 1)], p1 = ctrl[i], p2 = ctrl[i + 1], p3 = ctrl[Math.min(ctrl.length - 1, i + 2)];
-    const n = Math.max(1, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / step));
+    const n = Math.max(1, Math.ceil(dmath.hypot(p2[0] - p1[0], p2[1] - p1[1]) / step));
     for (let k = 0; k < n; k++) {
       const t = k / n, t2 = t * t, t3 = t2 * t;
       const f = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
@@ -1117,17 +1118,17 @@ export function splinePts(ctrl: Vec2[], step = 3): Vec2[] {
   return out;
 }
 /** polyline arc lengths */
-export function polyArc(pts: Vec2[]): number[] { const a = [0]; for (let i = 1; i < pts.length; i++) a.push(a[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return a; }
+export function polyArc(pts: Vec2[]): number[] { const a = [0]; for (let i = 1; i < pts.length; i++) a.push(a[i - 1] + dmath.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return a; }
 /** point + unit tangent at arc length s */
 export function polyAt(pts: Vec2[], arc: number[], s: number): { p: Vec2; d: Vec2 } {
   let i = 1; while (i < pts.length - 1 && arc[i] < s) i++;
   const a = pts[i - 1], b = pts[i], L = arc[i] - arc[i - 1] || 1e-6, t = Math.max(0, Math.min(1, (s - arc[i - 1]) / L));
   return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], d: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] };
 }
-const segDist2 = (x: number, z: number, a: Vec2, b: Vec2) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9; const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return Math.hypot(x - a[0] - t * dx, z - a[1] - t * dz); };
+const segDist2 = (x: number, z: number, a: Vec2, b: Vec2) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9; const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return dmath.hypot(x - a[0] - t * dx, z - a[1] - t * dz); };
 /** footprint corners of a building (world) */
 export function footprint(b: { x: number; z: number; yaw: number; w: number; d: number }, m = 0): Vec2[] {
-  const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+  const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);
   return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, e]) => { const lx = a * (b.w / 2 + m), lz = e * (b.d / 2 + m); return [b.x + lx * c + lz * s, b.z - lx * s + lz * c] as Vec2; });
 }
 function inPolyXZ(p: Vec2[], x: number, z: number) { let ins = false; for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const [xi, zi] = p[i], [xj, zj] = p[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) ins = !ins; } return ins; }

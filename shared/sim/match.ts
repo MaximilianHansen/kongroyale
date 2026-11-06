@@ -46,6 +46,7 @@ import { bombLaunch, bombStep, type BombBody } from "./bomb";
 import { COVER, CoverSet, PLACED } from "./cover";
 import { bananaStands, cashStacks, Economy, STAND_ID0, STAND_SIZE, type EconHost } from "./economy";
 import type { ReplayRecorder } from "../net/replay";
+import * as dmath from "./dmath";
 
 /** resurgence ends early once this few squads (trios) / players (solo) are left in the match */
 const RES_END_SQUADS = 7, RES_END_SOLO = 20;
@@ -220,7 +221,7 @@ export class Match {
       const [x, , z] = targetPos(t);
       const yaw = RANGE_YAW_UPRANGE;
       // +mx moves along (cos yaw, -sin yaw) (player.ts right vector): which sign walks toward strip +Z
-      const sign = Math.sign(Math.cos(yaw) * zx - Math.sin(yaw) * zz) || 1;
+      const sign = Math.sign(dmath.cos(yaw) * zx - dmath.sin(yaw) * zz) || 1;
       this.dummies[p.id] = { id: p.id, t, x, y: this.world.ground(x, z), z, dir: 1, sign };
       this.placeDummy(p);
     });
@@ -266,7 +267,7 @@ export class Match {
         // heal test pad: drains shield, then health, never below 1 hp
         if (alive(p)) {
           const [hx, , hz] = healPadPos();
-          if (Math.hypot(p.x - hx, p.z - hz) < HEAL_PAD.r) {
+          if (dmath.hypot(p.x - hx, p.z - hz) < HEAL_PAD.r) {
             let dmg = HEAL_PAD.dps * DT;
             const sh = Math.min(p.shield, dmg); p.shield -= sh; dmg -= sh;
             if (dmg > 0) p.hp = Math.max(1, p.hp - dmg);
@@ -363,11 +364,11 @@ export class Match {
     this.bombs.length = 0; this.covers.reset(); this.econ?.reset();
     this.spawnTuks([...fleetSpots(this.world, this.seed), ...heliPads(this.world, this.seed)]);   // the taxis wait at their ranks, the helicopters on their pads (Peel Strip's + one or two picked by the seed)
     const a = this.rng.next() * Math.PI * 2, off = this.rng.range(-380, 380);
-    const dx = Math.cos(a), dz = Math.sin(a), px = -dz * off, pz = dx * off;
+    const dx = dmath.cos(a), dz = dmath.sin(a), px = -dz * off, pz = dx * off;
     this.plane.x0 = px - dx * PLANE_CHORD_R; this.plane.z0 = pz - dz * PLANE_CHORD_R; this.plane.x1 = px + dx * PLANE_CHORD_R; this.plane.z1 = pz + dz * PLANE_CHORD_R; this.plane.dx = dx; this.plane.dz = dz;
     this.dropLandT.fill(-1e9);
     for (const p of this.players) {
-      resetForMatch(p); p.st = PS.Plane; p.x = this.plane.x0; p.y = PLANE_ALT; p.z = this.plane.z0; p.yaw = Math.atan2(-dx, -dz);
+      resetForMatch(p); p.st = PS.Plane; p.x = this.plane.x0; p.y = PLANE_ALT; p.z = this.plane.z0; p.yaw = dmath.atan2(-dx, -dz);
       giveStartKit(p);   // everybody — humans and bots — boards with a gray pistol and some light rounds
       this.brains[p.id]?.planDrop(this, p);
       this.onInventory(p.id);
@@ -453,7 +454,7 @@ export class Match {
           const bi = this.lastInput[p.id];
           botThink(this, p, brain, bi);
           // bots steer with directions, always at full speed (the step scales an analog stick's partial push)
-          const l = Math.hypot(bi.mx, bi.mz); if (l > 0) { bi.mx /= l; bi.mz /= l; }
+          const l = dmath.hypot(bi.mx, bi.mz); if (l > 0) { bi.mx /= l; bi.mz /= l; }
         }
         this.simulate(p, this.lastInput[p.id]);
       } else this.runHuman(p);
@@ -471,7 +472,7 @@ export class Match {
     }
     // deep end-game loot regen: looted chests / ammo boxes re-close and restock (loot.ts REGEN)
     if (this.phase === Phase.Play && this.tick % REGEN.everyTicks === 0) {
-      for (const id of chestRegen(this.chests, this.storm, this.time, this.seed, (c) => this.players.some((q) => alive(q) && Math.abs(q.y - c.y) < 2.5 && (q.x - c.x) ** 2 + (q.z - c.z) ** 2 < REGEN.clearR ** 2))) this.ev.chestReset(id);
+      for (const id of chestRegen(this.chests, this.storm, this.time, this.seed, (c) => this.players.some((q) => alive(q) && Math.abs(q.y - c.y) < 2.5 && dmath.pow(q.x - c.x, 2) + dmath.pow(q.z - c.z, 2) < dmath.pow(REGEN.clearR, 2)))) this.ev.chestReset(id);
     }
     this.stepVehicles();
     this.stepRockets();
@@ -551,7 +552,7 @@ export class Match {
     let best = -1, bd = r * r;
     for (let i = 0; i < 16; i++) {
       const o = i * 4; if (this.tick - this.noise[o + 2] > 240 || this.noise[o + 3] === team || this.noise[o + 2] === 0) continue;
-      const d = (this.noise[o] - x) ** 2 + (this.noise[o + 1] - z) ** 2; if (d < bd) { bd = d; best = i; }
+      const d = dmath.pow(this.noise[o] - x, 2) + dmath.pow(this.noise[o + 1] - z, 2); if (d < bd) { bd = d; best = i; }
     }
     return best;
   }
@@ -606,7 +607,7 @@ export class Match {
     if ((p.shotSeq & 3) === 1 && this.phase === Phase.Play) this.addNoise(p);
     const ox = p.x, oy = eyeY(p), oz = p.z;
     if (w.projectile) {
-      const cp = Math.cos(p.pitch), sp = Math.sin(p.pitch), sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
+      const cp = dmath.cos(p.pitch), sp = dmath.sin(p.pitch), sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw);
       const dx = -sy * cp, dy = sp, dz = -cy * cp;
       const r: Rocket = { id: this.nextRocketId++ & 0xffff, owner: p.id, x: ox + dx * 0.8, y: oy + dy * 0.8 - 0.15, z: oz + dz * 0.8, vx: dx * w.projectile.speed + p.vx * 0.5, vy: dy * w.projectile.speed, vz: dz * w.projectile.speed + p.vz * 0.5, life: 6, rarity: s.rarity };
       this.rockets.push(r); this.ev.rocket(r.id, p.id, r.x, r.y, r.z, r.vx, r.vy, r.vz);
@@ -620,8 +621,8 @@ export class Match {
     const foe = p.bot ? this.players[this.brains[p.id]?.enemy ?? -1] : undefined;
     if (foe && !foe.bot) {
       // practice nerf: past botAimRange the shot lands within a circle growing 0.25 m per metre of extra distance
-      const d = Math.hypot(foe.x - p.x, foe.z - p.z), extra = d - this.botAimRange;
-      if (extra > 0) spread += Math.atan2(0.25 * extra, d) * (180 / Math.PI);
+      const d = dmath.hypot(foe.x - p.x, foe.z - p.z), extra = d - this.botAimRange;
+      if (extra > 0) spread += dmath.atan2(0.25 * extra, d) * (180 / Math.PI);
     }
     for (let k = 0; k < p.fired; k++) {
       shotDir(p.id, shot, k, spread, p.yaw, p.pitch, DIR);
@@ -693,7 +694,7 @@ export class Match {
       let boom = HIT.hit || r.life <= 0 || ny < -1;
       let bx = HIT.hit ? HIT.x : nx, by = HIT.hit ? HIT.y : ny, bz = HIT.hit ? HIT.z : nz;
       // a tuk-tuk in the way takes it on the nose (not the one the shooter sits in, while the rocket is still leaving it)
-      { const sl = Math.hypot(nx - r.x, ny - r.y, nz - r.z), own = this.players[r.owner];
+      { const sl = dmath.hypot3(nx - r.x, ny - r.y, nz - r.z), own = this.players[r.owner];
         if (sl > 1e-6) {
           const ux = (nx - r.x) / sl, uy = (ny - r.y) / sl, uz = (nz - r.z) / sl;
           const tk = this.rayTuks(own.st === PS.Ride && r.life > 5.5 ? own.veh : -1, r.x, r.y, r.z, ux, uy, uz, (HIT.hit ? HIT.t : 1) * sl, true);
@@ -762,8 +763,8 @@ export class Match {
   }
   /** a punch at the pane under the crosshair within arm's reach (shared/sim/glass.ts glassPunch) */
   private punchGlass(p: Player): boolean {
-    const cp = Math.cos(p.pitch);
-    return glassPunch(this.glass, p.x, eyeY(p), p.z, -Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp, p.id) > 0;
+    const cp = dmath.cos(p.pitch);
+    return glassPunch(this.glass, p.x, eyeY(p), p.z, -dmath.sin(p.yaw) * cp, dmath.sin(p.pitch), -dmath.cos(p.yaw) * cp, p.id) > 0;
   }
   /** publish this tick's breaks (EV.Glass, ≤ the frame's event budget; the rest go next tick) */
   private flushGlass() {
@@ -783,20 +784,20 @@ export class Match {
     // crate walls in the blast (explosives are how you crack cover open)
     if (this.covers.n > 0) for (const w of this.covers.list) {
       if (!w.live || w.perm) continue;
-      const d = Math.hypot(w.x - x, w.y + COVER.h / 2 - y, w.z - z);
+      const d = dmath.hypot3(w.x - x, w.y + COVER.h / 2 - y, w.z - z);
       if (d <= radius + 1.3) this.hurtCover(w.id, dmg * COVER.blastMul * (0.4 + 0.6 * Math.max(0, 1 - Math.max(0, d - 1.3) / radius)));
     }
     // tuk-tuks in the blast (a parked row of them goes up one after the other)
     for (const v of this.vehs.list) {
       if (!v.live || (v.st !== VS.Ok && v.st !== VS.Tipped && v.st !== VS.Righting)) continue;
-      const d = Math.hypot(v.x - x, v.y + 0.9 - y, v.z - z);
+      const d = dmath.hypot3(v.x - x, v.y + 0.9 - y, v.z - z);
       if (d <= radius + 1.6) this.hurtTuk(v, dmg * (0.35 + 0.65 * (1 - Math.max(0, d - 1.6) / radius)) * specOf(v.kind).SPLASH_MUL, by, v.x, v.y + 0.9, v.z);
     }
     for (const q of this.players) {
       if (!alive(q) || q.st === PS.Plane) continue;
       if (!all && q.team === team && q.id !== by) continue;   // no friendly fire (self-splash still 0.5)
       const cx = q.x, cy = q.y + PLAYER_H * 0.5, cz = q.z;
-      const d = Math.hypot(cx - x, cy - y, cz - z);
+      const d = dmath.hypot3(cx - x, cy - y, cz - z);
       if (d > radius + PLAYER_R) continue;
       // line of sight from just above the blast point: a rocket that bursts ON the ground (the usual splash shot at the
       // feet) must not have its own impact surface block the blast (or rockets fired at the feet do no splash at all)
@@ -821,8 +822,8 @@ export class Match {
   /** E: climb into the tuk-tuk under the crosshair (`aimed`) / beside you, or heave one that lies on its side upright */
   private useVehicle(p: Player, aimed: boolean): boolean {
     if (p.st !== PS.Ground || p.swim) return false;
-    const cp = Math.cos(p.pitch);
-    const id = vehicleInReach(this.vehs, p.x, p.y, p.z, eyeY(p), -Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp, aimed, !p.grounded);
+    const cp = dmath.cos(p.pitch);
+    const id = vehicleInReach(this.vehs, p.x, p.y, p.z, eyeY(p), -dmath.sin(p.yaw) * cp, dmath.sin(p.pitch), -dmath.cos(p.yaw) * cp, aimed, !p.grounded);
     if (id < 0) return false;
     const v = this.vehs.list[id];
     // a bot's E is for chests: it climbs only onto the squadmate's tuk-tuk its brain picked, and heaves none upright
@@ -926,7 +927,7 @@ export class Match {
         v.ramT[q.id] = this.tick;
         const by = drv.id, hadShield = q.shield > 0, dealt = this.dealDamage(q, HELI.ROTOR_DMG, by);
         drv.damage += dealt;
-        q.vx += (dx / (Math.hypot(dx, dz) || 1)) * 6; q.vz += (dz / (Math.hypot(dx, dz) || 1)) * 6; q.vy = 3; q.grounded = false;
+        q.vx += (dx / (dmath.hypot(dx, dz) || 1)) * 6; q.vz += (dz / (dmath.hypot(dx, dz) || 1)) * 6; q.vy = 3; q.grounded = false;
         this.ev.hit(by, q.id, 0, dealt, q.x, q.y + 1.7, q.z, q.hp <= 0, hadShield && q.shield <= 0);
         this.ev.veh(v.id, VK.Chop, q.id, q.x, q.y + 1.4, q.z);
         if (q.hp <= 0) this.kill(q, by, cause); else this.brains[q.id]?.onHurt(by);
@@ -934,7 +935,7 @@ export class Match {
       }
       if (dx * dx + dz * dz > (heli ? 24 : 12) || q.y > v.y + SP.ROOF - 0.3 || q.y + PLAYER_H < v.y) continue;
       if (footDist(v, q.x, q.z) > PLAYER_R + 0.12) continue;
-      const d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d;
+      const d = dmath.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d;
       // (what a tuk-tuk's panels already pushed aside this tick counts too — pushKong matched the kong's speed to
       // it. Not a helicopter's: it rams whenever its rotor turns, so a kong running into a landed one would "be run over")
       const close = Math.max((v.vx - q.vx) * nx + (v.vz - q.vz) * nz, heli ? 0 : v.bump[q.id & 63]);
@@ -992,7 +993,7 @@ export class Match {
       // a helicopter's door gun with nobody behind it spins down, cools and swings back to rest (a gunner's own inputs
       // step it — stepRide → heli.ts stepGun — like the pilot's step the helicopter)
       if (heli && v.st === VS.Ok && v.seats[HELI.GUN_SEAT] < 0) stepGunIdle(v, DT);
-      if (v.st === VS.Ok && (Math.hypot(v.vx, v.vz) >= specOf(v.kind).RAM_V || (heli && v.steer >= 0.4))) this.ramKongs(v);
+      if (v.st === VS.Ok && (dmath.hypot(v.vx, v.vz) >= specOf(v.kind).RAM_V || (heli && v.steer >= 0.4))) this.ramKongs(v);
       v.bump.fill(0);
       // a second of nothing: it sleeps, its pose snapped onto the wire's grid (every client's copy is then exact)
       const still = riders === 0 && v.vx === 0 && v.vz === 0 && Math.abs(v.vy) < 1e-3 && !v.air && v.tipV === 0 && v.st !== VS.Righting && v.fuse < 0 && (!heli || (v.steer === 0 && v.tip === 0 && v.gunSpin === 0 && v.gunHeat === 0));
@@ -1086,7 +1087,7 @@ export class Match {
     const mate = this.players.find((q) => q.team === p.team && this.canSpectate(p, q)); if (mate) return mate.id;
     const ox = from ? from.x : p.x, oz = from ? from.z : p.z;
     let best = -1, bd = Infinity;
-    for (const q of this.players) { if (!this.canSpectate(p, q)) continue; const d = (q.x - ox) ** 2 + (q.z - oz) ** 2; if (d < bd) { bd = d; best = q.id; } }
+    for (const q of this.players) { if (!this.canSpectate(p, q)) continue; const d = dmath.pow(q.x - ox, 2) + dmath.pow(q.z - oz, 2); if (d < bd) { bd = d; best = q.id; } }
     return best;
   }
   squadsLeft(): number { const s = new Set<number>(); for (const q of this.players) if (this.phase === Phase.Warmup || alive(q) || q.respawnAt >= 0) s.add(q.team); return s.size; }
@@ -1098,8 +1099,8 @@ export class Match {
       if (p.st !== PS.Dead || p.respawnAt < 0 || this.time < p.respawnAt) continue;
       const mate = this.players.find((q) => q.team === p.team && alive(q) && q.st === PS.Ground);
       let x: number, z: number;
-      if (mate) { const a = this.rng.next() * Math.PI * 2; x = mate.x + Math.cos(a) * 70; z = mate.z + Math.sin(a) * 70; }
-      else { const a = this.rng.next() * Math.PI * 2, d = Math.sqrt(this.rng.next()) * this.storm.r * 0.6; x = this.storm.cx + Math.cos(a) * d; z = this.storm.cz + Math.sin(a) * d; }
+      if (mate) { const a = this.rng.next() * Math.PI * 2; x = mate.x + dmath.cos(a) * 70; z = mate.z + dmath.sin(a) * 70; }
+      else { const a = this.rng.next() * Math.PI * 2, d = Math.sqrt(this.rng.next()) * this.storm.r * 0.6; x = this.storm.cx + dmath.cos(a) * d; z = this.storm.cz + dmath.sin(a) * d; }
       // back into the fight from the sky: a short freefall (dive to speed it up), the glider pops at 95 m AGL
       const kills = p.kills, dmg = p.damage, used = p.redeploys;   // match stats survive a redeploy
       resetForMatch(p); p.kills = kills; p.damage = dmg; p.redeploys = used + 1;
@@ -1127,7 +1128,7 @@ export class Match {
     // tossed on this side of any wall, then it falls to the floor below (a kong shot off its glider drops
     // its loot on the ground under it, not in the sky)
     const y0 = Math.max(y, this.world.ground(x, z));
-    tossClear(this.world, x, y0 + 0.6, z, x + Math.cos(a) * d, z + Math.sin(a) * d, LP);
+    tossClear(this.world, x, y0 + 0.6, z, x + dmath.cos(a) * d, z + dmath.sin(a) * d, LP);
     settleLoot(this.world, LP[0], y0, LP[2], LP);
     const it: Item = { id: this.nextItemId++ & 0xffff, kind, sub, rarity, count, x: LP[0], y: LP[1], z: LP[2], taken: false, bornAt: this.time, dropper: avoid };
     this.items.push(it); this.ev.spawnItem(it.id, kind, sub, rarity, count, it.x, it.y, it.z);
@@ -1138,7 +1139,7 @@ export class Match {
    * another item is retried a little further out / further round the fan. */
   private spillChest(c: Chest, p: Player, contents: Array<{ kind: IK; sub: number; rarity: number; count: number }>) {
     const SPILL_R = 1.7, SPILL_GAP = 1.2, n = contents.length;
-    const face = Math.hypot(p.x - c.x, p.z - c.z) > 0.3 ? Math.atan2(p.z - c.z, p.x - c.x) : c.yaw;
+    const face = dmath.hypot(p.x - c.x, p.z - c.z) > 0.3 ? dmath.atan2(p.z - c.z, p.x - c.x) : c.yaw;
     const step = SPILL_GAP / SPILL_R * 1.08;                     // arc spacing slightly over the minimum gap
     const placed: Item[] = [];
     for (let k = 0; k < n; k++) {
@@ -1151,11 +1152,11 @@ export class Match {
       for (let t = 0; t < 6; t++) {
         const a = base + (this.rng.next() - 0.5) * 0.12 + (t ? (t % 2 ? 1 : -1) * Math.ceil(t / 2) * 0.35 : 0);
         const r = SPILL_R + (this.rng.next() * 0.2) + t * 0.15;
-        tossClear(this.world, c.x, c.y + 0.6, c.z, c.x + Math.cos(a) * r, c.z + Math.sin(a) * r, LP);
+        tossClear(this.world, c.x, c.y + 0.6, c.z, c.x + dmath.cos(a) * r, c.z + dmath.sin(a) * r, LP);
         settleLoot(this.world, LP[0], c.y, LP[2], LP);
         const ix = LP[0], iy = LP[1], iz = LP[2];
         const level = Math.abs(iy - c.y) < 0.6;
-        const ok = level && Math.hypot(ix - c.x, iz - c.z) >= SPILL_R * 0.75 && placed.every((o) => Math.hypot(o.x - ix, o.z - iz) >= SPILL_GAP * 0.85);
+        const ok = level && dmath.hypot(ix - c.x, iz - c.z) >= SPILL_R * 0.75 && placed.every((o) => dmath.hypot(o.x - ix, o.z - iz) >= SPILL_GAP * 0.85);
         const make = (): Item => ({ id: 0, kind, sub, rarity, count, x: ix, y: iy, z: iz, taken: false, bornAt: this.time });
         if (ok) { it = make(); break; }
         const sc = (level ? 0 : 10 + Math.abs(iy - c.y)) + t * 0.01;
@@ -1169,7 +1170,7 @@ export class Match {
   /** an E press now would go to something ranked above a zipline (no side effects): the tuk-tuk under the crosshair, a
    * window in arm's reach, a chest, a gun on the floor — the order of the E chain below and of the HUD prompt */
   private useClaimed(p: Player): boolean {
-    const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
+    const cp = dmath.cos(p.pitch), dx = -dmath.sin(p.yaw) * cp, dy = dmath.sin(p.pitch), dz = -dmath.cos(p.yaw) * cp;
     return (!p.swim && vehicleInReach(this.vehs, p.x, p.y, p.z, eyeY(p), dx, dy, dz, true, !p.grounded) >= 0) || glassAim(this.glass, p.x, eyeY(p), p.z, dx, dy, dz) >= 0
       || this.reachChest(p) !== null || this.manualItem(p) !== null;
   }
@@ -1177,10 +1178,10 @@ export class Match {
    * a floor); the one under the crosshair wins */
   private reachChest(p: Player): Chest | null {
     let best: Chest | null = null, bd = Infinity;
-    const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+    const fx = -dmath.sin(p.yaw), fz = -dmath.cos(p.yaw);
     for (const c of this.chests) {
       if (c.opened) continue;
-      const dx = c.x - p.x, dz = c.z - p.z, d = Math.hypot(dx, dz);
+      const dx = c.x - p.x, dz = c.z - p.z, d = dmath.hypot(dx, dz);
       if (d > CHEST_OPEN_DIST + 0.6) continue;
       const score = d * (1.35 - 0.5 * (d > 1e-3 ? (dx * fx + dz * fz) / d : 1));
       if (score < bd && lootReachable(this.world, p.x, p.y, p.z, c.x, c.y, c.z)) { bd = score; best = c; }
@@ -1205,12 +1206,12 @@ export class Match {
    * (shared/sim/pickup.ts, the prompt's own rule); a bot's — the nearest weapon */
   private manualItem(p: Player): Item | null {
     if (p.bot) return this.nearestItem(p, PICKUP_DIST + 0.5, this.range ? -1 : IK.Weapon);
-    const cp = Math.cos(p.pitch);
-    return aimedItem(this.items, p.x, p.y, p.z, eyeY(p), -Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp, this.world, this.range, !standNear(this.econ?.stands ?? NO_STANDS, p.x, p.y, p.z));
+    const cp = dmath.cos(p.pitch);
+    return aimedItem(this.items, p.x, p.y, p.z, eyeY(p), -dmath.sin(p.yaw) * cp, dmath.sin(p.pitch), -dmath.cos(p.yaw) * cp, this.world, this.range, !standNear(this.econ?.stands ?? NO_STANDS, p.x, p.y, p.z));
   }
   private nearestItem(p: Player, r: number, kind: IK | -1): Item | null {
     let best: Item | null = null, bd = r;
-    for (const it of this.items) { if (it.taken || (kind >= 0 && it.kind !== kind)) continue; const d = Math.hypot(it.x - p.x, it.z - p.z, (it.y - p.y) * 0.6); if (d < bd && (this.range || lootReachable(this.world, p.x, p.y, p.z, it.x, it.y, it.z))) { bd = d; best = it; } }
+    for (const it of this.items) { if (it.taken || (kind >= 0 && it.kind !== kind)) continue; const d = dmath.hypot3(it.x - p.x, it.z - p.z, (it.y - p.y) * 0.6); if (d < bd && (this.range || lootReachable(this.world, p.x, p.y, p.z, it.x, it.y, it.z))) { bd = d; best = it; } }
     return best;
   }
   private autoPickup(p: Player) {
@@ -1218,7 +1219,7 @@ export class Match {
       if (it.taken) continue;
       const dx = it.x - p.x, dz = it.z - p.z, d2 = dx * dx + dz * dz;
       // something you dropped stays on the ground until you have walked away from it once (then walking over it grabs it)
-      if (it.dropper === p.id) { if (d2 > (PICKUP_DIST + 1) ** 2) it.dropper = -1; continue; }
+      if (it.dropper === p.id) { if (d2 > dmath.pow(PICKUP_DIST + 1, 2)) it.dropper = -1; continue; }
       if (d2 > PICKUP_DIST * PICKUP_DIST || it.y - p.y < -1.3 || it.y - p.y > 1.5) continue;
       if (!this.range && !lootReachable(this.world, p.x, p.y, p.z, it.x, it.y, it.z, !p.bot)) continue;
       // walking over a gun you already carry (same weapon, any rarity) never fills a second slot with it — take it with E
@@ -1237,7 +1238,7 @@ export class Match {
     if (op === 4) { if (this.phase === Phase.Play) this.spectateOp(p, a); return; }   // INV.Spectate
     if (op !== 2) return;
     const s = invDrop(p, a); if (!s) return;
-    const fx = p.x - Math.sin(p.yaw) * 1.2, fz = p.z - Math.cos(p.yaw) * 1.2;   // a step in front, where you can see it
+    const fx = p.x - dmath.sin(p.yaw) * 1.2, fz = p.z - dmath.cos(p.yaw) * 1.2;   // a step in front, where you can see it
     if (s.kind === SK.Weapon) this.spawnItem(IK.Weapon, s.id, s.rarity, 1, fx, p.y, fz, 0.3, p.id).loaded = s.mag;
     else this.spawnItem(IK.Consumable, s.id, s.rarity, s.count, fx, p.y, fz, 0.3, p.id);
     this.onInventory(p.id);
@@ -1333,7 +1334,7 @@ export class Match {
       const [x, z] = isletToWorld(lx, d), h = this.world.ground(x, z);
       if (h < 1) continue;
       this.world.velY = 0; this.world.resolveCapsule(x, h + 0.05, z, PLAYER_R + 0.6, PLAYER_H, false);
-      if (Math.hypot(this.world.P[0] - x, this.world.P[2] - z) > 0.05 || this.world.P[1] - h > 0.3) continue;   // a prop is here
+      if (dmath.hypot(this.world.P[0] - x, this.world.P[2] - z) > 0.05 || this.world.P[1] - h > 0.3) continue;   // a prop is here
       p.x = x; p.y = this.world.P[1]; p.z = z; p.st = PS.Ground; p.grounded = true; p.vx = p.vy = p.vz = 0;
       p.yaw = isletYaw() + (this.rng.next() - 0.5) * 1.2;
       return;
@@ -1344,7 +1345,7 @@ export class Match {
   spawnAt(p: Player, cx: number, cz: number, r: number) {
     for (let i = 0; i < 30; i++) {
       const a = this.rng.next() * Math.PI * 2, d = Math.sqrt(this.rng.next()) * r;
-      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d, h = this.world.ground(x, z);
+      const x = cx + dmath.cos(a) * d, z = cz + dmath.sin(a) * d, h = this.world.ground(x, z);
       if (h < 1) continue;
       this.world.velY = 0; this.world.resolveCapsule(x, h + 0.05, z, PLAYER_R, PLAYER_H, false);
       p.x = this.world.P[0]; p.y = this.world.P[1]; p.z = this.world.P[2]; p.st = PS.Ground; p.grounded = true; p.vx = p.vy = p.vz = 0; p.yaw = this.rng.next() * Math.PI * 2;

@@ -400,9 +400,8 @@ function crownCell(ctx: { renderer: THREE.WebGLRenderer }, lobes: Array<{ c: THR
         pp.setXYZ(i, v.x * k, v.y * k * (v.y < 0 ? 0.7 : 1), v.z * k);
       }
       ico.translate(L.c.x, L.c.y + L.r * 0.12, L.c.z);
-      const nv = ico.toNonIndexed(); ico.dispose();
-      nv.deleteAttribute("uv");
-      parts.push(nv); li++;
+      ico.deleteAttribute("uv");
+      parts.push(ico); li++;
     }
     const cg = mergeGeometries(parts)!; cg.computeVertexNormals();
     const P = cg.getAttribute("position"), C = new Float32Array(P.count * 3);

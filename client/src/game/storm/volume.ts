@@ -16,6 +16,7 @@
 // into the scene with gl_FragDepth = the traced depth, so foreground palms / terrain occlude it per pixel.
 import * as THREE from "three";
 import { flag } from "../../flags";
+import { contextEpoch } from "../../engine/res/restore";
 
 const N = 64;            // texels per tile edge
 const CELLS = 6;         // sphere cells per tile edge
@@ -539,6 +540,7 @@ export function createStormVolume(o: { boltCol: THREE.Color; hazeCol: THREE.Colo
   const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const TRACE_TARGET: THREE.RenderTargetOptions = { count: 2, type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false, generateMipmaps: false };
   let rt: THREE.WebGLRenderTarget | null = null;
+  let tqEpoch = contextEpoch();
   const cu = { uCol: { value: null as THREE.Texture | null }, uDep: { value: null as THREE.Texture | null }, uSize: { value: new THREE.Vector2(1, 1) } };
   const compMat = new THREE.ShaderMaterial({
     vertexShader: COMP_VERT, fragmentShader: COMP_FRAG, uniforms: cu, transparent: true, depthWrite: false, depthTest: true, fog: false,
@@ -607,6 +609,7 @@ export function createStormVolume(o: { boltCol: THREE.Color; hazeCol: THREE.Colo
       const prev = renderer.getRenderTarget(), prevAuto = renderer.autoClear;
       renderer.setRenderTarget(rt); renderer.autoClear = false;
       const tq = (globalThis as { __stormTimer?: { q: WebGLQuery[]; ms: number[] } }).__stormTimer;
+      if (tqEpoch !== contextEpoch()) { tqEpoch = contextEpoch(); if (tq) tq.q.length = 0; }
       const gl = renderer.getContext() as WebGL2RenderingContext, ext = tq ? gl.getExtension("EXT_disjoint_timer_query_webgl2") : null;
       let q: WebGLQuery | null = null;
       if (tq && ext) { q = gl.createQuery(); if (q) gl.beginQuery(ext.TIME_ELAPSED_EXT, q); }

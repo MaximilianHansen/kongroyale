@@ -177,7 +177,7 @@ export function wbMats(ctx: WorldCtx): Promise<WbMats> {
   return (cached ??= (async () => {
     // the town texture workers + our photo sets load in parallel (the wait is network / workers, not main thread)
     const keys: SetKey[] = ["hull", "deck", "timber", "panel", "bamboo", "cliff", "face"];
-    const [, sets] = await Promise.all([preloadTownTex(ctx.renderer), Promise.all(keys.map((k) => Promise.all([
+    const [, sets] = await Promise.all([preloadTownTex(ctx.renderer, () => ctx.yield()), Promise.all(keys.map((k) => Promise.all([
       ctx.assets.texture(`assets/pois/wreckbay/${k}-d.webp`),
       ctx.assets.texture(`assets/pois/wreckbay/${k}-n.webp`, { srgb: false }),
       ctx.assets.texture(`assets/pois/wreckbay/${k}-arm.webp`, { srgb: false }),
