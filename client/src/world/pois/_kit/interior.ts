@@ -551,6 +551,8 @@ export async function buildInteriors(ctx: WorldCtx, rooms: InteriorRoom[], o: In
   group.name = o.name ?? "interiors";
   const layouts: InteriorLayout[] = [];
   if (!rooms.length) return { group, layouts, tris: 0, draws: 0 };
+  let tick: ((t: number) => void) | null = null;
+  ctx.onUpdate((_dt, t) => tick?.(t));
   const ox = rooms[0].x, oy = rooms[0].y, oz = rooms[0].z;
   group.position.set(ox, oy, oz);
   const B = new IBuilder();
@@ -590,14 +592,14 @@ export async function buildInteriors(ctx: WorldCtx, rooms: InteriorRoom[], o: In
   // a module root, and roots carry the terrain-occlusion gate on `visible` — the engine could not dissolve a root's own
   // switch (the harbor's ship / shed rooms appeared in one frame at ~105 m); the children dissolve like every module switch
   const fxSet = new Set<THREE.Object3D>(fx);
-  ctx.onUpdate((_dt, t) => {
+  tick = (t) => {
     const d = ctx.camera.position.distanceTo(centre) - rad;
     const vis = d < far;
     if (vis !== own) { own = vis; for (const c of group.children) if (!fxSet.has(c)) c.visible = vis; }
     if (vis) FIRE_T.value = t;
     const fv = vis && d < fxFar;
     for (const m of fx) if (m.visible !== fv) m.visible = fv;
-  });
+  };
   return { group, layouts, tris: B.tris, draws: meshes.length };
 }
 

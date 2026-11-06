@@ -54,6 +54,7 @@ export class GlassFx {
   private readonly meshes: GMesh[] = [];
   private readonly known = new WeakSet<THREE.Object3D>();
   private warmI = 0;
+  private pruneDue = false;
   private scannedOnce = false; private readonly pending: THREE.Object3D[] = []; private applied = 0; private epoch = -1;
   private readonly undo = new Map<number, Undo[]>();
   // shards
@@ -90,7 +91,7 @@ export class GlassFx {
     this.edges.count = 0; this.edges.visible = false;
     scene.add(this.edges);
     live = this;
-    if (!hooked) { hooked = true; onStructure((_p, child, added) => { const g = live; if (added && child && g && g.scannedOnce && g.pending.length < 65536) g.pending.push(child); }); }
+    if (!hooked) { hooked = true; onStructure((p, child, added) => { const g = live; if (!child || !g || !g.scannedOnce) return; if (added) { if (g.pending.length < 65536) g.pending.push(child); } else if (p === g.scene || p.name === "far-merge") g.pruneDue = true; }); }
   }
   readonly edges: THREE.InstancedMesh;
   private edgeN = 0;
@@ -128,6 +129,7 @@ export class GlassFx {
     if (!this.scannedOnce && this.time > 3) { const t0 = performance.now(); this.scan(this.scene); this.scannedOnce = true; this.stats.ms += performance.now() - t0; }
     // …and the triangle centroids, one glass mesh per frame, so the first smashed window costs ~nothing
     else if (this.scannedOnce && this.warmI < this.meshes.length) { const t0 = performance.now(), g = this.meshes[this.warmI++]; if (!g.cen) this.centroids(g); this.stats.warmMs = Math.max(this.stats.warmMs, performance.now() - t0); }
+    if (this.pruneDue) this.prune();
     if (this.pending.length > 0) {
       // late meshes (a module streamed in, an HLOD merge rebuilt): the panes already broken apply to them too
       const t0 = performance.now(), n0 = this.meshes.length;
@@ -156,6 +158,19 @@ export class GlassFx {
   }
 
   // ---------------------------------------------------------------- hiding panes
+  private prune() {
+    this.pruneDue = false;
+    let w = 0, warm = this.warmI;
+    for (let i = 0; i < this.meshes.length; i++) {
+      if (this.inScene(this.meshes[i].mesh)) this.meshes[w++] = this.meshes[i];
+      else if (i < this.warmI) warm--;
+    }
+    this.meshes.length = w; this.warmI = warm; this.stats.meshes = w;
+    for (const [k, list] of this.undo) {
+      const keep = list.filter((u) => this.inScene(u.g.mesh));
+      if (keep.length) this.undo.set(k, keep); else this.undo.delete(k);
+    }
+  }
   private inScene(o: THREE.Object3D) { let p: THREE.Object3D | null = o; while (p && p !== this.scene) p = p.parent; return p === this.scene; }
   private scan(root: THREE.Object3D) {
     this.stats.scans++;

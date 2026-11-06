@@ -22,6 +22,8 @@ import { M, NET_VERSION } from "../shared/net/proto";
 import { MatchHost, matchInfo, type HostPeer } from "../shared/net/host";
 /** commentator seats per lobby (client/src/caster) */
 const MAX_SEATS = 8;
+import { sendFrame, type Path } from "../shared/net/transport";
+import { WsTransport } from "./transport-ws";
 import { kongbotDb } from "./kongbot";
 import { annotationsApi } from "./annotations";
 import { serveStatic } from "./static";
@@ -76,7 +78,7 @@ log(`world ready: ${terrain.res}² heightfield, ${boxes.length} boxes, terrain h
 const perf = performanceMetrics();
 
 // ---- sockets
-interface Sock { ws: WebSocket; ip: string; tokens: number; refill: number; strikes: number; lastMsg: number;
+export interface Sock { ws: WebSocket; ip: string; tokens: number; refill: number; strikes: number; lastMsg: number;
   /** (admin lobby) round trip of the server's own ws pings, ms (0 = none yet) */
   rtt: number;
   /** liveness + the disconnect log: when it opened, its last pong (Date.now ms), and who closed it when the
@@ -98,7 +100,9 @@ const ADMIN_SHAPED = new Set(["act", "admin", "hub-admin", "hub-hello", "kick", 
 const sendJSON = (ws: WebSocket, o: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); };
 
 // ---- clients + lobbies
-export interface Client { uid: number; token: string; name: string; lobby: Lobby | null; pid: number; squad: number; sock: Sock; aux: Sock[]; lastInputAt: number; peer: HostPeer; /** last relayed map marker (ms) */ markAt: number;
+export interface Client { uid: number; token: string; name: string; lobby: Lobby | null; pid: number; squad: number; sock: Sock; aux: Sock[];
+  /** the binary transport: the hot path to and from this client (server/transport-ws.ts) */
+  bin: WsTransport; lastInputAt: number; peer: HostPeer; /** last relayed map marker (ms) */ markAt: number;
   /** (caster) a commentator seat in its lobby (−1 = a player); the last relayed camera sync (ms) */
   seat: number; camAt: number;
   /** (caster) a PROGRAM output window (OBS): a seat that only mirrors the seat on air */
@@ -106,19 +110,6 @@ export interface Client { uid: number; token: string; name: string; lobby: Lobby
   /** (admin lobby) a player in an event lobby (server/admin/events.ts), else null */
   ev: EventMember | null }
 const byToken = new Map<string, Client>();
-/** binary to every socket of a client (primary + aux). One copy per frame: `u8` may be a view over a reused buffer.
- * Backpressure: a socket with a large send backlog skips snapshots (each one is self-contained) instead of queueing. */
-function sendBin(c: Client, u8: Uint8Array) {
-  let buf: Buffer | null = null;
-  for (let i = -1; i < c.aux.length; i++) {
-    const s = i < 0 ? c.sock : c.aux[i], ws = s.ws;
-    if (ws.readyState !== WebSocket.OPEN) continue;
-    if (u8[0] === M.Snapshot && ws.bufferedAmount > 64 * 1024) continue;
-    if (ws.bufferedAmount > 4 * 1024 * 1024) { s.closedBy ||= "send backlog > 4 MB"; ws.terminate(); continue; }   // hopelessly behind
-    buf ??= Buffer.from(u8);
-    ws.send(buf, { binary: true });
-  }
-}
 
 export class Lobby {
   /** (admin lobby) an event lobby the admin runs (server/admin/events.ts): no player is ever its host, it stays open
@@ -395,7 +386,7 @@ wss.on("connection", (ws, req) => {
     let c: Client | null = null;
     ws.on("message", (data: RawData, isBinary: boolean) => {
       if (!allow(s)) return;
-      if (c) { if (isBinary) onBinary(c, s, data); return; }
+      if (c) { if (isBinary) c.bin.receive(s, data); return; }
       let m: { t?: unknown; token?: unknown } | null = null;
       try { m = isBinary ? null : JSON.parse(String(data)); } catch { /* below */ }
       const owner = m && m.t === "aux" && typeof m.token === "string" ? byToken.get(m.token) : undefined;
@@ -411,19 +402,21 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  const c: Client = { uid: uidSeq++, token: crypto.randomBytes(16).toString("hex"), name: "KONG", lobby: null, pid: -1, squad: 0, sock: s, aux: [], lastInputAt: Date.now(), peer: null!, markAt: 0, seat: -1, camAt: 0, program: false, ev: null };
-  c.peer = { pid: -1, invSeq: 0, send: (u8) => sendBin(c, u8), sendResult: (state) => sendJSON(c.sock.ws, { t: "result", state }) };
+  const aux: Sock[] = [];
+  const c: Client = { uid: uidSeq++, token: crypto.randomBytes(16).toString("hex"), name: "KONG", lobby: null, pid: -1, squad: 0, sock: s, aux, bin: new WsTransport(s, aux, strike), lastInputAt: Date.now(), peer: null!, markAt: 0, seat: -1, camAt: 0, program: false, ev: null };
+  c.bin.onMessage = (u8, _at, from) => onBinary(c, u8, from);
+  c.peer = { pid: -1, invSeq: 0, send: (u8) => sendFrame(c.bin, u8), sendResult: (state) => sendJSON(c.sock.ws, { t: "result", state }) };
   byToken.set(c.token, c);
   sendJSON(ws, { t: "welcome", uid: c.uid, aux: c.token, terrain: td.hash, world: worldHashV, boxes: boxes.length, net: NET_VERSION });
   ws.on("message", (data: RawData, isBinary: boolean) => {
     if (!allow(s)) return;
-    if (isBinary) { onBinary(c, s, data); return; }
+    if (isBinary) { c.bin.receive(s, data); return; }
     let msg: { t?: unknown; [k: string]: unknown };
     try { msg = JSON.parse(String(data)); } catch { strike(s, "bad json"); return; }
     if (!msg || typeof msg !== "object") { strike(s, "bad json"); return; }
     try { onJSON(c, msg); } catch (e) { log("json handler error", e); strike(s, "handler"); }
   });
-  ws.on("close", (code: number, reason: Buffer) => { logClose(c, s, code, reason, false); byToken.delete(c.token); leaveLobby(c); for (const a of c.aux) { a.closedBy ||= "primary closed"; a.ws.close(); } });
+  ws.on("close", (code: number, reason: Buffer) => { logClose(c, s, code, reason, false); byToken.delete(c.token); leaveLobby(c); c.bin.close(); });
 });
 
 /** one line per player socket close: who, where (room / match phase, alive or not), the close code + reason,
@@ -437,13 +430,12 @@ function logClose(c: Client, s: Sock, code: number, reason: Buffer, aux: boolean
   log(`disconnect${aux ? " (aux)" : ""}: ${c.name} · ${where} · code ${code}${why ? ` "${why}"` : ""} · by ${by} · up ${sec(s.openedAt)} · last msg ${sec(s.lastMsg)} ago, last pong ${sec(s.lastPong)} ago${aux ? "" : ` · aux ${c.aux.length ? "open" : "none"}`}`);
 }
 
-function onBinary(c: Client, s: Sock, data: RawData) {
-  const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
-  const u8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+/** one binary frame from a client, on any of its transport's paths */
+function onBinary(c: Client, u8: Uint8Array, from: Path) {
   const host = c.lobby?.host;
-  if (!host) { if (u8[0] !== M.Input && u8[0] !== M.Ping && u8[0] !== M.InvOp) strike(s, "bad frame"); return; }
+  if (!host) { if (u8[0] !== M.Input && u8[0] !== M.Ping && u8[0] !== M.InvOp) from.strike("bad frame"); return; }
   if (u8[0] === M.Input) c.lastInputAt = Date.now();
-  if (!host.receive(c.peer, u8, (r) => { if (s.ws.readyState === WebSocket.OPEN) s.ws.send(Buffer.from(r), { binary: true }); })) strike(s, "bad frame");
+  if (!host.receive(c.peer, u8, from.reply)) from.strike("bad frame");
 }
 /** out of whatever lobby the client is in, as a player or as a caster seat */
 function leaveLobby(c: Client) { if (c.seat >= 0) c.lobby?.castLeave(c); else c.lobby?.leave(c); }

@@ -80,9 +80,14 @@ little-endian, written with a `DataView`. The rare path (lobbies, match start, v
 Every binary frame decodes on its own: there is no delta compression against earlier frames. A lagging or late player
 can pick up from any frame.
 
-Each player holds **two WebSockets**. Binary frames travel on both, and each end keeps the first copy it gets. A
-WebSocket runs over TCP, so one lost packet stalls everything behind it; with two sockets, a stall needs both to lose
-a packet at once.
+The binary frames go through one `Transport` (`shared/net/transport.ts`), the same shape on the client and the server.
+`channelOf` puts each frame type on a channel: inputs, pings, pongs and snapshots are unreliable (a newer one replaces a
+lost one), everything else is reliable. JSON always rides the primary WebSocket. The receivers keep the ordering rules
+(newest snapshot tick, each input seq once), so a transport may deliver a frame twice, late or never.
+
+Today's transport is **two WebSockets** per player. Binary frames travel on both, and each end keeps the first copy it
+gets. A WebSocket runs over TCP, so one lost packet stalls everything behind it; with two sockets, a stall needs both
+to lose a packet at once.
 
 When a client connects, the server's `welcome` message carries `NET_VERSION` and a hash of the whole collision world.
 A client with a different world refuses to play and asks the player to reload.
