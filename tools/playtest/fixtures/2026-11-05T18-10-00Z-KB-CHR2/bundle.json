@@ -1,0 +1,102 @@
+{
+  "id": "KB-CHR2",
+  "message": "F8 mark in match at 1:42",
+  "receivedAt": "2026-11-05T18:10:00.000Z",
+  "reporter": {
+    "name": "PIXELPETE"
+  },
+  "server": {
+    "sha": "b9840d6"
+  },
+  "ctx": {
+    "env": {
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "dpr": 1,
+      "memoryGB": 8,
+      "cores": 8
+    },
+    "gpu": {
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "level": "high"
+    },
+    "video": {
+      "preset": "auto"
+    },
+    "perf": {
+      "heapMB": {
+        "used": 300,
+        "total": 600,
+        "limit": 4096
+      }
+    },
+    "boot": {
+      "readyAtMs": 9000
+    },
+    "game": {
+      "match": {
+        "phase": "play",
+        "time": 100
+      },
+      "player": {
+        "pos": [-40, 10, -130],
+        "poi": {
+          "id": "banana-temple",
+          "name": "banana-temple",
+          "dist": 20,
+          "inside": true
+        }
+      }
+    },
+    "diag": {
+      "v": 1,
+      "sid": "sid-chrome-2",
+      "longFrames": 0,
+      "events": [
+        [
+          5.8,
+          "longtask",
+          700,
+          "invoker fn@main-ZzZ999aa.js:77 710 ms"
+        ],
+        [
+          6.4,
+          "loaf",
+          710,
+          "invoker fn@main-ZzZ999aa.js:77 710 ms"
+        ]
+      ],
+      "path": {
+        "fields": ["t", "x", "y", "z", "yawDeg", "pitchDeg", "phase"],
+        "rows": []
+      },
+      "prev": null
+    }
+  },
+  "logs": [],
+  "trail": [],
+  "bundle": {
+    "mark": true,
+    "timeline": {
+      "fields": ["t", "fps", "p50Ms", "p95Ms", "maxMs", "over50", "over100", "gpuMs", "pingMs", "jitterMs", "heapMB", "textures", "geometries", "programs", "renderScale", "phase"],
+      "rows": [
+        [1, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [2, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [3, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [4, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [5, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [6, 12, 16.7, 150, 710, 3, 2, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [7, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [8, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [9, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [10, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [11, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [12, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2]
+      ],
+      "dropped": 0
+    },
+    "flags": {
+      "perfhud": ""
+    },
+    "replay": null
+  }
+}

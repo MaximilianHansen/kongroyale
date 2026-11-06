@@ -17,6 +17,7 @@ import { furnishRoom, type InteriorRoom, type RoomOpening } from "./interior-kit
 import { mulberry32 } from "../world/noise";
 import ROCKS_BAKED from "./harbor-rocks-baked.json";
 import { bakedRockBoxes, hash01, rockSig, type RockBake, type RockPl, type RockSet, boxGrid, capsuleClear, noLowStep, clearSpot, floorUnder, containerBoxes, faceYaw, fitBox, fitError, flight, patchBox, railRun, slabXYZ, solidColumns, stairwell, floorWithHoles, type ContainerColor, type ContainerPlacement, type Piece, type PieceMat, type V3 } from "./harbor-kit";
+import * as dmath from "../sim/dmath";
 
 export interface HullSection {
   id: "bow" | "stern";
@@ -42,14 +43,14 @@ export const SHIP = { name: "BANANA CO.", beam: 18, depth: 11 };
  *  dressing are placed by bearing (deg, + = right) and distance from it so the frame keeps its composition. */
 export const COMP = { x: -831.5, z: 63.5, fx: -0.5, fz: Math.sqrt(3) / 2 };
 export function fromCam(d: number, deg: number): [number, number] {
-  const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
+  const t = (deg * Math.PI) / 180, c = dmath.cos(t), s = dmath.sin(t);
   const rx = -COMP.fz, rz = COMP.fx; // camera right (three.js: forward × up)
   return [COMP.x + d * (c * COMP.fx + s * rx), COMP.z + d * (c * COMP.fz + s * rz)];
 }
 
 /** a section placed from two ground points: its intact end (origin) and where its axis points (the break) */
 function place(id: "bow" | "stern", from: [number, number], to: [number, number], y: number, pitch: number, roll: number, length: number, house: HullSection["house"], beachSide: 1 | -1, o: Pick<HullSection, "openHatch" | "hatches" | "funnel">): HullSection {
-  return { id, x: from[0], y, z: from[1], yaw: Math.atan2(-(to[1] - from[1]), to[0] - from[0]), pitch, roll, length, beam: 25, depth: 19, house, beachSide, ...o };
+  return { id, x: from[0], y, z: from[1], yaw: dmath.atan2(-(to[1] - from[1]), to[0] - from[0]), pitch, roll, length, beam: 25, depth: 19, house, beachSide, ...o };
 }
 /** the house reaches the break: its torn end stands open (rooms exposed, floors sticking out) */
 export const houseTorn = (s: HullSection) => s.house.x1 > s.length - 3;
@@ -74,7 +75,7 @@ export const SECTIONS: HullSection[] = [BOW, STERN];
 // ---------------------------------------------------------------- section math (shared by visuals + colliders)
 /** local → world point of a section */
 export function sectionToWorld(s: HullSection, x: number, y: number, z: number): [number, number, number] {
-  const cr = Math.cos(s.roll), sr = Math.sin(s.roll), cp = Math.cos(s.pitch), sp = Math.sin(s.pitch), cy = Math.cos(s.yaw), sy = Math.sin(s.yaw);
+  const cr = dmath.cos(s.roll), sr = dmath.sin(s.roll), cp = dmath.cos(s.pitch), sp = dmath.sin(s.pitch), cy = dmath.cos(s.yaw), sy = dmath.sin(s.yaw);
   const y1 = y * cr - z * sr, z1 = y * sr + z * cr;           // Rx(roll)
   const x2 = x * cp - y1 * sp, y2 = x * sp + y1 * cp;           // Rz(pitch)
   return [s.x + x2 * cy + z1 * sy, s.y + y2, s.z - x2 * sy + z1 * cy]; // Ry(yaw)
@@ -85,10 +86,10 @@ export const STERN_KNUCKLE = 0.5;
 /** where the intact end's stem / transom is at height y (the bow stem rakes forward, the stern overhangs) */
 export function endX(s: HullSection, y: number): number {
   const t = Math.max(0, Math.min(1, y / s.depth));
-  if (s.id === "bow") return 8.5 * (1 - t) ** 1.4;
+  if (s.id === "bow") return 8.5 * dmath.pow(1 - t, 1.4);
   // the stern: a raked flat TRANSOM above the knuckle (u ≥ 0.5), below it the run sweeps up from the skeg under the
   // counter (the propeller + rudder sit in the space it leaves)
-  return t >= STERN_KNUCKLE ? 1.2 * (1 - t) : 1.2 * (1 - STERN_KNUCKLE) + 9.5 * ((STERN_KNUCKLE - t) / STERN_KNUCKLE) ** 0.9;
+  return t >= STERN_KNUCKLE ? 1.2 * (1 - t) : 1.2 * (1 - STERN_KNUCKLE) + 9.5 * dmath.pow((STERN_KNUCKLE - t) / STERN_KNUCKLE, 0.9);
 }
 /** half-breadth of a section at local (x, y); 0 outside the hull */
 export function halfBreadth(s: HullSection, x: number, y: number): number {
@@ -96,11 +97,11 @@ export function halfBreadth(s: HullSection, x: number, y: number): number {
   if (x < x0 - 1e-4) return 0;
   const u = Math.max(0, Math.min(1, y / s.depth));
   const B = s.beam / 2;
-  const bilge = u < 0.18 ? Math.sqrt(Math.max(0, 1 - ((0.18 - u) / 0.18) ** 2)) : 1;
+  const bilge = u < 0.18 ? Math.sqrt(Math.max(0, 1 - dmath.pow((0.18 - u) / 0.18, 2))) : 1;
   if (s.id === "bow") {
     const t = Math.min(1, (x - x0) / 27);
-    const plan = 1 - (1 - t) ** 2.2;
-    const vsec = Math.min(1, (u / 0.9) ** 0.7), e = (1 - t) ** 1.5;
+    const plan = 1 - dmath.pow(1 - t, 2.2);
+    const vsec = Math.min(1, dmath.pow(u / 0.9, 0.7)), e = dmath.pow(1 - t, 1.5);
     const flare = 1 + 0.08 * e * Math.max(0, (u - 0.6) / 0.4);
     return B * plan * (bilge * (1 - e) + vsec * e) * flare;
   }
@@ -108,17 +109,17 @@ export function halfBreadth(s: HullSection, x: number, y: number): number {
   // the stern above the knuckle), below the knuckle the sections narrow to a V at the skeg; the plan fills out to the
   // full beam over 14 m
   const t = Math.min(1, (x - x0) / 14);
-  const w0 = u >= STERN_KNUCKLE ? 0.6 + 0.32 * (u - STERN_KNUCKLE) / (1 - STERN_KNUCKLE) : 0.6 * (u / STERN_KNUCKLE) ** 0.8;
-  const plan = w0 + (1 - w0) * (1 - (1 - t) ** 2);
+  const w0 = u >= STERN_KNUCKLE ? 0.6 + 0.32 * (u - STERN_KNUCKLE) / (1 - STERN_KNUCKLE) : 0.6 * dmath.pow(u / STERN_KNUCKLE, 0.8);
+  const plan = w0 + (1 - w0) * (1 - dmath.pow(1 - t, 2));
   return Math.max(0, B * plan * bilge);
 }
 /** deck height (local y) at local x — the bow half's forecastle rises toward the stem */
 export function deckY(s: HullSection, x: number): number {
-  return s.id === "bow" ? s.depth + Math.max(0, 1 - x / 14) ** 1.6 * 2.6 : s.depth;
+  return s.id === "bow" ? s.depth + dmath.pow(Math.max(0, 1 - x / 14), 1.6) * 2.6 : s.depth;
 }
 /** where the torn shell ends (local x) at a given height + side: the break is ragged (plates torn back 0–3 m) */
 export function breakX(s: HullSection, y: number, side: number): number {
-  const k = Math.sin(y * 1.7 + side * 2.1 + (s.id === "bow" ? 0 : 3)) * 0.5 + Math.sin(y * 4.3 - side) * 0.3;
+  const k = dmath.sin(y * 1.7 + side * 2.1 + (s.id === "bow" ? 0 : 3)) * 0.5 + dmath.sin(y * 4.3 - side) * 0.3;
   return s.length - 1.6 + k * 1.6 - (y > s.depth - 1 ? 1.2 : 0);
 }
 
@@ -129,7 +130,7 @@ function shoreAt(z: number): { x: number; k: number } {
   let i = 0; while (i < SHORE.length - 2 && z > SHORE[i + 1][0]) i++;
   const [z0, x0] = SHORE[i], [z1, x1] = SHORE[i + 1], t = Math.max(0, Math.min(1, (z - z0) / (z1 - z0)));
   const dxdz = (x1 - x0) / (z1 - z0);
-  return { x: x0 + (x1 - x0) * t, k: 1 / Math.hypot(1, dxdz) };
+  return { x: x0 + (x1 - x0) * t, k: 1 / dmath.hypot(1, dxdz) };
 }
 /** ground height (m) near the wreck — matches the baked terrain within ~0.4 m for x∈[−960,−760], z∈[0,240]. Used for
  *  BOTH the spilled containers' visuals and their colliders (so what you see is what you hit). */
@@ -152,10 +153,10 @@ function CC(d: number, deg: number, yaw: number, color: ContainerColor, o: Parti
   let low = Infinity, gy = -Infinity;
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     const lx = (sx * L) / 2, lz = (sz * W) / 2;
-    const y1 = lz * Math.sin(roll), z1 = lz * Math.cos(roll);
-    const x2 = lx * Math.cos(pitch) - y1 * Math.sin(pitch), y2 = lx * Math.sin(pitch) + y1 * Math.cos(pitch);
+    const y1 = lz * dmath.sin(roll), z1 = lz * dmath.cos(roll);
+    const x2 = lx * dmath.cos(pitch) - y1 * dmath.sin(pitch), y2 = lx * dmath.sin(pitch) + y1 * dmath.cos(pitch);
     low = Math.min(low, y2);
-    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const c = dmath.cos(yaw), s = dmath.sin(yaw);
     gy = Math.max(gy, Math.max(floor, groundY(x + x2 * c + z1 * s, z - x2 * s + z1 * c)));
   }
   p.y = gy - sink + lift - low;
@@ -165,7 +166,7 @@ const D2R = Math.PI / 180;
 /** three.js yaw that points a container's DOOR end (+X) back at the view camera from (d, deg) — plus `off` radians */
 function faceCam(d: number, deg: number, off = 0): number {
   const [x, z] = fromCam(d, deg);
-  return Math.atan2(-(COMP.z - z), COMP.x - x) + off;
+  return dmath.atan2(-(COMP.z - z), COMP.x - x) + off;
 }
 /**
  * The spill: two tumbled HEAPS, 2–3 boxes high — one against the bow's buried stem (frame left), one
@@ -256,8 +257,8 @@ export const ROCKS: Array<{ x: number; z: number; r: number; moss: number; y?: n
   const at = (d: number, deg: number, rad: number, moss: number, lift = 0) => { const [x, z] = fromCam(d, deg); out.push({ x, z, r: rad, moss, y: Math.max(groundY(x, z), -3.4) + lift - rad * 0.2 }); };
   // the reef the bow half's broken end rests on + the rock pile in the gap between the halves
   const brk = sectionToWorld(BOW, BOW.length - 3, 0, 0);
-  const dxz = [brk[0] - COMP.x, brk[2] - COMP.z], dB = Math.hypot(dxz[0], dxz[1]);
-  const bB = Math.atan2(dxz[0] * -COMP.fz + dxz[1] * COMP.fx, dxz[0] * COMP.fx + dxz[1] * COMP.fz) * 180 / Math.PI;
+  const dxz = [brk[0] - COMP.x, brk[2] - COMP.z], dB = dmath.hypot(dxz[0], dxz[1]);
+  const bB = dmath.atan2(dxz[0] * -COMP.fz + dxz[1] * COMP.fx, dxz[0] * COMP.fx + dxz[1] * COMP.fz) * 180 / Math.PI;
   // (the rising bow lifts its break end — the reef under it is a PILE whose crowns carry the keel: `carry` lifts a
   // rock so its top meets the hull bottom there)
   const keel = brk[1];
@@ -265,8 +266,8 @@ export const ROCKS: Array<{ x: number; z: number; r: number; moss: number; y?: n
   carry(dB, bB, 5.4, 0.7); carry(dB - 4, bB - 4, 4.2, 0.8, 0.8); carry(dB + 3, bB + 3, 4.6, 0.6); carry(dB - 7, bB + 2, 3.2, 0.9, 0.55); at(dB - 2, bB - 9, 3.6, 0.6);
   carry(dB + 5, bB - 5, 3.4, 0.5, 0.6); at(dB - 9, bB - 6, 2.2, 0.9); carry(dB - 6, bB + 7, 2.6, 0.8, 0.4); at(dB + 2, bB + 9, 3.0, 0.7); at(dB - 12, bB + 1, 1.8, 1.0);
   // the stern's break sits on its own rubble: a spur of reef rocks under the torn end + at its foot on the lagoon side
-  const sb = sectionToWorld(STERN, STERN.length - 2, 0, 0), sdx = [sb[0] - COMP.x, sb[2] - COMP.z], dS = Math.hypot(sdx[0], sdx[1]);
-  const bS = Math.atan2(sdx[0] * -COMP.fz + sdx[1] * COMP.fx, sdx[0] * COMP.fx + sdx[1] * COMP.fz) * 180 / Math.PI;
+  const sb = sectionToWorld(STERN, STERN.length - 2, 0, 0), sdx = [sb[0] - COMP.x, sb[2] - COMP.z], dS = dmath.hypot(sdx[0], sdx[1]);
+  const bS = dmath.atan2(sdx[0] * -COMP.fz + sdx[1] * COMP.fx, sdx[0] * COMP.fx + sdx[1] * COMP.fz) * 180 / Math.PI;
   at(dS - 3, bS - 2, 3.8, 0.8, 1.2); at(dS - 6, bS + 3, 2.9, 0.9, 0.8); at(dS, bS - 6, 3.2, 0.7, 0.9); at(dS - 9, bS - 3, 2.2, 1.0, 0.5); at(dS - 4, bS + 7, 2.4, 0.9, 0.6);
   // rocks around the bow's buried stem and along the beach edge (frame left: grey, rounded, algae at the waterline)
   at(98, -31, 2.8, 0.6); at(94, -24, 2.2, 0.8); at(88, -40, 1.9, 0.4); at(70, -33, 1.4, 0.5); at(64, -26, 1.1, 0.7);
@@ -274,13 +275,13 @@ export const ROCKS: Array<{ x: number; z: number; r: number; moss: number; y?: n
   // below the tide line, foam where they break the surface)
   for (let i = 0; i < 26; i++) {
     const heapB = i < 14, d = heapB ? 70 + r() * 30 : 60 + r() * 45, deg = heapB ? -14 + r() * 30 : -42 + r() * 18;
-    at(d, deg, 0.6 + r() ** 1.5 * 1.6, 0.6 + r() * 0.4);
+    at(d, deg, 0.6 + dmath.pow(r(), 1.5) * 1.6, 0.6 + r() * 0.4);
   }
   // rounded grey rocks clustered along the waterline in front of the spill (half out of the water, algae
   // below the tide line, foam where they break the surface): small groups of 2–4
   for (const [d0, deg0, n] of [[38, -8, 3], [46, 6, 4], [55, -14, 3], [60, 16, 2], [70, 2, 4], [66, -22, 3], [48, 22, 2], [76, 12, 3]] as Array<[number, number, number]>) {
     for (let k = 0; k < n; k++) {
-      const d = d0 + (r() - 0.5) * 5, deg = deg0 + (r() - 0.5) * 6, rad = 0.9 + r() ** 1.3 * 1.3;
+      const d = d0 + (r() - 0.5) * 5, deg = deg0 + (r() - 0.5) * 6, rad = 0.9 + dmath.pow(r(), 1.3) * 1.3;
       const [x, z] = fromCam(d, deg), gy = Math.max(groundY(x, z), -3.4);
       // raised so the crown breaks the surface (the base still sits on the seabed / sand)
       out.push({ x, z, r: rad, moss: 0.6 + r() * 0.35, y: gy + Math.min(1.6, Math.max(0, -gy * 0.7)) - rad * 0.2 });
@@ -289,7 +290,7 @@ export const ROCKS: Array<{ x: number; z: number; r: number; moss: number; y?: n
   // every box lying on the beach / in the shallow wash gets 3–5 rocks round its foot (never in front of its doors):
   // it looks washed up and settled, not dropped on the sand
   CONTAINERS.forEach((p, i) => {
-    const L = (p.size ?? 40) === 20 ? 6.058 : 12.192, W = 2.438, c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+    const L = (p.size ?? 40) === 20 ? 6.058 : 12.192, W = 2.438, c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw);
     if (groundY(p.x, p.z) < -0.6 || p.y > groundY(p.x, p.z) + 1.5) return;
     const n = 3 + (i % 3);
     for (let k = 0; k < n; k++) {
@@ -299,7 +300,7 @@ export const ROCKS: Array<{ x: number; z: number; r: number; moss: number; y?: n
     }
   });
   // beach boulders + pebbles
-  for (let i = 0; i < 16; i++) at(18 + r() * 60, -40 + r() * 75, 0.3 + r() ** 2 * 1.0, 0.2 + r() * 0.4);
+  for (let i = 0; i < 16; i++) at(18 + r() * 60, -40 + r() * 75, 0.3 + dmath.pow(r(), 2) * 1.0, 0.2 + r() * 0.4);
   return out;
 })();
 
@@ -332,7 +333,7 @@ export function rockSets(): Record<string, RockSet> {
     // 2–3 rocks per block so the silhouette is chunky + stepped, never one smooth lump
     const n = bb.w > 12 ? 3 : 2;
     for (let k = 0; k < n; k++) {
-      const t = k / (n - 1) - 0.5, c = Math.cos(bb.ry), sn = Math.sin(bb.ry);
+      const t = k / (n - 1) - 0.5, c = dmath.cos(bb.ry), sn = dmath.sin(bb.ry);
       const ox = t * bb.w * 0.55, oz = (hash01(i, k, 3) - 0.5) * bb.d * 0.3;
       const sx = bb.w / n * 0.78 + 1.5, sy = bb.h * (0.5 + hash01(i, k, 4) * 0.12), sz = bb.d * 0.62;
       cliff.push({ x: bb.x + ox * c + oz * sn, y: bb.y0 + sy * 0.8, z: bb.z - ox * sn + oz * c, sx, sy, sz, ry: bb.ry + (hash01(i, k, 5) - 0.5) * 0.5, rx: (hash01(i, k, 6) - 0.5) * 0.08, rz: (hash01(i, k, 7) - 0.5) * 0.08, proto: (i + k) % 5 });
@@ -349,7 +350,7 @@ export const LOOKOUT = (() => {
   // the camera stands 0.3 m forward of the deck centre and 0.8 m right of it
   const back = 0.3, left = 0.8, rx = -COMP.fz, rz = COMP.fx;
   const x = COMP.x - COMP.fx * back - rx * left, z = COMP.z - COMP.fz * back - rz * left;
-  return { x, z, deckY: 6.0, hs: 3.0, railV: -1.2, yaw: Math.atan2(-COMP.fz, COMP.fx), ground: groundY(x, z) };
+  return { x, z, deckY: 6.0, hs: 3.0, railV: -1.2, yaw: dmath.atan2(-COMP.fz, COMP.fx), ground: groundY(x, z) };
 })();
 /** lookout → world (u along the facing direction, v to its right) */
 export function lookoutAt(u: number, v: number): [number, number] {
@@ -391,7 +392,7 @@ export interface WalkSeg { a: [number, number]; b: [number, number]; len: number
 export function walkSegs(): WalkSeg[] {
   const P = WALK.pts, out: WalkSeg[] = [];
   for (let i = 0; i + 1 < P.length; i++) {
-    const a = P[i], b = P[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const a = P[i], b = P[i + 1], len = dmath.hypot(b[0] - a[0], b[1] - a[1]);
     // (segments run into each other's landings; the beach end and the ramp end stop exactly at their points)
     out.push({ a, b, len, ux: (b[0] - a[0]) / len, uz: (b[1] - a[1]) / len, e0: i === 0 ? 0 : WALK.w / 2, e1: i + 2 === P.length ? 0 : WALK.w / 2 });
   }
@@ -403,11 +404,11 @@ export function walkPieces(): WalkPiece[] {
   const out: WalkPiece[] = [], Y = WALK.y, T = 0.25, segs = walkSegs();
   for (const s of segs) {
     const m = (s.e1 - s.e0) / 2, cx = (s.a[0] + s.b[0]) / 2 + s.ux * m, cz = (s.a[1] + s.b[1]) / 2 + s.uz * m;
-    out.push({ kind: "deck", c: [cx, Y - T / 2, cz], h: [s.len / 2 + (s.e0 + s.e1) / 2, T / 2, WALK.w / 2], yaw: Math.atan2(s.uz, s.ux) });
+    out.push({ kind: "deck", c: [cx, Y - T / 2, cz], h: [s.len / 2 + (s.e0 + s.e1) / 2, T / 2, WALK.w / 2], yaw: dmath.atan2(s.uz, s.ux) });
   }
   // joint landings (square, along the incoming segment) + a crate on the outer corner of every other one
   for (let i = 1; i + 1 < WALK.pts.length; i++) {
-    const s = segs[i - 1], [x, z] = WALK.pts[i], L = WALK.landing / 2, yaw = Math.atan2(s.uz, s.ux);
+    const s = segs[i - 1], [x, z] = WALK.pts[i], L = WALK.landing / 2, yaw = dmath.atan2(s.uz, s.ux);
     out.push({ kind: "landing", c: [x, Y - T / 2, z], h: [L, T / 2, L], yaw });
     if (i <= 5) {
       const n = segs[i], turn = s.ux * n.uz - s.uz * n.ux, side = turn > 0 ? -1 : 1, nx = -s.uz * side, nz = s.ux * side;
@@ -416,7 +417,7 @@ export function walkPieces(): WalkPiece[] {
     }
   }
   // beach entry: two steps up from the sand
-  { const s = segs[0], [x, z] = s.a, yaw = Math.atan2(s.uz, s.ux);
+  { const s = segs[0], [x, z] = s.a, yaw = dmath.atan2(s.uz, s.ux);
     out.push({ kind: "step", c: [x - s.ux * 0.3, (0.5 - 1.2) / 2, z - s.uz * 0.3], h: [0.3, 0.6 + 0.25, WALK.w / 2], yaw });
     out.push({ kind: "step", c: [x - s.ux * 0.9, (0.2 - 1.2) / 2, z - s.uz * 0.9], h: [0.3, 0.6 + 0.1, WALK.w / 2], yaw }); }
   // boarding steps for swimmers: where the water is over wading depth, every ~12 m, alternating sides (3 treads
@@ -426,7 +427,7 @@ export function walkPieces(): WalkPiece[] {
     acc += 0.5; if (acc < 12) continue;
     const x = s.a[0] + s.ux * u, z = s.a[1] + s.uz * u, nx = -s.uz * side, nz = s.ux * side;
     if (groundY(x + nx * 2.5, z + nz * 2.5) > -1.4) continue;
-    acc = 0; const yaw = Math.atan2(s.uz, s.ux);
+    acc = 0; const yaw = dmath.atan2(s.uz, s.ux);
     [0.3, -0.2, -0.7].forEach((top, k) => { const d = WALK.w / 2 + 0.25 + k * 0.5; out.push({ kind: "step", c: [x + nx * d, (top - 2.2) / 2, z + nz * d], h: [0.65, (top + 2.2) / 2, 0.25], yaw }); });
     side = -side;
   }
@@ -554,7 +555,7 @@ export function extStairRoofGap(s: HullSection): [number, number] | null {
 export const holdCoamingGap = (s: HullSection, x: number, z: number) => s.id === "stern" && z < 0 && x > HOLD_STAIR.x0 - 0.2 && x < HOLD_STAIR.x0 + 1.35;
 /** world → section-local (inverse of sectionToWorld) */
 export function worldToSection(s: HullSection, wx: number, wy: number, wz: number): V3 {
-  const cr = Math.cos(s.roll), sr = Math.sin(s.roll), cp = Math.cos(s.pitch), sp = Math.sin(s.pitch), cy = Math.cos(s.yaw), sy = Math.sin(s.yaw);
+  const cr = dmath.cos(s.roll), sr = dmath.sin(s.roll), cp = dmath.cos(s.pitch), sp = dmath.sin(s.pitch), cy = dmath.cos(s.yaw), sy = dmath.sin(s.yaw);
   const dx = wx - s.x, dz = wz - s.z, x2 = dx * cy - dz * sy, z1 = dx * sy + dz * cy, y2 = wy - s.y;
   const x = x2 * cp + y2 * sp, y1 = -x2 * sp + y2 * cp;
   return [x, y1 * cr + z1 * sr, -y1 * sr + z1 * cr];
@@ -566,7 +567,7 @@ export function worldToSection(s: HullSection, wx: number, wy: number, wz: numbe
 export const BOW_CORE_X = 44;
 export function bowCoreStrips(): Array<{ c: V3; h: V3; yaw: number }> {
   const s = BOW, out: Array<{ c: V3; h: V3; yaw: number }> = [];
-  const ux = rot(s, [1, 0, 0]), hl = Math.hypot(ux[0], ux[2]), yaw = Math.atan2(ux[2], ux[0]), ex = [ux[0] / hl, ux[2] / hl], ez = [-ex[1], ex[0]];
+  const ux = rot(s, [1, 0, 0]), hl = dmath.hypot(ux[0], ux[2]), yaw = dmath.atan2(ux[2], ux[0]), ex = [ux[0] / hl, ux[2] / hl], ez = [-ex[1], ex[0]];
   const o = sectionToWorld(s, 0, 0, 0);
   for (let u = 0; u < BOW_CORE_X * hl; u += 1) {
     // the section x under this column (at the deck's height) and the hull width there
@@ -672,7 +673,7 @@ export function sternRoomBoxes(): Box[] { return roomBoxes(STERN, STERN_ROOMS); 
 export function roomBoxes(s: HullSection, rooms: InteriorRoom[]): Box[] {
   const out: Box[] = [];
   for (const r of rooms) for (const b of furnishRoom(r).colliders) {
-    const y = b.yaw ?? 0, c = Math.cos(y), sn = Math.sin(y);
+    const y = b.yaw ?? 0, c = dmath.cos(y), sn = dmath.sin(y);
     if (s.id === "stern" || Math.abs(y) > 1e-3) { const q = piece(s, b.c, [b.h[0] * c, 0, b.h[0] * sn], [0, b.h[1], 0], [-b.h[2] * sn, 0, b.h[2] * c], b.surf); if (b.noShoot) q.noShoot = true; out.push(q); continue; }
     out.push(...sectionPieceBoxes(s, { c: b.c, h: b.h, mat: "wood", surf: b.surf, noShoot: b.noShoot }));
   }
@@ -717,7 +718,7 @@ export const levelStairPiece = (s: HullSection, p: Piece) => s.id === "bow" && (
  *  the piece's horizontal projection (sim yaw convention: box +X = world (cos, 0, sin)) */
 export function levelBox(s: HullSection, p: Piece): Box {
   const t = sectionToWorld(s, p.c[0], p.c[1] + p.h[1], p.c[2]), ux = rot(s, [1, 0, 0]), uz = rot(s, [0, 0, 1]);
-  const b: Box = { c: [t[0], t[1] - p.h[1], t[2]], h: [p.h[0] * Math.hypot(ux[0], ux[2]), p.h[1], p.h[2] * Math.hypot(uz[0], uz[2])], yaw: Math.atan2(ux[2], ux[0]), surf: "metal" };
+  const b: Box = { c: [t[0], t[1] - p.h[1], t[2]], h: [p.h[0] * dmath.hypot(ux[0], ux[2]), p.h[1], p.h[2] * dmath.hypot(uz[0], uz[2])], yaw: dmath.atan2(ux[2], ux[0]), surf: "metal" };
   return b;
 }
 /** a section-local piece → yaw-only boxes, tiled so every tile's tilted faces stay within ~TOL (the pitch tilts along x,
@@ -725,10 +726,10 @@ export function levelBox(s: HullSection, p: Piece): Box {
 export function sectionPieceBoxes(s: HullSection, p: Piece): Box[] {
   if (levelStairPiece(s, p)) return [levelBox(s, p)];
   const out: Box[] = [], [cx, cy, cz] = p.c, [hx, hy, hz] = p.h;
-  const nx = Math.max(1, Math.ceil((2 * hx * Math.abs(Math.sin(s.pitch))) / (2 * TOL))), nz = Math.max(1, Math.ceil((2 * hz * Math.abs(Math.sin(s.roll))) / (2 * TOL)));
+  const nx = Math.max(1, Math.ceil((2 * hx * Math.abs(dmath.sin(s.pitch))) / (2 * TOL))), nz = Math.max(1, Math.ceil((2 * hz * Math.abs(dmath.sin(s.roll))) / (2 * TOL)));
   // TALL pieces (stair dividers, trunk plates, wall liners) are tiled up the height too — one yaw-only box round
   // a 17 m plate leaning 0.03–0.1 rad grows 0.3–0.9 m proud of it (enough to close the stern hold stair's far landing)
-  const ny = Math.min(12, Math.max(1, Math.ceil((2 * hy * Math.max(Math.abs(Math.sin(s.pitch)), Math.abs(Math.sin(s.roll)))) / (2 * TOL))));
+  const ny = Math.min(12, Math.max(1, Math.ceil((2 * hy * Math.max(Math.abs(dmath.sin(s.pitch)), Math.abs(dmath.sin(s.roll)))) / (2 * TOL))));
   for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) {
     const x = cx - hx + (2 * hx * (i + 0.5)) / nx, z = cz - hz + (2 * hz * (k + 0.5)) / nz, y = cy - hy + (2 * hy * (j + 0.5)) / ny;
     const b = piece(s, [x, y, z], [hx / nx, 0, 0], [0, hy / ny, 0], [0, 0, hz / nz], (p.surf ?? (p.mat === "wood" || p.mat === "desk" ? "wood" : "metal")) as Box["surf"]);
@@ -750,7 +751,7 @@ function piece(s: HullSection, c: V3, eu: V3, ev: V3, ew: V3, surf: Box["surf"] 
 /** world slope of the section's local x axis at local (x, y): how much a horizontal tile tilts there */
 function worldSlope(s: HullSection, x: number, y: (x: number) => number): number {
   const a = sectionToWorld(s, x, y(x), 0), b = sectionToWorld(s, x + 0.2, y(x + 0.2), 0);
-  return Math.abs(b[1] - a[1]) / Math.max(1e-3, Math.hypot(b[0] - a[0], b[2] - a[2]));
+  return Math.abs(b[1] - a[1]) / Math.max(1e-3, dmath.hypot(b[0] - a[0], b[2] - a[2]));
 }
 /** adaptive tile edges along local x over [a, b]: each tile keeps its tilted top within `tol` */
 function tileEdges(s: HullSection, a: number, b: number, y: (x: number) => number, tol: number, maxL = 4): number[] {
@@ -761,7 +762,7 @@ function tileEdges(s: HullSection, a: number, b: number, y: (x: number) => numbe
 }
 /** tiles across the beam over [z0, z1]: the roll tilts them */
 function acrossEdges(s: HullSection, z0: number, z1: number, tol: number): number[] {
-  const dz = Math.max(0.6, Math.min(6, (2 * tol) / Math.max(1e-3, Math.abs(Math.tan(s.roll))))), n = Math.max(1, Math.ceil((z1 - z0) / dz));
+  const dz = Math.max(0.6, Math.min(6, (2 * tol) / Math.max(1e-3, Math.abs(dmath.tan(s.roll))))), n = Math.max(1, Math.ceil((z1 - z0) / dz));
   return [...Array(n + 1)].map((_, i) => z0 + ((z1 - z0) * i) / n);
 }
 /** a horizontal-ish slab over local x [xa, xb] × z [za, zb] whose TOP follows y(x), thickness t */
@@ -806,14 +807,14 @@ function hullBoxes(s: HullSection): Box[] {
   const quadPlate = (A: V3, B: V3, C: V3, D: V3, t: number, inward: V3, row: ((y0: number, y1: number) => V3[]) | null, y0 = 0, y1 = 0) => {
     const eu: V3 = [0, 1, 2].map((k) => (B[k] + C[k] - A[k] - D[k]) / 4) as V3;
     const ev: V3 = [0, 1, 2].map((k) => (C[k] + D[k] - A[k] - B[k]) / 4) as V3;
-    if (Math.hypot(...eu) < 0.03 || Math.hypot(...ev) < 0.03) return;
+    if (dmath.hypot3(eu[0], eu[1], eu[2]) < 0.03 || dmath.hypot3(ev[0], ev[1], ev[2]) < 0.03) return;
     if (row && y1 - y0 > 0.2 && fitError(rot(s, ev), rot(s, eu)) > TOL) {
       const ym = (y0 + y1) / 2, lo = row(y0, ym), hi = row(ym, y1);
       quadPlate(lo[0], lo[1], lo[2], lo[3], t, inward, row, y0, ym); quadPlate(hi[0], hi[1], hi[2], hi[3], t, inward, row, ym, y1);
       return;
     }
     let n: V3 = [eu[1] * ev[2] - eu[2] * ev[1], eu[2] * ev[0] - eu[0] * ev[2], eu[0] * ev[1] - eu[1] * ev[0]];
-    const nl = Math.hypot(n[0], n[1], n[2]) || 1; n = [n[0] / nl, n[1] / nl, n[2] / nl];
+    const nl = dmath.hypot3(n[0], n[1], n[2]) || 1; n = [n[0] / nl, n[1] / nl, n[2] / nl];
     if (n[0] * inward[0] + n[1] * inward[1] + n[2] * inward[2] < 0) n = [-n[0], -n[1], -n[2]];
     const W = (p: V3) => sectionToWorld(s, p[0], p[1], p[2]) as V3;
     out.push(patchBox(W(A), W(B), W(C), W(D), rot(s, n), t, "metal"));
@@ -928,7 +929,7 @@ function hullBoxes(s: HullSection): Box[] {
       const xEnd = torn ? tornWallEnd(s, l, side) : Lv.x1, holes = houseHoles(s, l, side);
       // (the holes open into the rooms — no gutted-room back wall; the level-0 holes are the doorways in)
       // wall pieces are level boxes: on a pitched section their length must keep the sloping bottom/top edges in TOL
-      const wallCell = Math.max(0.6, Math.min(2, (4 * TOL) / Math.max(0.05, Math.abs(Math.sin(s.pitch)))));
+      const wallCell = Math.max(0.6, Math.min(2, (4 * TOL) / Math.max(0.05, Math.abs(dmath.sin(s.pitch)))));
       for (const [xa, xb] of cells(Lv.x0, xEnd, wallCell).flatMap(([a, b]): Array<[number, number]> => {
         let segs: Array<[number, number]> = [[a, b]];
         for (const hl of holes) segs = segs.flatMap(([p, q]) => (hl.x1 <= p || hl.x0 >= q ? [[p, q]] : [[p, Math.max(p, hl.x0)], [Math.min(q, hl.x1), q]]).filter(([u, v]) => v - u > 0.15) as Array<[number, number]>);
@@ -937,12 +938,12 @@ function hullBoxes(s: HullSection): Box[] {
         // sub-rows: the roll leans the wall across, the pitch along (the fit pads a leaning piece along its length —
         // at the house corners that padding would stand up to 0.43 m proud of the front wall)
         const endCell = xa - Lv.x0 < 0.05 || xEnd - xb < 0.05;
-        const sub = Math.max(1, Math.ceil((HOUSE_LH / 2) * Math.max(Math.abs(Math.sin(s.roll)), endCell ? Math.abs(Math.sin(s.pitch)) : 0) / TOL));
+        const sub = Math.max(1, Math.ceil((HOUSE_LH / 2) * Math.max(Math.abs(dmath.sin(s.roll)), endCell ? Math.abs(dmath.sin(s.pitch)) : 0) / TOL));
         for (let k = 0; k < sub; k++) { const ya = y0 + (HOUSE_LH * k) / sub, yb = y0 + (HOUSE_LH * (k + 1)) / sub; out.push(piece(s, [(xa + xb) / 2, (ya + yb) / 2, side * (hw - WT / 2)], [(xb - xa) / 2, 0, 0], [0, (yb - ya) / 2, 0], [0, 0, WT / 2])); }
       }
     }
     // end walls (front x0, the closed back wall at x1 or the torn rooms' back wall): lean with the pitch → sub-rows
-    const sub = Math.max(1, Math.ceil((HOUSE_LH / 2) * Math.abs(Math.sin(s.pitch)) / 0.1));
+    const sub = Math.max(1, Math.ceil((HOUSE_LH / 2) * Math.abs(dmath.sin(s.pitch)) / 0.1));
     const zn = Math.max(1, Math.ceil((2 * hw) / 2)), ze = [...Array(zn + 1)].map((_, i) => -hw + (2 * hw * i) / zn);
     for (const [xw, t] of [[Lv.x0 + WT / 2, WT], [xClosed - (torn ? 0.15 : WT / 2), torn ? 0.3 : WT]] as Array<[number, number]>) for (let k = 0; k < sub; k++) for (let j = 0; j < ze.length - 1; j++) {
       const ya = y0 + (HOUSE_LH * k) / sub, yb = y0 + (HOUSE_LH * (k + 1)) / sub;
@@ -978,7 +979,7 @@ function hullBoxes(s: HullSection): Box[] {
   // ---- funnel: stacked leaning pieces (rounded-rect casing ≈ a cross of two boxes), rake + taper like the mesh
   {
     const F = s.funnel, x = H.funnelX, fdk = dk(x), rake = 0.9 * (s.id === "bow" ? 1 : -1), r = Math.min(F.hx, F.hz) * (F.round ?? 0.62), tp = F.taper ?? 0.07;
-    const n = Math.max(2, Math.ceil(F.h / Math.max(0.8, Math.min(6, (2 * TOL) / Math.max(1e-3, Math.abs(Math.sin(s.pitch)) + 0.05, tp * Math.max(F.hx, F.hz) / F.h)))));
+    const n = Math.max(2, Math.ceil(F.h / Math.max(0.8, Math.min(6, (2 * TOL) / Math.max(1e-3, Math.abs(dmath.sin(s.pitch)) + 0.05, tp * Math.max(F.hx, F.hz) / F.h)))));
     for (let i = 0; i < n; i++) {
       const ya = -0.5 + ((F.h + 0.5) * i) / n, yb = -0.5 + ((F.h + 0.5) * (i + 1)) / n, yy = (ya + yb) / 2, k = 1 - tp * (yy / F.h);
       const c: V3 = [x + rake * (yy / F.h), fdk + yy, 0];
@@ -1030,7 +1031,7 @@ export const BREAK_DEBRIS: DebrisSlab[] = [
 /** a debris slab's section-local frame: centre + unit axes (along = down the slab from the hinge, up = its top normal,
  *  across) and half sizes */
 export function debrisFrame(d: DebrisSlab): { c: V3; A: [V3, V3, V3]; h: V3 } {
-  const ca = Math.cos(d.drop), sa = Math.sin(d.drop), cs = Math.cos(d.skew), ss = Math.sin(d.skew);
+  const ca = dmath.cos(d.drop), sa = dmath.sin(d.drop), cs = dmath.cos(d.skew), ss = dmath.sin(d.skew);
   const along: V3 = [ca * cs, -sa, ca * ss], up: V3 = [sa * cs, ca, sa * ss], across: V3 = [-ss, 0, cs];
   const c: V3 = [d.hinge[0] + along[0] * d.len / 2 - up[0] * d.t / 2, d.hinge[1] + along[1] * d.len / 2 - up[1] * d.t / 2, d.hinge[2] + along[2] * d.len / 2 - up[2] * d.t / 2];
   return { c, A: [along, up, across], h: [d.len / 2, d.t / 2, d.w / 2] };
@@ -1058,7 +1059,7 @@ function debrisBoxes(): Box[] {
  *  step top, and the width split into lanes */
 export function rampSteps(r: Ramp): Array<{ t0: number; t1: number; top: number; lane0: number; lane1: number }> {
   const [ax, ay, az] = r.a, [bx, by, bz] = r.b;
-  const len = Math.hypot(bx - ax, bz - az), n = Math.max(2, Math.ceil(Math.max(len / 0.7, (by - ay) / 0.26)));
+  const len = dmath.hypot(bx - ax, bz - az), n = Math.max(2, Math.ceil(Math.max(len / 0.7, (by - ay) / 0.26)));
   const lanes = 1;
   const out: Array<{ t0: number; t1: number; top: number; lane0: number; lane1: number }> = [];
   for (let i = 0; i < n; i++) for (let k = 0; k < lanes; k++) out.push({ t0: i / n, t1: (i + 1) / n, top: ay + (by - ay) * ((i + 1) / n), lane0: -r.w / 2 + (r.w * k) / lanes, lane1: -r.w / 2 + (r.w * (k + 1)) / lanes });
@@ -1067,8 +1068,8 @@ export function rampSteps(r: Ramp): Array<{ t0: number; t1: number; top: number;
 /** each step = ONE yawed box along the ramp heading (exact: the steps are level) */
 function rampBoxes(r: Ramp): Box[] {
   const [ax, , az] = r.a, [bx, , bz] = r.b;
-  const len = Math.hypot(bx - ax, bz - az), dx = (bx - ax) / len, dz = (bz - az) / len, px = -dz, pz = dx;
-  const yaw = Math.atan2(dz, dx);
+  const len = dmath.hypot(bx - ax, bz - az), dx = (bx - ax) / len, dz = (bz - az) / len, px = -dz, pz = dx;
+  const yaw = dmath.atan2(dz, dx);
   return rampSteps(r).map((st) => {
     const t = (st.t0 + st.t1) / 2, lm = (st.lane0 + st.lane1) / 2;
     return { c: [ax + (bx - ax) * t + px * lm, st.top - 0.6, az + (bz - az) * t + pz * lm], h: [(len * (st.t1 - st.t0)) / 2, 0.6, (st.lane1 - st.lane0) / 2], yaw, surf: "metal" } as Box;
@@ -1092,7 +1093,7 @@ function clipUnderRamps(boxes: Box[]): Box[] {
       //  cut to the treads right up to the top, the deck edge becomes the ramp's last tread)
       if (t < 0 || t > (r === RAMPS[1] ? 1.0 : 0.88)) continue;
       const px = ax + dx * t, pz = az + dz * t;
-      if (Math.hypot(cur.c[0] - px, cur.c[2] - pz) > r.w / 2 + 0.3) continue;
+      if (dmath.hypot(cur.c[0] - px, cur.c[2] - pz) > r.w / 2 + 0.3) continue;
       const rampY: number = ay + (by - ay) * t;
       // (only pieces that would poke THROUGH the walking surface: tiles flush with it — the deck at the ramp's top — stay)
       if (cur.c[1] + cur.h[1] > rampY + 0.12 && cur.c[1] - cur.h[1] < rampY + 2.4) {
@@ -1110,7 +1111,7 @@ function clipUnderRamps(boxes: Box[]): Box[] {
 /** the lookout (u along the facing direction, v to its right) as yawed boxes */
 function lookoutBox(u0: number, u1: number, v0: number, v1: number, y0: number, y1: number, surf: Box["surf"]): Box {
   const [x, z] = lookoutAt((u0 + u1) / 2, (v0 + v1) / 2);
-  return { c: [x, (y0 + y1) / 2, z], h: [(u1 - u0) / 2, (y1 - y0) / 2, (v1 - v0) / 2], yaw: Math.atan2(COMP.fz, COMP.fx), surf };
+  return { c: [x, (y0 + y1) / 2, z], h: [(u1 - u0) / 2, (y1 - y0) / 2, (v1 - v0) / 2], yaw: dmath.atan2(COMP.fz, COMP.fx), surf };
 }
 
 /** the wreck's colliders by part (the probe + debug views use the split; the sim gets `colliders`) */
@@ -1176,7 +1177,7 @@ function lootFits(bs: Box[], x: number, y: number, z: number): boolean {
   for (const b of bs) {
     if (b.c[1] + b.h[1] <= y + 0.03 || b.c[1] - b.h[1] >= y + 0.6) continue;
     let dx = x - b.c[0], dz = z - b.c[2];
-    if (b.yaw) { const c = Math.cos(b.yaw), s = Math.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
+    if (b.yaw) { const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
     const qx = Math.max(0, Math.abs(dx) - b.h[0]), qz = Math.max(0, Math.abs(dz) - b.h[2]);
     if (qx * qx + qz * qz < 0.36 * 0.36) return false;
   }
@@ -1195,7 +1196,7 @@ export const LOOT_SPOTS: { chests: Array<[number, number, number, number]>; floo
   for (const r of STERN_ROOMS) {
     const l = furnishRoom(r).loot, c = l.chests[0], f = l.floor[l.floor.length - 1];
     // (one chest per level: the aft rooms' kit slot — the dining room's slot sat against the liner foot, lifted 0.4 m)
-    if (c && /^stern-(house-\da|torn-2)$/.test(r.id ?? "")) { const p = sectionToWorld(STERN, c[0], c[1], c[2]), q = W2(p); if (q) { const a = sectionToWorld(STERN, c[0] + Math.sin(c[3]), c[1], c[2] + Math.cos(c[3])); chests.push([q[0], q[1], q[2], faceYaw(q[0], q[2], a[0], a[2])]); } }
+    if (c && /^stern-(house-\da|torn-2)$/.test(r.id ?? "")) { const p = sectionToWorld(STERN, c[0], c[1], c[2]), q = W2(p); if (q) { const a = sectionToWorld(STERN, c[0] + dmath.sin(c[3]), c[1], c[2] + dmath.cos(c[3])); chests.push([q[0], q[1], q[2], faceYaw(q[0], q[2], a[0], a[2])]); } }
     if (f) { const q = W2(sectionToWorld(STERN, f[0], f[1], f[2])); if (q) floor.push(q); }
   }
   // the bow house (pitched 23°): the kit's chest slot of one room per level + a floor slot per level, settled + cleared
@@ -1240,10 +1241,10 @@ export const LOOT_SPOTS: { chests: Array<[number, number, number, number]>; floo
   // or dropped (the bow house's sloped rooms put chests in the slope with nowhere to stand)
   const settle = <T extends number[]>(p: T): T | null => {
     for (const r of [0, 0.35, 0.7, 1.0, 1.2]) for (let k = 0, n = r === 0 ? 1 : 10; k < n; k++) {
-      const a = (k / n) * Math.PI * 2 + 0.3, x = p[0] + r * Math.cos(a), z = p[2] + r * Math.sin(a), bs = near(x, z), y = Math.max(floorUnder(bs, x, p[1] + 0.25, z), groundY(x, z));
+      const a = (k / n) * Math.PI * 2 + 0.3, x = p[0] + r * dmath.cos(a), z = p[2] + r * dmath.sin(a), bs = near(x, z), y = Math.max(floorUnder(bs, x, p[1] + 0.25, z), groundY(x, z));
       if (!(Math.abs(y - p[1]) < 0.45) || !lootFits(bs, x, y, z)) continue;
       let stand = false;
-      for (const d of [0.9, 1.3, 1.7]) { for (let j = 0; j < 12 && !stand; j++) { const b = (j / 12) * Math.PI * 2, sx = x + d * Math.cos(b), sz = z + d * Math.sin(b), sb = near(sx, sz), sy = Math.max(floorUnder(sb, sx, y + 0.5, sz), groundY(sx, sz)); if (Math.abs(sy - y) < 0.5 && capsuleClear(sb, sx, sy, sz, 0.45, 0.6)) stand = true; } if (stand) break; }
+      for (const d of [0.9, 1.3, 1.7]) { for (let j = 0; j < 12 && !stand; j++) { const b = (j / 12) * Math.PI * 2, sx = x + d * dmath.cos(b), sz = z + d * dmath.sin(b), sb = near(sx, sz), sy = Math.max(floorUnder(sb, sx, y + 0.5, sz), groundY(sx, sz)); if (Math.abs(sy - y) < 0.5 && capsuleClear(sb, sx, sy, sz, 0.45, 0.6)) stand = true; } if (stand) break; }
       if (stand) { const q = [...p] as T; q[0] = x; q[1] = y; q[2] = z; return q; }
     }
     return null;

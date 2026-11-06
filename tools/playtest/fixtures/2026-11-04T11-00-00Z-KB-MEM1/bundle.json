@@ -1,0 +1,89 @@
+{
+  "id": "KB-MEM1",
+  "message": "game gets slower the longer i play",
+  "receivedAt": "2026-11-04T11:00:00.000Z",
+  "reporter": {
+    "name": "LEAKYLEO"
+  },
+  "server": {
+    "sha": "b9840d6"
+  },
+  "ctx": {
+    "env": {
+      "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+      "dpr": 1,
+      "memoryGB": 4,
+      "cores": 8
+    },
+    "gpu": {
+      "renderer": "ANGLE (AMD, AMD Radeon RX 6600 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "level": "medium"
+    },
+    "video": {
+      "preset": "auto"
+    },
+    "perf": {
+      "heapMB": {
+        "used": 300,
+        "total": 600,
+        "limit": 4096
+      }
+    },
+    "boot": {
+      "readyAtMs": 9000
+    },
+    "game": {
+      "match": {
+        "phase": "play",
+        "time": 100
+      },
+      "player": {
+        "pos": [600, 10, 360],
+        "poi": {
+          "id": "peel-harbor",
+          "name": "peel-harbor",
+          "dist": 20,
+          "inside": true
+        }
+      }
+    },
+    "diag": {
+      "v": 1,
+      "sid": "sid-mem-1",
+      "longFrames": 0,
+      "events": [],
+      "path": {
+        "fields": ["t", "x", "y", "z", "yawDeg", "pitchDeg", "phase"],
+        "rows": []
+      },
+      "prev": null
+    }
+  },
+  "logs": [],
+  "trail": [],
+  "bundle": {
+    "mark": false,
+    "timeline": {
+      "fields": ["t", "fps", "p50Ms", "p95Ms", "maxMs", "over50", "over100", "gpuMs", "pingMs", "jitterMs", "heapMB", "textures", "geometries", "programs", "renderScale", "phase"],
+      "rows": [
+        [1, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 402, 120, 200, 40, 1, 2],
+        [2, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 404, 120, 200, 40, 1, 2],
+        [3, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 406, 120, 200, 40, 1, 2],
+        [4, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 408, 120, 200, 40, 1, 2],
+        [5, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 410, 120, 200, 40, 1, 2],
+        [6, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 412, 120, 200, 40, 1, 2],
+        [7, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 414, 120, 200, 40, 1, 2],
+        [8, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 416, 120, 200, 40, 1, 2],
+        [9, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 418, 120, 200, 40, 1, 2],
+        [10, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 420, 120, 200, 40, 1, 2],
+        [11, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 422, 120, 200, 40, 1, 2],
+        [12, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 424, 120, 200, 40, 1, 2]
+      ],
+      "dropped": 0
+    },
+    "flags": {
+      "perfhud": ""
+    },
+    "replay": null
+  }
+}

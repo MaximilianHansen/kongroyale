@@ -1131,6 +1131,7 @@ function aimBone(M: THREE.Matrix4, u: Vec, a: Vec) {
   M.copy(Bw.multiply(Bl.transpose())).setPosition(pos);
 }
 function applyHangPoseTo(a: KongAnimator) {
+  a.postPose = true;
   const W = a.world, idx = boneIndex;
   // 1) legs / spine / head: extra local rotations, children re-follow
   BONE_LIST.forEach((b, i) => { const p = par(b); HT.loc[i].copy(p ? W[idx(p)] : a.root).invert().multiply(W[i]); });

@@ -8,6 +8,7 @@ import { qf16 } from "../sim/hitscan";
 import { VKind, VS, qVPitch, qVRoll, specOf, vehPose, PITCH_VQ, ROLL_VQ, type Vehicle } from "../sim/vehicle";
 import { HELI } from "../sim/heli";
 import type { EconView } from "../sim/economy";
+import * as dmath from "../sim/dmath";
 
 export const enum M { Input = 1, Ping = 2, InvOp = 3, Snapshot = 16, Events = 17, Inventory = 18, Pong = 19,
   /** (caster) the full-information snapshot a commentator seat gets: every player, exact health, every vehicle */
@@ -229,7 +230,7 @@ const VPOSE = new Float64Array(6);
 const seatByte = (id: number) => (id < 0 ? 255 : id);
 export function writeVehicle(w: Writer, v: Vehicle) {
   vehPose(v, VPOSE);
-  const vf = -v.vx * Math.sin(v.yaw) - v.vz * Math.cos(v.yaw);
+  const vf = -v.vx * dmath.sin(v.yaw) - v.vz * dmath.cos(v.yaw);
   w.u8(v.id).i24(Math.round(VPOSE[0] * POS_Q)).i24(Math.round(VPOSE[1] * POS_Q)).i24(Math.round(VPOSE[2] * POS_Q))
     .u16(yawEnc(VPOSE[3])).i8(qVPitch(VPOSE[4])).i16(qVRoll(VPOSE[5]))
     .i16(Math.max(-32767, Math.min(32767, Math.round(vf * 256)))).i8(Math.max(-127, Math.min(127, Math.round(v.steer * 127))))

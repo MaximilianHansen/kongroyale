@@ -40,7 +40,9 @@ async function ensureServer() {
   if (await up()) return;
   fs.mkdirSync(path.join(root, "shots"), { recursive: true });
   const log = fs.openSync(path.join(root, "shots", "vite.log"), "a");
-  spawn(path.join(root, "node_modules/.bin/vite"), ["--host", "--port", String(PORT)], { cwd: root, detached: true, stdio: ["ignore", log, log] }).unref();
+  const args = ["--host", "--port", String(PORT)];
+  const [cmd, cmdArgs] = process.platform === "win32" ? [process.execPath, [path.join(root, "node_modules/vite/bin/vite.js"), ...args]] : [path.join(root, "node_modules/.bin/vite"), args];
+  spawn(cmd, cmdArgs, { cwd: root, detached: true, windowsHide: true, stdio: ["ignore", log, log] }).unref();
   for (let i = 0; i < 60; i++) { await new Promise((r) => setTimeout(r, 500)); if (await up()) return; }
   throw new Error(`dev server did not come up on ${PORT} (see shots/vite.log)`);
 }
@@ -88,7 +90,8 @@ fs.mkdirSync(outDir, { recursive: true });
 // graphics backend follows the platform (Vulkan on Linux, Metal on macOS, the default elsewhere)
 const slot = new URL("lib/chromium-slot.sh", import.meta.url).pathname;
 const angle = process.platform === "linux" ? ["--use-angle=vulkan", "--enable-features=Vulkan"] : process.platform === "darwin" ? ["--use-angle=metal"] : [];
-const browser = await chromium.launch({ executablePath: process.env.KR_CHROME || (fs.existsSync(slot) ? slot : undefined), timeout: 0,
+const executablePath = process.env.KR_CHROME || (fs.existsSync(slot) ? slot : undefined);
+const browser = await chromium.launch({ executablePath, channel: !executablePath && process.platform === "win32" ? "chrome" : undefined, timeout: 0,
   headless: true,
   args: [...angle, "--enable-gpu", "--ignore-gpu-blocklist", "--enable-gpu-rasterization", "--disable-gpu-driver-bug-workarounds", "--autoplay-policy=no-user-gesture-required"],
 });
@@ -113,7 +116,7 @@ for (const job of jobs) {
     await page.evaluate(() => document.querySelectorAll("vite-error-overlay").forEach((el) => el.remove())).catch(() => {});
     await page.screenshot({ path: file, type: "png" });
     res.file = path.relative(root, file);
-    if (flag("--bench")) res.bench = await page.evaluate(() => ({ ...window.__kr.bench(90), info: window.__kr.info(), buildMs: window.__kr.buildMs, terrainMs: window.__kr.terrainMs }));
+    if (flag("--bench")) res.bench = await page.evaluate(async () => ({ ...(await window.__kr.bench(90)), info: window.__kr.info(), buildMs: window.__kr.buildMs, terrainMs: window.__kr.terrainMs }));
     if (flag("--compare")) res.compare = path.relative(root, (await compare(job.view, file, path.join(outDir, "compare", `${job.view}.png`))) ?? "") || null;
     res.errors = (await page.evaluate(() => window.__kr.errors)).concat(consoleErrors);
   } catch (e) {

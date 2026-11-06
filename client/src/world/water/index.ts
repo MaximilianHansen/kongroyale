@@ -121,8 +121,9 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
     // the sky irradiance of the (atmos) environment for an up normal: measured once per environment, a uniform
     await brk("step");
     const skyIrr = new SkyIrradianceProbe();
-    const measureSky = () => { if (skyIrr.update(ctx.renderer, ctx.scene)) (uniforms.wtrSkyIrr.value as THREE.Color).copy(skyIrr.value); };
-    measureSky();
+    const measureSky = () => skyIrr.update(ctx.renderer, ctx.scene)?.then(() => { (uniforms.wtrSkyIrr.value as THREE.Color).copy(skyIrr.value); }, (e) => console.warn("[water] sky probe failed, retrying", e));
+    const releaseSky = ctx.hold("water:sky");
+    void Promise.resolve(measureSky()).finally(releaseSky);
     await brk("step");
     // the foam stack inside the main pass: ONE blended colour pass for the whole surface (dual-source), measured cheaper
     // than its own early-discard pass (A/B: eye level −0.15 ms, aerial −0.08). ?wfoampass = the separate pass
@@ -265,7 +266,7 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       const c = ctx.camera.position;
       for (const m of [preMesh, mulMesh, mesh, meshMid, foamMesh, meshFar, foamMeshFar]) m.position.set(Math.round(c.x / SNAP) * SNAP, LEVEL, Math.round(c.z / SNAP) * SNAP);
       grab.poll(ctx.renderer);
-      if (frame % 30 === 0) measureSky();            // (re-measures only when atmos swapped its environment)
+      if (frame % 30 === 0) void measureSky();            // (re-measures only when atmos swapped its environment)
       if (grab.visible) lastSeen = frame;
       // nothing of the water survived the depth test for a few frames (jungle, interiors): sleep
       const awake = frame - lastSeen < 12 || under.active;
@@ -363,9 +364,9 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
         const s = Math.min(1, Math.max(0, (d + 0.2) / 12.2));
         return LEVEL + liftAt(x, z) * 0.5 + swellHeight(x, z, t, (uniforms.wtrWaveAmp.value as number) * (0.05 + 0.95 * s * s * (3 - 2 * s)));
       },
-      registerFoamCircle: (x, z, r, s) => mask.circle(x, z, r, s),
-      registerFoamCapsule: (x1, z1, x2, z2, r, s) => mask.capsule(x1, z1, x2, z2, r, s),
-      registerFoamRect: (x, z, hx, hz, yaw, ring, s) => mask.rect(x, z, hx, hz, yaw, ring, s),
+      registerFoamCircle: (x, z, r, s) => { if (!ctx.rebuilding) mask.circle(x, z, r, s); },
+      registerFoamCapsule: (x1, z1, x2, z2, r, s) => { if (!ctx.rebuilding) mask.capsule(x1, z1, x2, z2, r, s); },
+      registerFoamRect: (x, z, hx, hz, yaw, ring, s) => { if (!ctx.rebuilding) mask.rect(x, z, hx, hz, yaw, ring, s); },
       clearFoam: () => mask.clear(),
       rebakeObstacles: () => obstacles.bake(),
       isUnderwater: () => under.active,
@@ -469,7 +470,13 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
     const ob = (mod as unknown as { _obstacles?: ObstacleBake })._obstacles;
     const T: Record<string, number> = {}, tt = () => performance.now();
     let t = tt();
-    if (ob && ob.bakes === 0) await ob.warm(() => ctx.afterPaint());
+    // (KHR_parallel_shader_compile: a synchronous draw that first uses a program waits for every compile queued ahead of
+    // it — on Safari's cold Metal cache, seconds. The override bake waits, polling, until the queue has drained.)
+    // (polled once a frame — afterPaint keeps ticking in an occluded Safari window; a lost context's programs never finish)
+    const r = ctx.renderer;
+    const idle = async () => { while (!r.getContext().isContextLost() && !((r.info.programs ?? []) as unknown as Array<{ isReady(): boolean }>).every((p) => p.isReady())) await ctx.afterPaint(); };
+    if (ob) await idle();
+    if (ob && ob.bakes === 0) await ob.warm(async () => { await ctx.afterPaint(); await idle(); });
     T.warm = tt() - t; t = tt();
     ob?.maybeBake(true);
     T.bake = tt() - t;
