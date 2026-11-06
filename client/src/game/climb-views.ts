@@ -2,9 +2,12 @@
 // the static world's climb list (the same list the sim climbs): Kong Royale-style bamboo ladders lashed with rope
 // (stilt huts, the Murk, Coconut Cove), rope pilot ladders with wooden treads hooked over the wreck's deck edge, and on
 // the climbable giant trees a rope ladder pinned up the trunk with rope wraps + carved notches, under a plank perch
-// (shared/pois/climb-trees.ts). Everything merges into ONE vertex-coloured mesh (one draw call, no textures).
+// (shared/pois/climb-trees.ts). Everything merges into one vertex-coloured mesh per ~200 m cell (no textures). The
+// geometry and the material are built once per page (the climb list never changes) and every match's ClimbViews shares
+// them: a match only adds and removes the meshes.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { resources } from "../engine/res/scope";
 import type { Climb } from "../../../shared/sim/climb";
 import { LADDERS, LANDINGS, type Landing } from "../../../shared/pois/ladders";
 import { perchFor, type PerchDef } from "../../../shared/pois/climb-trees";
@@ -127,31 +130,58 @@ function landingDeck(l: Landing, out: THREE.BufferGeometry[]) {
   }
 }
 
+// The merged cells depend only on the static world's climb list (the same array every match) and cost ~80 ms of main
+// thread to build, so they are built once per page: in the title's prefab warm-up (prewarmClimbs), else by the first
+// match. resources.root owns them and the material, so a match's teardown never frees them.
+const CELLS = new WeakMap<Climb[], THREE.BufferGeometry[]>();
+let MAT: THREE.MeshStandardMaterial | null = null;
+const climbMaterial = () => (MAT ??= resources.root.material(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0 })));
+function climbCells(climbs: Climb[]): THREE.BufferGeometry[] {
+  let geos = CELLS.get(climbs);
+  if (!geos) { geos = buildCells(climbs).map((g) => resources.root.geometry("geo.world", g)); CELLS.set(climbs, geos); }
+  return geos;
+}
+/** build the ladders ahead of the first match; returns a mesh of the smallest cell for the prewarm's offscreen draw
+ *  (it compiles the shared material; the cells upload when a match first draws them) */
+export function prewarmClimbs(climbs: Climb[]): THREE.Mesh | null {
+  const geos = climbCells(climbs);
+  if (!geos.length) return null;
+  const small = geos.reduce((a, g) => (g.attributes.position.count < a.attributes.position.count ? g : a));
+  return new THREE.Mesh(small, climbMaterial());
+}
+function buildCells(climbs: Climb[]): THREE.BufferGeometry[] {
+  const out: THREE.BufferGeometry[] = [];
+  const style = new Map<string, string>();
+  for (const l of LADDERS) style.set(`${l.c.x.toFixed(2)},${l.c.z.toFixed(2)},${l.c.y1.toFixed(2)}`, l.style);
+  const cells = new Map<string, THREE.BufferGeometry[]>();
+  for (const c of climbs) {
+    const key = `${Math.floor(c.x / 200)},${Math.floor(c.z / 200)}`;
+    let parts = cells.get(key); if (!parts) cells.set(key, parts = []);
+    if (c.kind === 1) { treeLadder(c, perchFor(c), parts); continue; }
+    if (style.get(`${c.x.toFixed(2)},${c.z.toFixed(2)},${c.y1.toFixed(2)}`) === "pilot") pilotLadder(c, parts); else bambooLadder(c, parts);
+  }
+  for (const l of LANDINGS) {
+    const key = `${Math.floor(l.x / 200)},${Math.floor(l.z / 200)}`;
+    let parts = cells.get(key); if (!parts) cells.set(key, parts = []);
+    landingDeck(l, parts);
+  }
+  for (const parts of cells.values()) {
+    if (parts.length === 0) continue;
+    const g = mergeGeometries(parts, false)!;
+    for (const p of parts) p.dispose();
+    g.computeBoundingSphere(); g.computeBoundingBox();
+    out.push(g);
+  }
+  return out;
+}
+
 export class ClimbViews {
   /** one merged mesh per ~200 m cell (frustum + distance culled), all sharing one vertex-coloured material */
   readonly meshes: THREE.Mesh[] = [];
-  private readonly mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0 });
   constructor(scene: THREE.Scene, private readonly climbs: Climb[]) {
-    const style = new Map<string, string>();
-    for (const l of LADDERS) style.set(`${l.c.x.toFixed(2)},${l.c.z.toFixed(2)},${l.c.y1.toFixed(2)}`, l.style);
-    const cells = new Map<string, THREE.BufferGeometry[]>();
-    for (const c of climbs) {
-      const key = `${Math.floor(c.x / 200)},${Math.floor(c.z / 200)}`;
-      let parts = cells.get(key); if (!parts) cells.set(key, parts = []);
-      if (c.kind === 1) { treeLadder(c, perchFor(c), parts); continue; }
-      if (style.get(`${c.x.toFixed(2)},${c.z.toFixed(2)},${c.y1.toFixed(2)}`) === "pilot") pilotLadder(c, parts); else bambooLadder(c, parts);
-    }
-    for (const l of LANDINGS) {
-      const key = `${Math.floor(l.x / 200)},${Math.floor(l.z / 200)}`;
-      let parts = cells.get(key); if (!parts) cells.set(key, parts = []);
-      landingDeck(l, parts);
-    }
-    for (const parts of cells.values()) {
-      if (parts.length === 0) continue;
-      const g = mergeGeometries(parts, false)!;
-      for (const p of parts) p.dispose();
-      g.computeBoundingSphere(); g.computeBoundingBox();
-      const m = new THREE.Mesh(g, this.mat);
+    const mat = climbMaterial();
+    for (const g of climbCells(climbs)) {
+      const m = new THREE.Mesh(g, mat);
       m.name = "climbs"; m.castShadow = true; m.receiveShadow = true;
       scene.add(m); this.meshes.push(m);
     }
@@ -176,5 +206,6 @@ export class ClimbViews {
     for (const c of this.climbs) { if (y < c.y0 - 2 || y > c.y1 + 1) continue; const d = Math.hypot(x - (c.x + c.nx * c.off), z - (c.z + c.nz * c.off)); if (d < bd) { bd = d; best = c; } }
     return best;
   }
-  dispose() { for (const m of this.meshes) { m.removeFromParent(); m.geometry.dispose(); } this.mat.dispose(); }
+  /** the meshes leave the scene; the geometry and the material stay for the next match (resources.root owns them) */
+  dispose() { for (const m of this.meshes) m.removeFromParent(); this.meshes.length = 0; }
 }

@@ -50,6 +50,10 @@ import { GameRender, patchTree, renderPrefabs, type Kits } from "./render";
 import { OfflineLink, connectWs, type Link } from "./net";
 import { createFallbackFx } from "./fx-fallback";
 import { createLightBalancer } from "./lights";
+import { prewarmClimbs } from "./climb-views";
+import { prewarmCrateWall } from "./cover";
+import { prewarmHull, prewarmHulls } from "./highlight";
+import type { Climb } from "../../../shared/sim/climb";
 import { createTitleScene, type TitleScene } from "./title";
 import { createGpuWarmer } from "./warm";
 import { createBlimp } from "./blimp";
@@ -816,7 +820,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     while (!kr.ready) await new Promise((r) => setTimeout(r, 100));
     if (!kits.viewModel) { const t = performance.now(); const vm = await weapons.createViewModel(); vm.object.visible = false; engine.camera.add(vm.object); kits.viewModel = vm; kr.viewModelMs = Math.round(performance.now() - t); }
     const lootRoot = await weapons.prepareLoot(() => new Promise<void>((r) => (kr.prepareUrgent ? setTimeout(r, 0) : requestAnimationFrame(() => setTimeout(r, 0)))));
-    await prewarmPrefabs(engine, kits, () => inMatch, lootRoot); await prewarmMatch(engine, kits, title, () => inMatch); kr.warmDone = true; })(); }
+    await prewarmPrefabs(engine, kits, () => inMatch, lootRoot, world.climbs); await prewarmMatch(engine, kits, title, () => inMatch); kr.warmDone = true; })(); }
 
   // the loot generator's spots (shared/sim/loot-spots.ts, ~1.5-2 s of probes on the static world) are
   // built in ≤ 6 ms idle slices once the title is ready, so an offline PRACTICE never waits for them (the host's Match
@@ -864,10 +868,11 @@ function gameStage(name: string, p: number) {
 const DEFER_PREFABS = flag("prewarm") !== "full";
 
 /** after the title is ready: make every spawnable prefab (chests of every rarity, opened; every weapon × rarity as loot
- * and held; consumables; ammo; glider; render prefabs) one at a time, then compile them in parallel and draw them ONCE
- * into an offscreen target on a private layer (never on screen, no shadows): programs, first use, textures, buffers.
- * Stops as soon as a match starts (the match then makes what it needs on demand). Nothing is disposed. */
-async function prewarmPrefabs(engine: Engine, kits: Kits, isBusy: () => boolean, lootRoot: THREE.Object3D) {
+ * and held; consumables; ammo; glider; render prefabs; the ladders and the crate wall every match shares) one at a
+ * time, then compile them in parallel and draw them ONCE into an offscreen target on a private layer (never on screen,
+ * no shadows): programs, first use, textures, buffers. Stops as soon as a match starts (the match then makes what it
+ * needs on demand). Nothing is disposed. */
+async function prewarmPrefabs(engine: Engine, kits: Kits, isBusy: () => boolean, lootRoot: THREE.Object3D, climbs: Climb[]) {
   const t0 = performance.now();
   const kr = (window as unknown as { __kr: Record<string, unknown> }).__kr;
   kr.prefabWarm = "make";
@@ -883,8 +888,12 @@ async function prewarmPrefabs(engine: Engine, kits: Kits, isBusy: () => boolean,
   const put = (o: THREE.Object3D) => { o.position.set((n % 8) * 1.4 - 5, Math.floor(n / 8) * 1.4 - 4, 0); n++; g.add(o); };
   const chests: Array<{ open(): void; object: THREE.Object3D; update?(dt: number, t: number): void }> = [];
   const makers: Array<() => Promise<unknown>> = [];
-  for (const r of RARITIES) makers.push(() => kits.weapons.createChest(r).then((v) => { put(v.object); chests.push(v as typeof chests[number]); }));
-  for (const w of WEAPONS) for (const r of RARITIES) { makers.push(() => kits.weapons.createLoot(w, r).then((v) => put(v.object))); makers.push(() => kits.weapons.createHeldWeapon(w, r).then((o) => put(o))); }
+  // (the chests' and floor guns' outline hulls are queued too: welded one per idle callback here, not on a match frame)
+  for (const r of RARITIES) makers.push(() => kits.weapons.createChest(r).then((v) => { put(v.object); chests.push(v as typeof chests[number]); prewarmHull((v as { hull?: THREE.BufferGeometry }).hull); }));
+  for (const w of WEAPONS) for (const r of RARITIES) { makers.push(() => kits.weapons.createLoot(w, r).then((v) => { put(v.object); prewarmHulls(v.object); })); makers.push(() => kits.weapons.createHeldWeapon(w, r).then((o) => put(o))); }
+  // every match's ladders and crate wall: built once here and shared by every match (each was ~80 ms of its start)
+  makers.push(async () => { const m = prewarmClimbs(climbs); if (m) put(m); });
+  makers.push(async () => prewarmCrateWall());
   for (const c of CONSUMABLES) makers.push(() => kits.weapons.createLoot(c, "rare").then((v) => put(v.object)));
   makers.push(() => kits.weapons.createLoot("ammo", "common").then((v) => put(v.object)));
   makers.push(() => kits.createGlider(engine).then((gl) => put(gl.object)));

@@ -45,7 +45,7 @@ import { PG, glassAim } from "../../../shared/sim/glass";
 import { MarkerBeams, type MarkerSpec } from "./markers";
 import { SQUAD_COLOURS } from "../ui/minimap";
 import { SpectateTracker } from "./spectate";
-import { FRAME_GEO, InteractHighlight, hullReady, meshParts, prewarmHull, type HlPart } from "./highlight";
+import { FRAME_GEO, InteractHighlight, hullsReady, meshParts, prewarmHull, prewarmHulls, type HlPart } from "./highlight";
 import { AccoladeTracker, BIG } from "./accolades";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { createTukTuk, tukDebris, type TukDraw, type TukView, tukPrefabs } from "../actors/tuktuk";
@@ -861,16 +861,16 @@ export class GameRender implements EventSink {
       case HL.Chest: {
         const v = this.chestViews.get(id) as (ChestView & { hull?: THREE.BufferGeometry }) | undefined;
         if (!v?.hull || !v.object.visible) return 0;
-        v.object.updateWorldMatrix(true, false); out[0].geometry = v.hull; out[0].matrix.copy(v.object.matrixWorld); return 1;
+        v.object.updateWorldMatrix(true, false); out[0].geometry = v.hull; out[0].matrix.copy(v.object.matrixWorld);
+        return hullsReady(out, 1) ? 1 : 0;
       }
       case HL.Box: { const c = this.cm.chests[id]; if (!c) return 0; out[0].geometry = boxHull(); out[0].matrix.makeRotationY(c.yaw).setPosition(c.x, c.y, c.z); return 1; }
-      case HL.Item: { const v = this.lootViews.get(id) as (LootView & { holder?: THREE.Object3D }) | undefined; return v ? meshParts(v.holder ?? v.object, out) : 0; }
+      // (no hull is welded on the frame you look: a part whose hull is not ready yet is asked for and the outline waits)
+      case HL.Item: { const v = this.lootViews.get(id) as (LootView & { holder?: THREE.Object3D }) | undefined; if (!v) return 0; const n = meshParts(v.holder ?? v.object, out); return hullsReady(out, n) ? n : 0; }
       case HL.Tuk: {
         const v = this.tuks.get(id); if (!v || !v.object.visible) return 0;
         const n = meshParts(v.object, out);
-        // a helicopter's GLB is many big meshes: weld their hulls in idle slices, outline it once they are ready
-        if (v.kind === VKind.Heli) { let ready = true; for (let j = 0; j < n; j++) if (!hullReady(out[j].geometry)) { prewarmHull(out[j].geometry); ready = false; } if (!ready) return 0; }
-        return n;
+        return hullsReady(out, n) ? n : 0;
       }
       case HL.Glass: {
         // the pane's face on the camera's side: the unit quad's x → along the pane, y → up, its normal → the pane normal
@@ -1754,7 +1754,9 @@ export class GameRender implements EventSink {
         continue;
       }
       if (v && v.kind !== vr.kind) { v.dispose(); this.tuks.delete(vr.id); v = undefined; }
-      if (!v) { v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.tuks.set(vr.id, v); }
+      // (a tuk-tuk's outline hulls are welded in idle time from here; a helicopter's GLB is many big meshes, welded only
+      // once someone aims at one)
+      if (!v) { v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); if (!heli) prewarmHulls(v.object); this.tuks.set(vr.id, v); }
       if (!A) { A = { horn: -1e9, on: { I: "", D: "", S: "", F: "", H: "", G: "", O: "", B: "" }, fuseAt: -1, sunkAt: -1, exh: 0, smk: 0, fire: 0, dust: 0, lx: D0, ly: 0, lz: 0, seen: false, lastVf: 0, popAt: 0, radio: -1, radioSt: -1, pilot: false, vy: 0, gunLock: false, gunSt: vr.gunSpin > 0 ? 1 : 0, gunRef: vr.gunSpin }; this.tukAudio.set(vr.id, A); }
       v.object.visible = true;
       if (vr.st === VS.Sunk) { if (A.sunkAt < 0) A.sunkAt = now; } else A.sunkAt = -1;
@@ -2314,6 +2316,7 @@ export class GameRender implements EventSink {
         this.lootPending.delete(it.id);
         if (this.disposed || it.taken || !this.cm.items.has(it.id)) { v.dispose(); return; }
         v.object.position.set(it.x, it.y, it.z); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.lootViews.set(it.id, v);
+        prewarmHulls(v.object);
         if (it.bornAt > 0 && this.cm.time - it.bornAt < 1.2) this.startDrop(v, it);
         else this.growIn(v.object, LOOT_DRAW_R);
       });
