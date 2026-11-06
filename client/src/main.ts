@@ -113,6 +113,8 @@ engine.renderer.debug.onShaderError = (gl, program, vs, fs) => {
 kr.bench = (n?: number) => engine.bench(n);
 kr.fps = () => engine.liveFps();
 kr.info = () => ({ ...engine.renderer.info.render, geometries: engine.renderer.info.memory.geometries, textures: engine.renderer.info.memory.textures, programs: engine.renderer.info.programs?.length });
+// AGENT LINK (dev server only): a coding agent can read and change this tab's live state (tools/agent-bridge.ts)
+if (import.meta.env.DEV && !shot) { kr.THREE = THREE; void import("./dev/agent-link").then((m) => m.startAgentLink(kr), (e) => report("agent-link", e)); }
 // bug reports: `/` → /kongbot <message> (screenshot + context → the server)
 if (gameMode && !shot) installKongbot(engine);
 
