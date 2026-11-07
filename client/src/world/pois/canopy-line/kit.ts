@@ -56,7 +56,7 @@ function labelTexture(): THREE.CanvasTexture {
 
 export async function canopyMats(renderer: THREE.WebGLRenderer, ctx?: WorldCtx): Promise<CanopyMats> {
   if (cached) return cached;
-  await preloadTownTex(renderer);
+  await preloadTownTex(renderer, ctx && (() => ctx.yield()));
   const town = townMats(renderer);
   // giant-tree bark: the island's jungle bark (veg), vertex-tinted (moss foot, AO under decks), metre UVs (1.6 m tile)
   const barkMap = vegTex("bark-jungle", { repeat: true }), barkN = vegTex("bark-jungle-n", { data: true, repeat: true });

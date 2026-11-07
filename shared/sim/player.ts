@@ -3,6 +3,7 @@
 import { CONSUMABLES, WEAPONS, type ConsumableId, type Rarity, type WeaponId } from "../world/map";
 import { AMMO_CAP, CONSUMABLE_DEFS, CROUCH_H, DT, HISTORY_TICKS, MAX_HP, PLAYER_H, RARITY_MUL, SWAP_S, UW_H, UW_EYE, SWIM_EYE, WEAPON_DEFS, WEAPON_SLOTS, qpos, type AmmoType } from "./const";
 import { SEAT_EYE } from "./vehicle";
+import * as dmath from "./dmath";
 
 export const enum PS { Ground = 0, Freefall = 1, Glide = 2, Dead = 3, Plane = 4, Spectate = 5, /** riding a zipline (shared/sim/zipline.ts) */ Zip = 6,
   /** pulling up onto a ledge (mantle): mvY = the ledge top, mvT = elapsed, (vx, vz) = the direction × MANTLE_FWD */ Mantle = 7,
@@ -168,7 +169,7 @@ export function spreadOffset(seedPlayer: number, shot: number, k: number, spread
   let h = (seedPlayer * 73856093) ^ (shot * 19349663) ^ (k * 83492791); h = Math.imul(h ^ (h >>> 13), 0x5bd1e995); h ^= h >>> 15;
   const a = ((h & 0xffff) / 65536) * Math.PI * 2;
   const r = Math.sqrt(((h >>> 16) & 0xffff) / 65536) * spreadDeg * (Math.PI / 180);
-  out[0] = Math.cos(a) * r; out[1] = Math.sin(a) * r;
+  out[0] = dmath.cos(a) * r; out[1] = dmath.sin(a) * r;
 }
 
 /** bloom bookkeeping for the shot fired last tick (called at the top of the next step, so the server's resolveShot and
@@ -191,7 +192,7 @@ export function currentSpread(p: Player, w: { spread: [number, number, number]; 
   // (a tuk-tuk's bench is never a steady platform: a rider always shoots with the moving spread, parked or flat out —
   //  which also keeps the server and the rider's prediction on the same number whatever the tuk-tuk's speed was)
   const ride = p.st === PS.Ride;
-  const air = (p.st !== PS.Ground && !ride) || !p.grounded, moving = !air && (ride || Math.hypot(p.vx, p.vz) > 1);
+  const air = (p.st !== PS.Ground && !ride) || !p.grounded, moving = !air && (ride || dmath.hypot(p.vx, p.vz) > 1);
   // first-shot accuracy: planted feet + a pause → the shot goes exactly where the crosshair is
   if (w.fsa > 0 && !air && !moving && p.shotAgo >= w.fsa) return 0;
   let s = air ? w.spread[2] : moving ? w.spread[1] : w.spread[0];

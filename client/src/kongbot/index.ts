@@ -96,7 +96,7 @@ export function installKongbot(engine: Engine) {
       const body = {
         v: 1, message, reporter: { name: kr().game?.lobby?.name ?? null, clientId, sessionId },
         ctx, logs: logSnapshot(), trail: trail.filter((t) => t[0] <= openedAt), shot: shot?.dataUrl ?? null, shotSize: shot ? [shot.w, shot.h] : null,
-        sentAt: new Date().toISOString(),
+        sentAt: new Date().toISOString(), bundle: (kr() as { playtestBundle?: () => unknown }).playtestBundle?.(),
       };
       // (a server that never answers: give up after 15 s and say so — Enter retries)
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(new Error("no answer from the server")), 15_000);
@@ -137,5 +137,5 @@ export function installKongbot(engine: Engine) {
     if (e.code === "Slash" || e.key === "/" || (e.key === "Enter" && inMatch && t?.tagName !== "BUTTON")) { e.preventDefault(); e.stopImmediatePropagation(); open(); }
   }, true);
 
-  (kr() as Record<string, unknown>).kongbot = { open, close, context: () => gatherContext(engine), screenshot: () => grabScreenshot(engine) };
+  (kr() as Record<string, unknown>).kongbot = { open, close, mark: (m: string) => { if (!bar.hidden || sending) return false; open(); input.value = "/kongbot " + m; void submit(); return true; }, context: () => gatherContext(engine), screenshot: () => grabScreenshot(engine) };
 }

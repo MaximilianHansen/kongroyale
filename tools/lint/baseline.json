@@ -15,6 +15,7 @@
       "const fs = await import(/* @vite-ignore */ [\"node\", \"fs\"].join(\":\")) as { readFileSync(p: URL): Uint8Array };"
     ]
   },
+  "shared-math": {},
   "hot-alloc": {
     "shared/net/host.ts": [
       "const summary = JSON.stringify([state.outcomeTime, state.placement, state.totalSquads, state.kills, state.damage, state.winner, state.squadOut]);"
@@ -177,14 +178,6 @@
     ],
     "client/src/actors/paint.ts": [
       "const t = new THREE.CanvasTexture(el);"
-    ],
-    "client/src/actors/plane.ts": [
-      "const map = new THREE.CanvasTexture(this.cc); map.colorSpace = THREE.SRGBColorSpace;",
-      "const normal = new THREE.CanvasTexture(heightToNormal(this.hc, normalStrength)); normal.colorSpace = THREE.NoColorSpace;",
-      "const rough = new THREE.CanvasTexture(this.rc); rough.colorSpace = THREE.NoColorSpace;",
-      "const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;",
-      "const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;",
-      "const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;"
     ],
     "client/src/actors/tp-hamlet-tex.ts": [
       "const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);",
@@ -408,9 +401,6 @@
       "const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 2); t.anisotropy = 4; return t;",
       "const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1 / 0.6, 1 / 0.6); t.anisotropy = 4; return t;",
       "const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;"
-    ],
-    "client/src/world/pois/lobby-islet/atlas.ts": [
-      "ktx2 ??= new KTX2Loader().setTranscoderPath(assetUrl(\"assets/actors/basis/\")).setWorkerLimit(4).detectSupport(renderer);"
     ],
     "client/src/world/pois/lobby-islet/paint.ts": [
       "const t = new THREE.CanvasTexture(c);"

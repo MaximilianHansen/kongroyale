@@ -6,6 +6,7 @@
 // light patch.
 import * as THREE from "three";
 import type { WorldCtx } from "../../../engine/engine";
+import { shareTexture } from "../../../engine/texture-release";
 import { GeoBin, M, col, cylGeo, tubeGeo, catenary, chamferBoxGeo } from "../_kit/town-geo";
 import type { TownBins, BinName } from "../_kit/town-materials";
 import { addBarrel } from "../_kit/town-props";
@@ -22,7 +23,7 @@ export function timberMats(ctx: WorldCtx): TimberMats {
   const plankMat = (name: string, set: "deck" | "wall", tile: number, color: [number, number, number]) => {
     const m = new THREE.MeshStandardMaterial({ name, vertexColors: true, roughness: 1, color: new THREE.Color(...color) });
     Promise.all([ctx.assets.texture(`assets/pois/caves/tex/${set}-d.webp`), ctx.assets.texture(`assets/pois/caves/tex/${set}-n.webp`, { srgb: false }), ctx.assets.texture(`assets/pois/caves/tex/${set}-arm.webp`, { srgb: false })]).then(([d, n, arm]) => {
-      const rep = (t: THREE.Texture) => { const c = t.clone(); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(1 / tile, 1 / tile); c.needsUpdate = true; return c; };
+      const rep = (t: THREE.Texture) => { const c = shareTexture(t); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(1 / tile, 1 / tile); return c; };
       m.map = rep(d); m.normalMap = rep(n); m.roughnessMap = rep(arm); m.aoMap = null; m.needsUpdate = true;
     }).catch(() => {});
     return m;

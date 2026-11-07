@@ -4,6 +4,7 @@ dist-admin/
 shots/
 reports/
 .kongbot/
+playtest-bundles/
 refs
 
 .env

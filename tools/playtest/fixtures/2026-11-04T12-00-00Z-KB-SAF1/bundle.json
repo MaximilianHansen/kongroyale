@@ -1,0 +1,73 @@
+{
+  "id": "KB-SAF1",
+  "message": "crash: my tab died near the temple",
+  "receivedAt": "2026-11-04T12:00:00.000Z",
+  "reporter": {
+    "name": "SAFARIKONG"
+  },
+  "server": {
+    "sha": "b9840d6"
+  },
+  "ctx": {
+    "env": {
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+      "dpr": 2,
+      "memoryGB": 8,
+      "cores": 8
+    },
+    "gpu": {
+      "renderer": "Apple GPU",
+      "level": "high"
+    },
+    "video": {
+      "preset": "auto"
+    },
+    "perf": {
+      "heapMB": {
+        "used": 300,
+        "total": 600,
+        "limit": 4096
+      }
+    },
+    "boot": {
+      "readyAtMs": 9000
+    },
+    "game": null,
+    "diag": {
+      "v": 1,
+      "sid": "sid-safari-1",
+      "longFrames": 0,
+      "events": [],
+      "path": {
+        "fields": ["t", "x", "y", "z", "yawDeg", "pitchDeg", "phase"],
+        "rows": []
+      },
+      "prev": {
+        "sid": "sid-safari-0",
+        "sha": "b9840d6",
+        "at": "2026-11-04T11:50:00.000Z",
+        "upS": 600,
+        "phase": 2,
+        "poi": "banana-temple",
+        "x": -42,
+        "z": -128,
+        "heapMB": 1500,
+        "textures": 300,
+        "geometries": 400,
+        "fps": 20,
+        "hidden": false,
+        "clean": false
+      }
+    }
+  },
+  "logs": [],
+  "trail": [],
+  "bundle": {
+    "mark": false,
+    "timeline": null,
+    "flags": {
+      "perfhud": ""
+    },
+    "replay": null
+  }
+}
