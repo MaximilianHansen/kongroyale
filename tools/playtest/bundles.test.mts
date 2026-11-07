@@ -43,6 +43,44 @@ const hostile: Array<[string, unknown]> = [
   ["replay opts with a long string", { ...good, replay: { ...good.replay, opts: { mode: "s".repeat(41) } } }],
 ];
 for (const [name, v] of hostile) assert.equal(parseBundle(v).ok, false, `hostile bundle accepted: ${name}`);
+
+const diag = {
+  v: 1, sid: "a1b2c3d4e5f6", longFrames: "long-animation-frame",
+  events: [[12.3, "loaf", 240, "invoker main@index.js:12 240 ms"], [30, "module-built", 410, "banana-temple"]],
+  path: { fields: ["t", "x", "y", "z", "yawDeg", "pitchDeg", "phase"], rows: [[30, 100.5, 4, -220.1, 90, -5, 2]] },
+  prev: { v: 1, sid: "0f0f0f0f0f0f", sha: "b9840d6", at: 1762500000000, upS: 120, phase: 2, x: 10, z: -20, poi: "banana-temple", heapMB: 900, textures: 300, geometries: 2000, fps: 41, hidden: false, clean: false, extra: "dropped" },
+  install: "kb-install-1", kind: "crash", chip: "Crashed", dropped: ["replay"], more: "dropped",
+};
+{
+  const r = parseBundle({ ...good, diag });
+  assert.ok(r.ok);
+  assert.equal(r.value.diag?.events.length, 2);
+  assert.equal(r.value.diag?.prev?.poi, "banana-temple");
+  assert.equal((r.value.diag as unknown as Record<string, unknown>).more, undefined);
+  assert.equal((r.value.diag?.prev as unknown as Record<string, unknown>).extra, undefined);
+  assert.equal(parseBundle(good).ok && parseBundle(good).value.diag, null, "a bundle without diagnostics still parses");
+  const old = parseBundle({ ...good, diag: { ...diag, prev: { sid: "abc", phase: "2", poi: "../x", clean: "no" } } });
+  assert.ok(old.ok, "a heartbeat an older build wrote is read as far as it can be");
+  assert.deepEqual([old.value.diag?.prev?.phase, old.value.diag?.prev?.poi, old.value.diag?.prev?.clean], [null, null, null]);
+}
+const hostileDiag: Array<[string, unknown]> = [
+  ["diag not an object", "x"],
+  ["diag wrong version", { ...diag, v: 2 }],
+  ["diag sid with a path", { ...diag, sid: "../../x" }],
+  ["diag too many events", { ...diag, events: Array.from({ length: 501 }, () => [1, "loaf", 1, ""]) }],
+  ["diag event kind with markup", { ...diag, events: [[1, "<b>x</b>", 1, ""]] }],
+  ["diag event text too long", { ...diag, events: [[1, "loaf", 1, "t".repeat(201)]] }],
+  ["diag event with an object", { ...diag, events: [[1, "loaf", { $gt: 1 }, ""]] }],
+  ["diag path too long", { ...diag, path: { ...diag.path, rows: Array.from({ length: 3601 }, () => [1, 2, 3, 4, 5, 6, 7]) } }],
+  ["diag path row of the wrong width", { ...diag, path: { ...diag.path, rows: [[1, 2]] } }],
+  ["diag path row with a string", { ...diag, path: { ...diag.path, rows: [[1, 2, 3, 4, 5, 6, "7"]] } }],
+  ["diag prev not an object", { ...diag, prev: [1] }],
+  ["diag kind unknown", { ...diag, kind: "admin" }],
+  ["diag chip too long", { ...diag, chip: "C".repeat(25) }],
+  ["diag install with a path", { ...diag, install: "../../etc" }],
+  ["diag dropped not names", { ...diag, dropped: [{ $where: 1 }] }],
+];
+for (const [name, v] of hostileDiag) assert.equal(parseBundle({ ...good, diag: v }).ok, false, `hostile diagnostics accepted: ${name}`);
 assert.ok(JSON.stringify(hostile[2][1]).length > BUNDLE_MAX_BYTES);
 
 {
@@ -96,6 +134,11 @@ assert.equal(bundleDir(root, path.join(root, "elsewhere")), path.join(root, "els
   assert.equal(saved.bundle.extra, undefined);
   for (const [name, v] of hostile.slice(3, 8)) assert.equal(await post(report(v)), 400, `hostile bundle over HTTP: ${name}`);
   assert.equal(written().length, 1, "a rejected bundle writes nothing");
+  assert.equal(await post(report({ ...good, diag: hostileDiag[4][1] })), 400, "hostile diagnostics over HTTP");
+  assert.equal(await post(report({ ...good, diag })), 200);
+  const withDiag = written().map((f) => JSON.parse(fs.readFileSync(path.join(process.env.KR_PLAYTEST_BUNDLES!, f, "bundle.json"), "utf8"))).find((j) => j.bundle.diag);
+  assert.deepEqual(withDiag?.bundle.diag.events, diag.events, "the validated diagnostics are what the bundle folder keeps");
+  assert.equal(withDiag?.bundle.diag.more, undefined);
   const codes: number[] = [];
   for (let i = 0; i < 30; i++) codes.push(await post(report(good)));
   assert.ok(codes.includes(429), "F8 marks hit the per-address rate limit");
