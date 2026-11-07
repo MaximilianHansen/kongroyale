@@ -159,7 +159,8 @@ function costMB(roots: readonly THREE.Object3D[]): number {
     if (m.material) for (const x of Array.isArray(m.material) ? m.material : [m.material]) texturesOf(x, tex);
   });
   let bytes = 0;
-  for (const b of bufs) bytes += (b as { array?: ArrayBufferView }).array?.byteLength ?? 0;
+  // (a geofree-released attribute still holds its GPU buffer: count the size it recorded when it dropped its array)
+  for (const b of bufs) bytes += (b as { array?: ArrayBufferView | null }).array?.byteLength ?? (b as { releasedBytes?: number }).releasedBytes ?? 0;
   for (const t of tex) { const im = t.image as { width?: number; height?: number } | null; if (im?.width && im.height) bytes += im.width * im.height * 4 * (t.generateMipmaps ? 4 / 3 : 1); }
   return bytes / 1e6;
 }

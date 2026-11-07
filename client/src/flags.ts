@@ -52,7 +52,7 @@ const FLAGS = {
   fullcam: { kind: present, owner: "engine", purpose: "full scene-graph camera updates instead of the camera-only walk" },
   fxlive: { kind: present, owner: "weapons", purpose: "weapon stages play effects live instead of frozen" },
   fxt: { kind: text, owner: "weapons", purpose: "time (s) the fx stage freezes at; default 0.2" },
-  geofree: { kind: one, owner: "engine", purpose: "=1 drops the CPU vertex arrays of static town-kit batches once they are on the GPU" },
+  geofree: { kind: on, owner: "engine", purpose: "drop the CPU vertex arrays of static meshes once they are on the GPU and rebuild them on a context restore; =0 keeps them, and ?dev=annotate keeps them unless =1" },
   geoshare: { kind: on, owner: "engine", purpose: "copies of one asset share their identical vertex arrays (crates per rarity, the two planes); =0 keeps a copy each" },
   gpu: { kind: text, owner: "engine", purpose: "renderer string to classify instead of the real GPU's" },
   guard: { kind: present, owner: "boot", purpose: "run the display frame-rate guard in automated browsers too" },
@@ -229,6 +229,8 @@ const values: Record<string, unknown> = {};
     const v = q.get(name);
     values[name] = v === null ? kind.default : kind.parse(v);
   }
+  // the annotator picks on CPU vertices and its wireframe builds edge indices from them, so it keeps them unless asked
+  if (values.dev === "annotate" && q.get("geofree") === null) values.geofree = false;
 }
 
 export function flag<K extends FlagName>(name: K): FlagValue<K> {

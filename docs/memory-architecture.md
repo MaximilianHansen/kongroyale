@@ -194,10 +194,15 @@ rebuild (a cached file through `Assets`, a procedural texture through its painte
 one without a rebuild makes the restore fall back to a reload (see [Context loss](#context-loss)).
 
 Geometry is different: three.js uploads `attribute.array` again whenever the GPU buffer is recreated (after a
-`dispose()`, or after a context loss), so a geometry whose array is gone can't come back on its own. Geometry copies are
-dropped only where the owner can rebuild them: `releaseGeometryAfterUpload(g, rebuild)` (`engine/geometry-release.ts`)
-for single owners such as the plane and the chests, and `?geofree=1` for static town-kit batches, which a restore
-brings back by rebuilding the module.
+`dispose()`, or after a context loss), so a geometry whose array is gone can't come back. Geometry copies are dropped
+only where the owner can rebuild it: `releaseGeometryAfterUpload(g, rebuild)` (`engine/geometry-release.ts`) takes a
+callback that returns the arrays again (a module's builder replayed from its seed, a cached GLTF), and context restore
+calls it. This is on by default; `?geofree=0` keeps every geometry's CPU copy. The owners that release today are the
+terrain's shadow proxy, the town-kit batches of streamed POIs, the climbs, the loot crates, the lobby islet's merges,
+the first-person hands and the planes' airframes: about 81 MB less at a match on SwiftShader (219 to 138 MB).
+Geometry that keeps its copy has a later CPU reader: vegetation (impostor and splat bakes, the splat cache key, the
+species merges), terrain rocks and cliff skins (raycast), the closed loot crate (the interact outline's hull) and the
+flight plane's crew harness. Until an owner registers a rebuild, its geometry keeps its CPU copy.
 
 Not done yet: a `keepCpu` reason on every copy that is deliberately kept, so the ledger can list each one and why. Known
 readers that need a kept copy are the HLOD far merge (`engine/hlod.ts` reads source arrays), the interaction highlight
@@ -281,8 +286,10 @@ uploads geometry and textures again from their CPU copies. On its own that leave
 
 - Every baked render target empty: impostor banks, the terrain's far albedo, water obstacle and wave bakes, cloud
   volumes, the sky bake. They were drawn once and are never drawn again.
-- Every texture whose CPU copy was released (`releaseAfterUpload`) with only a sized stub, so it uploads as nothing.
-- Geometry whose CPU arrays are dropped (`releaseGeometryAfterUpload`, `?geofree=1`) the same.
+- Every texture whose CPU copy was released (`releaseAfterUpload` in `engine/texture-release.ts`, on by default,
+  `?texfree=0` turns it off) with only a sized stub, so it uploads as nothing.
+- Geometry whose CPU arrays are dropped (`geofree`, on by default, `?geofree=0` turns it off) the same, which is why
+  the [CPU copies](#cpu-copies) section keeps them until the owner can rebuild them.
 - three.js's dispose listeners from the lost context still on every older object, deleting objects that belong to the
   old context when it is disposed.
 
@@ -294,7 +301,7 @@ from `engine/res/restore-run.ts`, loaded on the first loss:
    - `source`: every released texture refills its pixels from the rebuild it gave `releaseAfterUpload(t, rebuild)`,
      and a geometry released with `releaseGeometryAfterUpload(g, rebuild)` refills its arrays the same way.
    - modules: a module that owns resources with no restore path (`unrestorable()`: a released texture without a
-     rebuild, a `geofree` batch) is rebuilt through `restoreModulesWith`. With `geofree` on, `low-mem.ts` registers it
+     rebuild, a `geofree` batch) is rebuilt through `restoreModulesWith`. With `geofree` on (the default), `low-mem.ts` registers it
      for streamed modules (`low-mem-restore.ts`): the module is evicted during the restore and built again from source
      through the stream's build queue once the context is live.
    - `bake`: every bake registered with `bake(fn)`, or `onRestore("bake", fn)`, draws again.
