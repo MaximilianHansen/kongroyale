@@ -37,6 +37,7 @@ import type { Terrain } from "../../../shared/world/terrain";
 import { releasePlanePaint, restorePlanePaint, type PlaneProps } from "../actors/plane";
 import type { GliderProps } from "../actors/glider";
 import { outfitFor } from "../actors/outfit-pick";
+import { fullKongMaps } from "../actors/kong-asset";
 import type { LightBalancer } from "./lights";
 import { AmmoBoxes } from "./ammobox";
 import { resources, type Scope } from "../engine/res/scope";
@@ -274,7 +275,7 @@ export class GameRender implements EventSink {
   /** bombs carried last frame, until when the pick-up hint shows, the fuse's next tick (s) */
   private bombSeen = 0; private bombHintUntil = 0; private fuseTickAt = 0;
   // ---- (economy) the Banana Stands, the shop prompt, the wallet
-  private standViews: THREE.Object3D[] = [];
+  private standViews: THREE.Object3D[] = []; private standScope: Scope | null = null;
   /** the stand in reach (its index) — E opens its buy menu (index.ts owns the menu) */
   standNear = -1; private lastE = false; private bountyTeam = -1;
   onShop: ((stand: number) => void) | null = null;
@@ -282,9 +283,14 @@ export class GameRender implements EventSink {
   cashGain(amount: number) { this.cashGainAt = performance.now(); this.cashGainAmt = amount; }
   private syncStands() {
     if (this.standViews.length === this.cm.stands.length) return;
-    for (const o of this.standViews) o.removeFromParent();
+    this.standScope?.dispose();
+    const res = this.standScope = this.matchScope.child("stands");
     const proto = bananaStand().root;
-    this.standViews = this.cm.stands.map((s) => { const o = proto.clone(true); o.position.set(s.x, s.y, s.z); o.rotation.y = s.yaw; o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = !m.userData.noCast; m.receiveShadow = true; } }); this.engine.scene.add(o); patchTree(this.engine, o); return o; });
+    const geos = new Set<THREE.BufferGeometry>();
+    proto.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) geos.add(m.geometry); });
+    for (const g of geos) res.geometry("geo.world", g);
+    const views = this.standViews = this.cm.stands.map((s) => { const o = proto.clone(true); o.position.set(s.x, s.y, s.z); o.rotation.y = s.yaw; o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = !m.userData.noCast; m.receiveShadow = true; } }); this.engine.scene.add(o); patchTree(this.engine, o); return o; });
+    res.defer(() => { for (const o of views) o.removeFromParent(); });
   }
   /** the buy menu's view of the offers for this kong right now (the server re-checks every rule) */
   shopView(): import("../ui/shop").ShopView {
@@ -691,7 +697,7 @@ export class GameRender implements EventSink {
         if (this.deadAt >= 0 && this.resCountdown != null && !this.range && this.cm.phase !== 0) this.resCountdown = null;
         break;
       }
-      case ANN.Victory: { const win = a === this.cm.pred.team; if (win) { this.announce("KONG ROYALE VICTORY", "#1", "victory"); this.sfx("ui:victory"); this.placement = 1; this.victoryAt = performance.now(); this.onVictory?.(); } else if (this.deadAt < 0) { this.placement = 2; this.onEliminated?.(); } else if (this.spec.active(this.cm)) this.spectatorVictory(a); break; }
+      case ANN.Victory: { const win = a === this.cm.pred.team; if (win) { this.announce("KONG ROYALE VICTORY", "#1", "victory"); this.sfx("ui:victory"); this.placement = 1; this.victoryAt = performance.now(); void fullKongMaps(); this.onVictory?.(); } else if (this.deadAt < 0) { this.placement = 2; this.onEliminated?.(); } else if (this.spec.active(this.cm)) this.spectatorVictory(a); break; }
       // (economy) bounties and buy-backs: a / b carry teams (or kong ids) — this squad's news only
       case ANN_ECON.Bounty: { const t = this.cm.pred.team; if (a === (t & 0xff)) { this.announce("BOUNTY CONTRACT ACTIVE", "the marked squad is on your map — 90 s", "kill"); this.sfx("ui:countdown"); } else if (b === (t & 0xff)) { this.announce("YOU HAVE A BOUNTY", "a squad is hunting you — survive 90 s for $500", "warn"); this.sfx("storm:shrink"); } break; }
       case ANN_ECON.BountyDone: { const t = this.cm.pred.team; if (a === (t & 0xff)) { this.announce("BOUNTY COMPLETE", "+$1,500 each · the reward dropped where they fell", "victory"); this.sfx("ui:victory"); } else if (b === (t & 0xff)) this.announce("YOUR BOUNTY WAS CLAIMED", "the hunters got one of you", "warn"); break; }
@@ -2368,7 +2374,7 @@ export class GameRender implements EventSink {
     this.matchScope.dispose();
   }
   private releaseViews() {
-    for (const o of this.standViews) o.removeFromParent(); this.standViews = [];
+    this.standViews = []; this.standScope = null;
     this.range?.dispose(); this.range = null;
     for (const a of this.actors.values()) { if (this.kits.releaseKong) this.kits.releaseKong(a.actor, a.id % 6); else a.actor.dispose(); a.glider?.object.removeFromParent(); }
     for (const v of this.lootViews.values()) v.dispose();

@@ -293,28 +293,30 @@ export function addRootMasses(bins: (x: number, z: number) => TownBins, masses: 
 
 const leafTex = new Map<string, THREE.Texture>();
 /** leaf-card crown (hero + limb ends): lobed masses of big alpha cards, normals bent out of each lobe. Built in 36 m
- *  CELLS (one card mesh + core per cell): frustum + shadow-cascade culling skip the cells out of view — one swamp-wide
- *  mesh would draw all ~25 k cards (and their shadow casters) from every camera. `dens` < 1: the distance LOD — fewer,
+ *  CELLS, each cell one geometry in three BatchedMeshes (lobe cores, depth prepass, lit cards): every pass (main and each
+ *  shadow cascade) culls the cells out of its frustum and draws the rest in one multi-draw — one swamp-wide mesh would
+ *  draw all ~25 k cards (and their shadow casters) from every camera, and one mesh per cell cost ~170 draws a frame
+ *  (3 per cell + 2 shadow casters per cell and cascade) from Mango Market. `dens` < 1: the distance LOD — fewer,
  *  proportionally larger cards (same lobes, same silhouette mass) */
 export function crownMesh(ctx: { renderer: THREE.WebGLRenderer }, lobes: Array<{ c: THREE.Vector3; r: number; tint?: [number, number, number] }>, seed = 1, leaf: { hue: number; sat: number; light: number; name?: string } = { hue: 92, sat: 0.55, light: 0.36 }, dens = 1): THREE.Object3D {
   const { group, steps } = crownBuilder(ctx, lobes, seed, leaf, dens);
   for (const st of steps) st();
   return group;
 }
-/** the crown as a group + one build step per cell (the module yields between them; the far LOD builds lazily) */
+/** the crown as a group + one build step per cell and a last one that batches them (the module yields between them) */
 export function crownBuilder(ctx: { renderer: THREE.WebGLRenderer }, lobes: Array<{ c: THREE.Vector3; r: number; tint?: [number, number, number] }>, seed = 1, leaf: { hue: number; sat: number; light: number; name?: string } = { hue: 92, sat: 0.55, light: 0.36 }, dens = 1): { group: THREE.Group; steps: Array<() => void> } {
   const cells = new Map<string, typeof lobes>();
   for (const L of lobes) { const k = `${Math.floor(L.c.x / 36)},${Math.floor(L.c.z / 36)}`; let a = cells.get(k); if (!a) cells.set(k, a = []); a.push(L); }
   const group = new THREE.Group(); group.name = "murk:crown-cells";
+  const parts: Array<[THREE.BufferGeometry, THREE.BufferGeometry]> = [];
   let i = 0;
-  const steps = [...cells.values()].map((list) => { const sd = seed * 31 + i++; return () => { group.add(crownCell(ctx, list, sd, leaf, dens)); }; });
+  const steps = [...cells.values()].map((list) => { const sd = seed * 31 + i++; return () => { parts.push(crownCell(list, sd, leaf, dens)); }; });
+  steps.push(() => { group.add(...crownBatches(parts, leaf)); });
+  void ctx;
   return { group, steps };
 }
-function crownCell(ctx: { renderer: THREE.WebGLRenderer }, lobes: Array<{ c: THREE.Vector3; r: number; tint?: [number, number, number] }>, seed: number, leaf: { hue: number; sat: number; light: number; name?: string }, dens: number): THREE.Mesh {
-  const tk = `${leaf.hue}:${leaf.sat}:${leaf.light}`;
-  let tex = leafTex.get(tk);
-  if (!tex) { tex = leafClumpTexture(leaf.hue === 92 ? 43 : 71, { hue: leaf.hue, sat: leaf.sat, light: leaf.light, leafLen: 36, count: 260, round: false, edgeContrast: 0.3 }); leafTex.set(tk, tex); }
-  void ctx;
+/** one cell's geometries in world space: its leaf cards (lowest first) and its opaque lobe cores */
+function crownCell(lobes: Array<{ c: THREE.Vector3; r: number; tint?: [number, number, number] }>, seed: number, leaf: { hue: number; sat: number; light: number; name?: string }, dens: number): [THREE.BufferGeometry, THREE.BufferGeometry] {
   const rnd = (() => { let a = seed * 9301 + 49297; return () => { a = (a * 9301 + 49297) % 233280; return a / 233280; }; })();
   const pos: number[] = [], nor: number[] = [], uv: number[] = [], colr: number[] = [];
   const X = new THREE.Vector3(), Y = new THREE.Vector3(), Z = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
@@ -356,12 +358,49 @@ function crownCell(ctx: { renderer: THREE.WebGLRenderer }, lobes: Array<{ c: THR
   const key = order.map((i) => { let y = 1e9; for (let k = 0; k < 6; k++) y = Math.min(y, pos[i * 18 + k * 3 + 1]); return y; });
   order.sort((a, b) => key[a] - key[b]);
   const re = (src: number[], per: number) => { const out = new Float32Array(src.length); order.forEach((from, to) => { for (let k = 0; k < per * 6; k++) out[to * per * 6 + k] = src[from * per * 6 + k]; }); return out; };
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.BufferAttribute(re(pos, 3), 3));
-  g.setAttribute("normal", new THREE.BufferAttribute(re(nor, 3), 3));
-  g.setAttribute("uv", new THREE.BufferAttribute(re(uv, 2), 2));
-  g.setAttribute("color", new THREE.BufferAttribute(re(colr, 3), 3));
-  g.computeBoundingSphere();
+  const cards = new THREE.BufferGeometry();
+  cards.setAttribute("position", new THREE.BufferAttribute(re(pos, 3), 3));
+  cards.setAttribute("normal", new THREE.BufferAttribute(re(nor, 3), 3));
+  cards.setAttribute("uv", new THREE.BufferAttribute(re(uv, 2), 2));
+  cards.setAttribute("color", new THREE.BufferAttribute(re(colr, 3), 3));
+  // OPAQUE LOBE CORES: a lumpy dark leaf-mass blob inside every lobe (0.6 r), drawn before the cards — the cards
+  // behind a core fail the early depth test (the crown's alpha-tested overdraw was its GPU cost), and the canopy reads
+  // as a dense mass with no see-through holes in the middle of a lobe
+  const parts: THREE.BufferGeometry[] = [];
+  let li = 0;
+  for (const L of lobes) {
+    const ico = new THREE.IcosahedronGeometry(L.r * 0.3, 1);
+    const pp = ico.getAttribute("position") as THREE.BufferAttribute, v = new THREE.Vector3();
+    for (let i = 0; i < pp.count; i++) {
+      v.fromBufferAttribute(pp, i);
+      const k = 0.7 + 0.55 * noise3(v.x * 0.5 + li * 7.1, v.y * 0.5, v.z * 0.5 + seed);
+      // flatter underside (the crown's belly), the top kept round
+      pp.setXYZ(i, v.x * k, v.y * k * (v.y < 0 ? 0.7 : 1), v.z * k);
+    }
+    ico.translate(L.c.x, L.c.y + L.r * 0.12, L.c.z);
+    ico.deleteAttribute("uv");
+    parts.push(ico); li++;
+  }
+  const core = mergeGeometries(parts)!; core.computeVertexNormals();
+  const P = core.getAttribute("position"), C = new Float32Array(P.count * 3);
+  const base = new THREE.Color().setHSL(leaf.hue / 360, leaf.sat * 0.8, leaf.light * 0.42);
+  for (let i = 0; i < P.count; i++) { const n = 0.7 + 0.6 * noise3(P.getX(i) * 0.5, P.getY(i) * 0.5, P.getZ(i) * 0.5); C[i * 3] = base.r * n; C[i * 3 + 1] = base.g * n; C[i * 3 + 2] = base.b * n; }
+  core.setAttribute("color", new THREE.BufferAttribute(C, 3));
+  return [cards, core];
+}
+/** the cells' cores, prepass and lit cards as three batches (one instance per cell, identity matrix: the geometry is in
+ *  world space); the prepass draws the lit batch's geometry, so both passes share one set of buffers as the per-cell
+ *  meshes did (the prepass's own copy is dropped before it is ever uploaded) */
+function crownBatches(cells: Array<[THREE.BufferGeometry, THREE.BufferGeometry]>, leaf: { hue: number; sat: number; light: number; name?: string }): THREE.BatchedMesh[] {
+  const tk = `${leaf.hue}:${leaf.sat}:${leaf.light}`;
+  let tex = leafTex.get(tk);
+  if (!tex) { tex = leafClumpTexture(leaf.hue === 92 ? 43 : 71, { hue: leaf.hue, sat: leaf.sat, light: leaf.light, leafLen: 36, count: 260, round: false, edgeContrast: 0.3 }); leafTex.set(tk, tex); }
+  const batch = (geos: THREE.BufferGeometry[], mat: THREE.Material, name: string, renderOrder: number, castShadow: boolean, receiveShadow = castShadow) => {
+    const bm = new THREE.BatchedMesh(geos.length, geos.reduce((n, g) => n + g.attributes.position.count, 0), 0, mat);
+    for (const g of geos) bm.addInstance(bm.addGeometry(g));
+    bm.computeBoundingSphere();
+    return Object.assign(bm, { name, renderOrder, castShadow, receiveShadow });
+  };
   // two passes (the veg area's trick): an alpha-tested DEPTH-ONLY prepass carves the leaf silhouettes, then the lit pass
   // draws with depthFunc EQUAL and no discard — every covered pixel is shaded exactly once despite the stacked cards
   const pre = new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.42, side: THREE.DoubleSide, colorWrite: false, name: "murk:crown-pre" });
@@ -373,50 +412,17 @@ function crownCell(ctx: { renderer: THREE.WebGLRenderer }, lobes: Array<{ c: THR
     sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * vec3(0.14, 0.2, 0.07);");
   };
   mat.customProgramCacheKey = () => "murk-crown";
-  const mesh = new THREE.Mesh(g, mat);
-  mesh.name = "murk:crown";
+  const cards = cells.map((c) => c[0]);
   // (no shadow-map lookups on the leaf cards — the canopy shades itself by its per-card vertex shade + the lobe
   // normals; the cascade PCF taps over ~half the screen under the canopy were the crown's main GPU cost)
-  mesh.castShadow = false; mesh.receiveShadow = false;
-  const preMesh = new THREE.Mesh(g, pre);
-  preMesh.name = "murk:crown-pre";
-  preMesh.renderOrder = -5; mesh.renderOrder = -4;
-  preMesh.castShadow = true; preMesh.receiveShadow = false;
-  preMesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.42 });
-  mesh.add(preMesh);
-  // OPAQUE LOBE CORES: a lumpy dark leaf-mass blob inside every lobe (0.6 r), drawn before the cards — the cards
-  // behind a core fail the early depth test (the crown's alpha-tested overdraw was its GPU cost), and the canopy reads
-  // as a dense mass with no see-through holes in the middle of a lobe
-  {
-    const parts: THREE.BufferGeometry[] = [];
-    let li = 0;
-    for (const L of lobes) {
-      const ico = new THREE.IcosahedronGeometry(L.r * 0.3, 1);
-      const pp = ico.getAttribute("position") as THREE.BufferAttribute, v = new THREE.Vector3();
-      for (let i = 0; i < pp.count; i++) {
-        v.fromBufferAttribute(pp, i);
-        const k = 0.7 + 0.55 * noise3(v.x * 0.5 + li * 7.1, v.y * 0.5, v.z * 0.5 + seed);
-        // flatter underside (the crown's belly), the top kept round
-        pp.setXYZ(i, v.x * k, v.y * k * (v.y < 0 ? 0.7 : 1), v.z * k);
-      }
-      ico.translate(L.c.x, L.c.y + L.r * 0.12, L.c.z);
-      const nv = ico.toNonIndexed(); ico.dispose();
-      nv.deleteAttribute("uv");
-      parts.push(nv); li++;
-    }
-    const cg = mergeGeometries(parts)!; cg.computeVertexNormals();
-    const P = cg.getAttribute("position"), C = new Float32Array(P.count * 3);
-    const base = new THREE.Color().setHSL(leaf.hue / 360, leaf.sat * 0.8, leaf.light * 0.42);
-    for (let i = 0; i < P.count; i++) { const n = 0.7 + 0.6 * noise3(P.getX(i) * 0.5, P.getY(i) * 0.5, P.getZ(i) * 0.5); C[i * 3] = base.r * n; C[i * 3 + 1] = base.g * n; C[i * 3 + 2] = base.b * n; }
-    cg.setAttribute("color", new THREE.BufferAttribute(C, 3));
-    const cm = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.4, name: "murk:crown-core-foliage" });
-    cm.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * vec3(0.3, 0.4, 0.16);"); };
-    cm.customProgramCacheKey = () => "murk-crown-core";
-    const core = new THREE.Mesh(cg, cm);
-    core.name = "murk:crown-core"; core.renderOrder = -6; core.castShadow = true; core.receiveShadow = true;
-    mesh.add(core);
-  }
-  return mesh;
+  const lit = batch(cards, mat, "murk:crown", -4, false);
+  const prepass = batch(cards, pre, "murk:crown-pre", -5, true, false);
+  prepass.geometry = lit.geometry;
+  prepass.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.42 });
+  const cm = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.4, name: "murk:crown-core-foliage" });
+  cm.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * vec3(0.3, 0.4, 0.16);"); };
+  cm.customProgramCacheKey = () => "murk-crown-core";
+  return [batch(cells.map((c) => c[1]), cm, "murk:crown-core", -6, true), prepass, lit];
 }
 
 /** the Great Mangrove's crown leaf: sunlit lime-gold */

@@ -20,6 +20,7 @@ import { alive } from "../shared/sim/player";
 import { DT, MAX_PLAYERS, SQUAD_SIZE } from "../shared/sim/const";
 import { M, NET_VERSION } from "../shared/net/proto";
 import { MatchHost, matchInfo, type HostPeer } from "../shared/net/host";
+import { trackInputGaps, type InputGapReport } from "../shared/net/input-gaps";
 /** commentator seats per lobby (client/src/caster) */
 const MAX_SEATS = 8;
 import { kongbotDb } from "./kongbot";
@@ -124,7 +125,9 @@ export class Lobby {
   /** (admin lobby) an event lobby the admin runs (server/admin/events.ts): no player is ever its host, it stays open
    *  without players, its teams are explicit. null = a normal lobby */
   event: EventState | null = null;
-  clients: Client[] = []; match: Match | null = null; host: MatchHost | null = null; timer: NodeJS.Timeout | null = null; acc = 0; last = 0; errors = 0;
+  clients: Client[] = []; match: Match | null = null; host: MatchHost | null = null;
+  /** the running match's input-pacing counters (/health) */
+  inputGaps: { report(): InputGapReport } | null = null; timer: NodeJS.Timeout | null = null; acc = 0; last = 0; errors = 0;
   /** (caster) commentator seats: no player slot, any time (even mid-match), up to MAX_SEATS */
   casters: Client[] = [];
   /** (caster) an exhibition: made by a caster to watch bots (humans may still join it); `auto` = START again 12 s after
@@ -189,6 +192,7 @@ export class Lobby {
     const m = this.match = new Match({ seed: this.seed, mode: this.mode, world, humans, botDifficulty: "easy" });   // bots on EASY online
     m.endAfterResults = true;
     if (Number(process.env.KR_WARMUP_S) > 0) m.warmupS = Number(process.env.KR_WARMUP_S);   // (test servers only)
+    this.inputGaps = trackInputGaps(m);
     const h = this.host = new MatchHost(m); h.holdForStream();
     seated.forEach((c, i) => { c.pid = i; c.peer.pid = i; c.peer.opSeq = -1; c.lastInputAt = Date.now(); h.peers.push(c.peer); });
     if (this.event) { this.event.seats.clear(); for (const c of seated) eventSeated(this, c); }   // a dropped player's seat
@@ -335,7 +339,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (url === "/health") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ ok: true, feedback: kongbot.health(), lobbies: lobbies.size, clients: [...lobbies.values()].reduce((a, l) => a + l.clients.length, 0), sockets: socks.size, ...(perf ? { performance: perf.read() } : {}) })); return; }
+  if (url === "/health") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ ok: true, feedback: kongbot.health(), lobbies: lobbies.size, clients: [...lobbies.values()].reduce((a, l) => a + l.clients.length, 0), sockets: socks.size, inputs: [...lobbies.values()].flatMap((l) => (l.match && l.inputGaps ? [l.inputGaps.report()] : [])), ...(perf ? { performance: perf.read() } : {}) })); return; }
   if (!serve || (req.method !== "GET" && req.method !== "HEAD")) { res.writeHead(404); res.end(); return; }
   void serveStatic(req, res, url, dist).catch((error) => { log("asset request failed", error); if (!res.headersSent) res.writeHead(500); res.end(); });
 });

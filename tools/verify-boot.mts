@@ -64,7 +64,7 @@ process.on("SIGINT", () => process.exit(130));
 // ---- build
 if (!flag("--no-build")) {
   log("npm run build");
-  const b = spawnSync("npm", ["run", "build"], { cwd: root, stdio: ["ignore", "ignore", "inherit"] });
+  const b = spawnSync("npm", ["run", "build"], { cwd: root, stdio: ["ignore", "ignore", "inherit"], shell: process.platform === "win32" });
   if (b.status !== 0) { log(`FAIL build exited ${b.status}`); process.exit(1); }
   log("build done");
 } else if (!fs.existsSync(path.join(root, "dist/index.html"))) {

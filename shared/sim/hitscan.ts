@@ -3,6 +3,7 @@
 // shooter saw hit is what the server rules a hit. Zero allocations (results go into preallocated registers).
 import { CROUCH_H, PLAYER_H } from "./const";
 import { PF_CROUCH, PF_HITTABLE, spreadOffset } from "./player";
+import * as dmath from "./dmath";
 
 export { PF_CROUCH, PF_HITTABLE };
 export { lastZone, rayCapsule, traceShot, waterT } from "./hitscan.hot";
@@ -41,8 +42,8 @@ export const qf16 = (f: number) => Math.round((f < 0 ? 0 : f > 1 ? 1 : f) * 6553
 const SP = new Float64Array(2);
 export function shotDir(pid: number, shot: number, k: number, spreadDeg: number, yaw: number, pitch: number, out: Float64Array) {
   spreadOffset(pid, shot, k, spreadDeg, SP);
-  const y = yaw + SP[0], pt = pitch + SP[1], cp = Math.cos(pt);
-  out[0] = -Math.sin(y) * cp; out[1] = Math.sin(pt); out[2] = -Math.cos(y) * cp;
+  const y = yaw + SP[0], pt = pitch + SP[1], cp = dmath.cos(pt);
+  out[0] = -dmath.sin(y) * cp; out[1] = dmath.sin(pt); out[2] = -dmath.cos(y) * cp;
 }
 
 export interface ShotResult { t: number; victim: number; zone: number; worldHit: boolean; surf: number;

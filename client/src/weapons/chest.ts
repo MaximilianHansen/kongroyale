@@ -22,6 +22,8 @@ import type { ChestView } from "./api";
 import { CHEST_CRATE } from "../../../shared/sim/crate";
 import { flag } from "../flags";
 import { shareAttributes } from "../engine/geo-share";
+import { releaseGeometryAfterUpload } from "../engine/geometry-release";
+import { onRestore } from "../engine/res/restore";
 
 export interface ChestOpts { studio?: boolean; dressed?: boolean; tall?: boolean; style?: CrateStyle; /** keep the burst lit (staging) */ hold?: boolean; /** studio: ground aura + outer halo (loot-03); off for loot-01 (plain white sheet) */ aura?: boolean }
 
@@ -45,16 +47,42 @@ const SEAM_CORE: Record<Rarity, string> = { common: "#b8b8b8", uncommon: "#5cff2
 
 // ------------------------------------------------------------------------------------------------ assets
 const geoCache = new Map<string, CrateGeo>();
+/** a fresh, uncached crate: buildCrate is seeded, so a rebuild gives the same vertices */
+function buildFresh(rarity: Rarity, style: CrateStyle, tall: boolean): CrateGeo {
+  // the classic (loot-01) crate is banana-yellow metal; the lineup's legendary is a deeper polished gold
+  // #ffd400: the grade turns a lit yellow ~6° warmer — measured h39-40 against the target art's h43-45
+  const band = rarity === "legendary" && style !== "lineup" ? "#ffd400" : BAND[rarity];
+  const tint: Tint = { band, gold: rarity === "legendary", seam: GLOW[rarity] };
+  return buildCrate(tall ? TALL : CUBE, tint, style);
+}
+function arraysOf(g: THREE.BufferGeometry): Record<string, THREE.TypedArray> {
+  const out: Record<string, THREE.TypedArray> = {};
+  for (const [name, a] of Object.entries(g.attributes)) out[name] = (a as THREE.BufferAttribute).array;
+  if (g.index) out.index = g.index.array;
+  return out;
+}
+/** a context restore refills every released crate part in its source phase, so the parts of one crate share one rebuild;
+ * the restore runner awaits each hook, so the cache lives until the bake phase rather than a microtask */
+const rebuilds = new Map<string, CrateGeo>();
+onRestore("bake", () => rebuilds.clear());
+function rebuilt(rarity: Rarity, style: CrateStyle, tall: boolean): CrateGeo {
+  const key = `${style}:${rarity}:${tall ? "T" : "C"}`;
+  let g = rebuilds.get(key);
+  if (!g) {
+    rebuilds.set(key, (g = buildFresh(rarity, style, tall)));
+  }
+  return g;
+}
+/** the parts ?geofree releases after upload; `closed` keeps its arrays, the interact outline welds its hull from them
+ * (game/highlight.ts hullOf) */
+const RELEASED = ["far", "imp", "seamGlow", "body", "lid", "leftovers"] as const;
 function crate(rarity: Rarity, style: CrateStyle, tall: boolean): CrateGeo {
   const key = `${style}:${rarity}:${tall ? "T" : "C"}`;
   let g = geoCache.get(key);
   if (!g) {
-    // the classic (loot-01) crate is banana-yellow metal; the lineup's legendary is a deeper polished gold
-    // #ffd400: the grade turns a lit yellow ~6° warmer — measured h39-40 against the target art's h43-45
-    const band = rarity === "legendary" && style !== "lineup" ? "#ffd400" : BAND[rarity];
-    const tint: Tint = { band, gold: rarity === "legendary", seam: GLOW[rarity] };
-    g = buildCrate(tall ? TALL : CUBE, tint, style);
+    g = buildFresh(rarity, style, tall);
     for (const part of [g.closed, g.far, g.imp, g.seamGlow, g.body, g.lid, g.leftovers]) if (part) shareAttributes(`crate:${style}:${tall ? "T" : "C"}`, part);
+    for (const name of RELEASED) if (g[name]) releaseGeometryAfterUpload(g[name]!, () => arraysOf(rebuilt(rarity, style, tall)[name]!));
     geoCache.set(key, g);
   }
   return g;
@@ -130,21 +158,28 @@ function openedGeometry(rarity: Rarity, style: CrateStyle, tall: boolean): THREE
   let g = openedGeo.get(key);
   if (!g) {
     const c = crate(rarity, style, tall);
-    const lid = c.lid.clone().applyMatrix4(new THREE.Matrix4().makeRotationX(OPEN_A)).translate(c.hinge.x, c.hinge.y, c.hinge.z);
-    const body = c.body.clone();
-    const parts = [body, lid, ...(c.leftovers ? [c.leftovers] : [])];
-    const merged = new THREE.BufferGeometry();
-    for (const k of ["position", "normal", "uv", "color"]) {
-      const arr = new Float32Array(parts.reduce((n, g) => n + (g.attributes[k] as THREE.BufferAttribute).array.length, 0));
-      let o = 0; for (const g of parts) { const A = g.attributes[k] as THREE.BufferAttribute; arr.set(A.array as Float32Array, o); o += A.array.length; }
-      merged.setAttribute(k, new THREE.BufferAttribute(arr, (body.attributes[k] as THREE.BufferAttribute).itemSize));
-    }
-    merged.computeBoundingSphere();
-    shareAttributes(`crate:${style}:${tall ? "T" : "C"}`, merged);
-    openedGeo.set(key, merged);
-    g = merged;
+    const held = [c.body, c.lid, c.leftovers].every((p) => !p || p.attributes.position.array);
+    g = mergeOpened(held ? c : buildFresh(rarity, style, tall));
+    shareAttributes(`crate:${style}:${tall ? "T" : "C"}`, g);
+    releaseGeometryAfterUpload(g, () => arraysOf(mergeOpened(rebuilt(rarity, style, tall))));
+    openedGeo.set(key, g);
   }
   return g;
+}
+/** the opened crate as one geometry: the body, the lid swung open about its hinge, and the leftovers. Under ?geofree a
+ * cached crate whose arrays were already uploaded and dropped can't be merged, so openedGeometry passes a fresh build. */
+function mergeOpened(c: CrateGeo): THREE.BufferGeometry {
+  const lid = c.lid.clone().applyMatrix4(new THREE.Matrix4().makeRotationX(OPEN_A)).translate(c.hinge.x, c.hinge.y, c.hinge.z);
+  const body = c.body.clone();
+  const parts = [body, lid, ...(c.leftovers ? [c.leftovers] : [])];
+  const merged = new THREE.BufferGeometry();
+  for (const k of ["position", "normal", "uv", "color"]) {
+    const arr = new Float32Array(parts.reduce((n, g) => n + (g.attributes[k] as THREE.BufferAttribute).array.length, 0));
+    let o = 0; for (const g of parts) { const A = g.attributes[k] as THREE.BufferAttribute; arr.set(A.array as Float32Array, o); o += A.array.length; }
+    merged.setAttribute(k, new THREE.BufferAttribute(arr, (body.attributes[k] as THREE.BufferAttribute).itemSize));
+  }
+  merged.computeBoundingSphere();
+  return merged;
 }
 
 let seamT: THREE.CanvasTexture | null = null;

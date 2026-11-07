@@ -20,6 +20,7 @@ import * as THREE from "three";
 import { WORLD } from "../../../../shared/world/map";
 import type { TerrainData } from "../../../../shared/world/terrain-gen";
 import { flag } from "../../flags";
+import { releaseGeometryAfterUpload } from "../../engine/geometry-release";
 
 /** the anti-sparkle + anti-pop terrain path (mipmapped 2 m
  * data, faded detail normals, specular AA, geomorphed LOD). ?lodv=0 = off (A/B, baselines). */
@@ -286,16 +287,21 @@ export class TerrainLOD {
    * longer depends on which LOD nodes the camera happened to select when it was baked. */
   shadowProxy(): THREE.Mesh {
     const mp = this.mips[1], R = mp.res, C = WORLD.CELL * 2, H = WORLD.HALF;
-    const pos = new Float32Array(R * R * 3);
-    for (let i = 0, o = 0; i < R; i++) for (let j = 0; j < R; j++) { pos[o++] = -H + j * C; pos[o++] = Math.max(mp.h[i * R + j], -6); pos[o++] = -H + i * C; }
-    const idx = new Uint32Array((R - 1) * (R - 1) * 6);
-    for (let i = 0, o = 0; i < R - 1; i++) for (let j = 0; j < R - 1; j++) {
-      const a = i * R + j, b = a + 1, c = a + R, d = c + 1;
-      idx[o++] = a; idx[o++] = c; idx[o++] = d; idx[o++] = a; idx[o++] = d; idx[o++] = b;
-    }
+    const arrays = () => {
+      const position = new Float32Array(R * R * 3);
+      for (let i = 0, o = 0; i < R; i++) for (let j = 0; j < R; j++) { position[o++] = -H + j * C; position[o++] = Math.max(mp.h[i * R + j], -6); position[o++] = -H + i * C; }
+      const index = new Uint32Array((R - 1) * (R - 1) * 6);
+      for (let i = 0, o = 0; i < R - 1; i++) for (let j = 0; j < R - 1; j++) {
+        const a = i * R + j, b = a + 1, c = a + R, d = c + 1;
+        index[o++] = a; index[o++] = c; index[o++] = d; index[o++] = a; index[o++] = d; index[o++] = b;
+      }
+      return { position, index };
+    };
+    const { position, index } = arrays();
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.setAttribute("position", new THREE.BufferAttribute(position, 3)); g.setIndex(new THREE.BufferAttribute(index, 1));
     g.computeBoundingBox(); g.computeBoundingSphere();
+    releaseGeometryAfterUpload(g, arrays);
     const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ colorWrite: false }));
     m.name = "terrain-shadow-proxy"; m.visible = false; m.castShadow = true; m.receiveShadow = false; m.frustumCulled = false;
     m.userData.farShadow = "force"; m.userData.castShadow = true; m.userData.receiveShadow = false;

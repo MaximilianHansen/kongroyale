@@ -9,7 +9,8 @@
 //   • what never merges: instanced / skinned / batched meshes, points / lines, transparent or custom-shader materials,
 //     meshes > 40 k triangles (already one draw), meshes whose world matrix changed since the POI was registered
 //     (animated), userData.krDynamic /
-//     userData.noMerge subtrees, multi-material meshes, morph targets. Those keep drawing as the module drew them.
+//     userData.noMerge subtrees, multi-material meshes, morph targets, geometry whose CPU arrays ?geofree released after
+//     upload. Those keep drawing as the module drew them.
 //   • the POI module's own visibility is respected: sources are gated through an accessor on `visible` that ANDs the
 //     module's value with the gate (modules keep toggling `visible` unaware), and the proxy only draws while every
 //     POI root is visible.
@@ -21,7 +22,7 @@ import { programMergeSafe, releaseShaderRecorder } from "./shader-src";
 import { DITHER, clearDither, setDither } from "./dither";
 import { flag } from "../flags";
 
-interface FarPoi {
+export interface FarPoi {
   id: string;
   roots: THREE.Object3D[];
   cx: number; cy: number; cz: number;
@@ -81,9 +82,10 @@ function attrSig(g: THREE.BufferGeometry): string {
   const parts: string[] = [];
   for (const name of Object.keys(g.attributes).sort()) {
     const a = g.attributes[name] as THREE.BufferAttribute;
-    if ((a as unknown as { isInterleavedBufferAttribute?: boolean }).isInterleavedBufferAttribute) return "";
+    if ((a as unknown as { isInterleavedBufferAttribute?: boolean }).isInterleavedBufferAttribute || a.array === null) return "";
     parts.push(`${name}:${a.itemSize}:${a.normalized ? 1 : 0}:${(a.array as unknown as { constructor: { name: string } }).constructor.name}`);
   }
+  if (g.index && g.index.array === null) return "";
   return parts.join(",") + (g.index ? "|i" : "|n");
 }
 
@@ -91,7 +93,7 @@ const _m3 = new THREE.Matrix3();
 const _v = new THREE.Vector3();
 
 export class FarMerge {
-  private pois: FarPoi[] = [];
+  readonly pois: FarPoi[] = [];
   private group = new THREE.Group();
   private building = false;
   /** diagnostics (__kr.engine.far.info()) */
@@ -103,6 +105,8 @@ export class FarMerge {
   /** register a POI (module roots + centre). `near` = distance (m) inside which the POI renders as built. */
   register(id: string, roots: THREE.Object3D[], centre: { x: number; y: number; z: number }, near: number) {
     if (!this.enabled || !roots.length) return;
+    const old = this.pois.find((q) => q.id === id);
+    if (old) this.drop(old);
     if (!this.group.parent) this.engine.scene.add(this.group);
     // world-matrix snapshot of every mesh now; compared when the proxy is built (≥ 90 frames later): whatever moved
     // in between is animated and keeps drawing on its own
@@ -121,6 +125,11 @@ export class FarMerge {
       return n > 0;
     };
     this.pois.push({ id, roots, cx: centre.x, cy: centre.y, cz: centre.z, near, gate: { active: false }, proxies: [], sources: [], state: "wait", readyAt: this.engine.frames + 90, moved, late, tries: 0 });
+  }
+
+  drop(p: FarPoi) {
+    this.pois.splice(this.pois.indexOf(p), 1);
+    for (const o of [...this.group.children]) if (o.userData.krFar === p.id) { this.outgoing.delete(o); o.removeFromParent(); (o as THREE.Mesh).geometry.dispose(); }
   }
 
   /** diagnostics: why a POI's visible meshes did / did not merge (reason → count) */
@@ -292,6 +301,7 @@ export class FarMerge {
       // first draw offscreen now (vertex buffers / VAOs of the merged geometry): the frame a POI first goes far never
       // uploads megabytes of merged vertices (a landing / teleport hitch otherwise)
       try { this.engine.warmDraw(list); } catch (e) { console.warn("[far-merge] warm", e); }
+      if (!this.pois.includes(p)) { for (const [proxy] of made) { proxy.removeFromParent(); proxy.geometry.dispose(); } return; }
       for (const [proxy, meshes] of made) { p.proxies.push(proxy); for (const m of meshes) { gateVisible(m, p.gate); p.sources.push(m); } }
       p.state = "built";
     });

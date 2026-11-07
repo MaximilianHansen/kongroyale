@@ -1,10 +1,13 @@
 // TLC runner for the TLA+ models in tools/formal/: downloads the pinned TLA+ tools jar once (checked by SHA-256, never
 // committed), model-checks a model with its .cfg, and with --mutants proves the model can fail: each mutant in
 // <Model>.mutants.json removes one guard from a scratch copy of the model and must make TLC report the rule it names.
-//   node tools/formal/tlc.mjs VehicleSeats            check one model (exit 1 on any violation or error)
-//   node tools/formal/tlc.mjs VehicleSeats --mutants  ... and every mutant must fail as its entry says
+//   node tools/formal/tlc.mjs <Model>                 check one model (exit 1 on any violation or error)
+//   node tools/formal/tlc.mjs <Model> --mutants       ... and every mutant must fail as its entry says
 //   node tools/formal/tlc.mjs --all [--mutants]       every model in this folder
-// Needs Java 11 or newer on PATH. Opt-in: npm test never runs it, so npm test needs neither Java nor the network.
+//   node tools/formal/tlc.mjs <Model> --mutants --record
+//                                                     ... and when all pass, record the code it describes as verified
+//                                                     (<Model>.covers.json; npm test's formal check reads it, drift.mjs)
+// Needs Java 11 or newer on PATH. Each model's covers file names the skill that says when to run it.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -93,14 +96,40 @@ function mutants(model) {
   return ok;
 }
 
+/** writes the token hashes of the code the model describes into <model>.covers.json (tools/formal/covers.mjs) */
+async function recordCovers(model) {
+  if (!fs.existsSync(path.join(here, model + ".covers.json"))) { console.log(`tlc: ${model} has no ${model}.covers.json: nothing to record`); return true; }
+  const { modelHash, readCovers, region, strayWrites, writeCovers } = await import("./covers.mjs");
+  const c = readCovers(model), regions = {};
+  for (const key of c.regions) {
+    const r = region(key);
+    if (r.error) { console.log(`FAIL ${model} --record: ${key}: ${r.error}`); return false; }
+    regions[key] = r.hash;
+  }
+  const stray = strayWrites(c);
+  for (const s of stray) console.log(`FAIL ${model} --record: ${s.at} writes guarded state outside the code the model describes: ${s.text.trim()}`);
+  if (stray.length) return false;
+  c.verified = { model: modelHash(model), regions };
+  writeCovers(model, c);
+  console.log(`RECORDED ${model}: the model and ${c.regions.length} code regions, in tools/formal/${model}.covers.json`);
+  return true;
+}
+
 const args = process.argv.slice(2);
-const known = new Set(["--all", "--mutants"]);
-for (const a of args) if (a.startsWith("--") && !known.has(a)) fail(`unknown flag ${a} (flags: --all, --mutants)`);
+const known = new Set(["--all", "--mutants", "--record"]);
+for (const a of args) if (a.startsWith("--") && !known.has(a)) fail(`unknown flag ${a} (flags: --all, --mutants, --record)`);
+const record = args.includes("--record");
+if (record && !args.includes("--mutants")) fail("--record needs --mutants: the code is recorded as verified only by a model that was also seen to fail");
 const names = args.filter((a) => !a.startsWith("--")).map((a) => path.basename(a).replace(/\.(tla|cfg)$/, ""));
 const models = args.includes("--all") ? fs.readdirSync(here).filter((f) => f.endsWith(".tla") && fs.existsSync(path.join(here, f.slice(0, -4) + ".cfg"))).map((f) => f.slice(0, -4)).sort() : names;
-if (models.length === 0) fail("name a model (e.g. VehicleSeats) or pass --all");
+if (models.length === 0) fail("name a model (a .tla file in tools/formal) or pass --all");
 ensureJava();
 await ensureJar();
 let ok = true;
-for (const model of models) { ok = check(model) && ok; if (args.includes("--mutants")) ok = mutants(model) && ok; }
+for (const model of models) {
+  let passed = check(model);
+  if (args.includes("--mutants")) passed = mutants(model) && passed;
+  if (passed && record) passed = await recordCovers(model);
+  ok = passed && ok;
+}
 process.exit(ok ? 0 : 1);
