@@ -468,7 +468,7 @@ async function run() {
     const end = Date.now() + secs * 1000;
     for (let i = 0; Date.now() < end && !overCap; i++) {
       const p = stops[i % stops.length];
-      const moved = await evalIn<boolean>(pageCdp, `(() => { const k = window.__kr, me = k.game && k.game.link && k.game.link.match && k.game.link.match.players.find((q) => q && !q.bot); if (!me) return false; Object.assign(me, { x: ${p.x}, z: ${p.z}, y: k.engine.terrain.height(${p.x}, ${p.z}) + 1.5, vx: 0, vy: 0, vz: 0, hp: ${MAX_HP}, shield: ${MAX_SHIELD} }); return true; })()`);
+      const moved = await evalIn<boolean>(pageCdp, `(() => { const g = window.__kr.game, l = g && g.link; if (!l || !l.hostTool || !g.cm) return false; l.hostTool({ op: "place", pid: g.cm.me, x: ${p.x}, z: ${p.z}, yaw: 0 }); l.hostTool({ op: "heal", pid: g.cm.me, hp: ${MAX_HP}, shield: ${MAX_SHIELD} }); return true; })()`);
       if (!moved) { errors.push("--tour needs a practice match (no local host to move the player in)"); break; }
       console.log(`    tour: ${p.id}`);
       await hold(Math.min(tourS * 1000, Math.max(0, end - Date.now())));

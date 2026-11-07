@@ -101,17 +101,15 @@ const INSTALL = `(() => {
   return "ok";
 })()`;
 const START = (mode: string) => "(() => { window.__kr.game.practice(" + JSON.stringify(mode) + "); return 'ok'; })()";
-// place the player on the practice match's in-page host (as gpu-match's tour does) and point the view; healed so a bot
-// or the storm can't end the hold
+// place the player on the practice match's host through the link's host tools (as gpu-match's tour does; in this tab
+// or in its worker under ?hostworker=1) and point the view; healed so a bot or the storm can't end the hold
 const PLACE = (x: number, z: number, yaw: number, pitch: number) => `(() => {
-  const g = window.__kr.game, m = g.link && g.link.match; if (!m) return "no host";
-  const q = m.players[g.cm.me], w = m.world;
-  w.velY = 0; w.resolveCapsule(${x}, Math.max(w.ground(${x}, ${z}), 0) + 0.05, ${z}, 0.4, 1.8, false);
-  q.x = w.P[0]; q.y = w.P[1]; q.z = w.P[2]; q.vx = q.vy = q.vz = 0; q.grounded = true; q.st = 0; q.yaw = ${yaw};
+  const g = window.__kr.game, l = g.link; if (!l || !l.hostTool || !g.cm) return "no host";
+  l.hostTool({ op: "place", pid: g.cm.me, x: ${x}, z: ${z}, yaw: ${yaw} });
   g.input.yaw = ${yaw}; g.input.pitch = ${pitch};
   return "ok";
 })()`;
-const KEEP = (yaw: number, pitch: number) => "(() => { const g = window.__kr.game, m = g.link && g.link.match; if (!m) return 'no host'; const q = m.players[g.cm.me]; q.hp = Math.max(q.hp, 90); g.input.yaw = " + yaw + "; g.input.pitch = " + pitch + "; return 'ok'; })()";
+const KEEP = (yaw: number, pitch: number) => "(() => { const g = window.__kr.game, l = g.link; if (!l || !l.hostTool || !g.cm) return 'no host'; if (g.cm.pred.hp < 90) l.hostTool({ op: 'heal', pid: g.cm.me, hp: 90 }); g.input.yaw = " + yaw + "; g.input.pitch = " + pitch + "; return 'ok'; })()";
 // the phase counters stop with the hold, so the rAF probe's suspended frames after it count toward no phase
 const COLLECT = (on: boolean) => "(() => { const c = window.__kr.holdC; c.on = " + on + "; " + (on ? "" : "c.phaseOn = false; ") + "return String(c.n); })()";
 const RAF_PROBE = "(() => { const e = window.__kr.engine; window.__kr.refreshAtHold = e.refreshHz; e.suspended = true; const d = []; let last = 0; const f = (t) => { if (last) d.push(t - last); last = t; if (d.length < 180) requestAnimationFrame(f); else { e.suspended = false; window.__kr.rafProbe = d; } }; requestAnimationFrame(f); return 'ok'; })()";

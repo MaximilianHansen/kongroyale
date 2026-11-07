@@ -165,6 +165,9 @@ export class ClientMatch {
   planeStart = -1;
   /** ping = RTT ms (smoothed); jitter = 90th-percentile snapshot lateness ms; interpTicks = render delay behind the newest data */
   ping = 0; jitter = 0; interpTicks = SNAP_EVERY + 0.5; spectate = -1;
+  /** input to ack (ms, this tab's clock): from sending the newest input a snapshot acknowledges to handling that
+   *  snapshot. The host's wait for its tick and the next snapshot plus the link both ways; benchmark tools sample it */
+  ackMs = 0;
   /** visual correction offset (pred was corrected; smooth it out) */
   errX = 0; errY = 0; errZ = 0;
   /** previous predicted pose for render interpolation */
@@ -436,6 +439,7 @@ export class ClientMatch {
     if (!this.haveOffset || est > this.tickOffset) { this.tickOffset = est; this.haveOffset = true; }
     this.snapTicks[this.snapN % TICKS_RING] = h.tick; this.snapN++;
     this.phase = h.phase; this.time = h.time; this.alive = h.alive; this.squads = h.squads; this.flags = h.flags;
+    if (h.lastSeq > this.authSeq && this.inputSeq - h.lastSeq < PRING) this.ackMs = performance.now() - this.sentAt[h.lastSeq % PRING];
     readSelf(r, this.auth); this.authTick = h.tick; this.authSeq = h.lastSeq;
     this.takeRemotes(r, h.count, h.tick, gGap);
     // …and only now the prediction: a replay may drive / sit in a tuk-tuk this very snapshot told us about

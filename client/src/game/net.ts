@@ -21,6 +21,7 @@ import type { StaticWorld } from "../../../shared/sim/world";
 import { MatchHost, matchInfo, type HostPeer } from "../../../shared/net/host";
 import { flag } from "../flags";
 import { ReplayRecorder, packLog } from "../../../shared/net/replay";
+import { applyHostTool, liveView, type HostTool, type HostView } from "./host-tools";
 import { countSent, makeTransportStats, sendFrame, type Channel, type FallbackReason, type Path, type Transport, type WtArm } from "../../../shared/net/transport";
 import type { WtOffer } from "./wt";
 
@@ -48,6 +49,10 @@ export interface Link {
   close(): void;
   /** local-only: drive the offline host (called from the frame loop) */
   pump?(): void;
+  /** offline only (dev and benchmark tools, ./host-tools.ts): act on the host's match */
+  hostTool?(t: HostTool): void;
+  /** offline only: every player and vehicle on the host (empty until there is a match, or until the worker's first copy) */
+  hostView?(): HostView;
 }
 
 export interface LinkReport {
@@ -164,7 +169,27 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
   });
 }
 
-/** Offline practice: the authoritative Match runs in this tab through the same MatchHost as the Node server. */
+/** what the offline host takes from where it runs: this tab (pageEnv) or the practice host worker (host.worker.ts) */
+export interface PracticeEnv {
+  /** a fixed practice seed (?seed=N), 0 = random */
+  seed(): number;
+  /** record the match's input replay (the playtest chunk sets __kr.recordReplay) */
+  recordReplay(): boolean;
+  /** this tab's island stream is done (MatchHost.holdForStream waits for it) */
+  streamed(): boolean;
+  /** the match now playing and its recorder, or null when none records */
+  replay(src: { rec: ReplayRecorder; match: Match } | null): void;
+}
+const kr = () => (globalThis as { __kr?: { recordReplay?: boolean; streamed?: boolean; replayLog?: () => unknown } }).__kr;
+const pageEnv: PracticeEnv = {
+  seed: () => flag("seed"),
+  recordReplay: () => !!kr()?.recordReplay,
+  streamed: () => kr()?.streamed !== false,
+  replay: (src) => { const k = kr(); if (k) k.replayLog = src ? () => packLog(src.rec.log(src.match)) : undefined; },
+};
+
+/** Offline practice: the authoritative Match runs in this tab through the same MatchHost as the Node server, or (the
+ *  same class) inside the practice host worker, which posts its output back (./host-worker.ts). */
 export class OfflineLink implements Link {
   readonly offline = true;
   onJSON: (m: Record<string, unknown>) => void = () => {};
@@ -183,7 +208,7 @@ export class OfflineLink implements Link {
   private closed = false;
   /** `caster`: a local exhibition — 50 bots and no player of ours; this tab watches through a commentator seat
    *  (client/src/caster), fed the same CastSnap / CastStats frames as a seat on the server */
-  constructor(private world: StaticWorld, private name: string, private botDamageToHumans = 1, private botAimRange = Infinity, private range = false, private difficulty: BotDifficulty = "standard", readonly caster = false) {
+  constructor(private world: StaticWorld, private name: string, private botDamageToHumans = 1, private botAimRange = Infinity, private range = false, private difficulty: BotDifficulty = "standard", readonly caster = false, private readonly env: PracticeEnv = pageEnv) {
     if (caster) { this.peer.pid = -1; this.peer.caster = true; }
   }
   /** the lobby message this tab sees: its one player, or (caster) its one seat */
@@ -208,23 +233,23 @@ export class OfflineLink implements Link {
         if (this.match) { this.match.startNow(); break; }
         const mode = (m.mode === "trios" ? "trios" : "solo");
         // ?seed=N (dev / tools): a reproducible practice match (same plane line, storm plan, loot)
-        const fixed = flag("seed");
+        const fixed = this.env.seed();
         this.seed = fixed > 0 ? fixed | 0 : (Math.random() * 2 ** 31) | 0; this.mode = mode;
         // botDifficulty: the practice tier the Match gives its bots (EASY, STANDARD = full-strength bots, HARD)
         const opts: MatchOpts & { botDifficulty: BotDifficulty } = { seed: this.seed, mode: this.range ? "solo" : mode, world: this.world, humans: this.caster ? [] : [{ id: 0, name: this.name, team: 0 }], botDamageToHumans: this.botDamageToHumans, botAimRange: this.botAimRange, botDifficulty: this.difficulty, range: this.range };
         const match = this.match = new Match(opts);
         match.endAfterResults = true;
-        if ((globalThis as { __kr?: { recordReplay?: boolean } }).__kr?.recordReplay) {
+        if (this.env.recordReplay()) {
           const { world: _world, ...recOpts } = opts;
           const rec = match.rec = new ReplayRecorder(recOpts);
-          this.setReplay(() => packLog(rec.log(match)));
+          this.env.replay({ rec, match });
         }
         const host = this.host = new MatchHost(match); host.peers.push(this.peer); host.holdForStream();
         match.onPhase = (ph) => this.emit({ t: "phase", phase: ph, plane: match.plane, time: match.time, tick: match.tick, plan: match.plan });
         this.emit(this.caster ? { ...matchInfo(match, this.seed, {}), caster: true, seat: 0 } : matchInfo(match, this.seed, { 1: 0 }));
         this.queued.push(() => { if (this.caster) host.sendCastStats(this.peer); else host.sendInventory(this.peer); });
         this.last = performance.now(); this.acc = 0;
-        this.timer = window.setInterval(() => this.pump(), 8);
+        this.timer = setInterval(() => this.pump(), 8) as unknown as number;
         break;
       }
       case "leave": this.close(); break;
@@ -234,7 +259,7 @@ export class OfflineLink implements Link {
   pump() {
     if (this.closed) return;
     // the warm-up waits for this tab's island stream (MatchHost.holdForStream)
-    this.peer.streamed = (globalThis as { __kr?: { streamed?: boolean } }).__kr?.streamed !== false;
+    this.peer.streamed = this.env.streamed();
     while (!this.closed && this.queued.length) this.queued.shift()!();
     const h = this.host; if (!h) return;
     const now = performance.now();
@@ -244,7 +269,7 @@ export class OfflineLink implements Link {
       this.acc -= DT; this.stamp = now - this.acc * 1000; h.tick();
       if (h.m.over) {
         // results done: back to the practice room (START again, switch mode, or LEAVE)
-        if (this.timer) clearInterval(this.timer); this.timer = 0; this.match = null; this.host = null; this.setReplay(undefined);
+        if (this.timer) clearInterval(this.timer); this.timer = 0; this.match = null; this.host = null; this.env.replay(null);
         this.emit(this.room(this.mode, false, -1));
         return;
       }
@@ -256,11 +281,10 @@ export class OfflineLink implements Link {
     if (this.closed) return;
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
-    this.timer = 0; this.match = null; this.host = null; this.queued.length = 0; this.setReplay(undefined);
+    this.timer = 0; this.match = null; this.host = null; this.queued.length = 0; this.env.replay(null);
     this.onClose("left");
   }
-  private setReplay(log: (() => unknown) | undefined) {
-    const kr = (globalThis as { __kr?: Record<string, unknown> }).__kr;
-    if (kr) kr.replayLog = log;
-  }
+  /** `bring` answers how many bots it moved (the worker's copy of this link drops the answer) */
+  hostTool(t: HostTool): number { return this.match && !this.closed ? applyHostTool(this.match, t) : 0; }
+  hostView(): HostView { return this.match ? liveView(this.match) : { players: [], vehs: [] }; }
 }
