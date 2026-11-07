@@ -12,7 +12,7 @@ import { onStructure, ownVisible, activeGates, type Gate } from "./scene-hooks";
 import { installShaderRecorder } from "./shader-src";
 import { installDitherChunks } from "./dither";
 import { afterPaint } from "./frame";
-import { refreshFromIntervals } from "./refresh";
+import { RefreshEstimate, WEBKIT_CEILING_HZ } from "./refresh";
 import { flag } from "../flags";
 import { contextEpoch, watchContext } from "./res/restore";
 import "./geometry-release"; // in boot: the geofree owners in lazy chunks share this copy, fewer bytes than a chunk of its own
@@ -661,6 +661,7 @@ export class Engine implements WorldCtx {
   refreshHz = 0;
   private rafSamples: number[] = [];
   private rafNext = 0;
+  private refreshEst = new RefreshEstimate(/^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent) ? WEBKIT_CEILING_HZ : 0);
   private refreshListeners: Array<(hz: number) => void> = [];
   onRefresh(fn: (hz: number) => void) { this.refreshListeners.push(fn); if (this.refreshHz) fn(this.refreshHz); }
   private sampleRefresh(d: number) {
@@ -668,7 +669,8 @@ export class Engine implements WorldCtx {
     if (now < this.rafNext || d <= 0 || d > 100) return;
     this.rafSamples.push(d);
     if (this.rafSamples.length < 90) return;
-    const v = refreshFromIntervals(this.rafSamples);
+    const sc = globalThis.screen as (Screen & { availLeft?: number; availTop?: number }) | undefined;
+    const v = this.refreshEst.add(this.rafSamples, sc ? [sc.width, sc.height, sc.availLeft, sc.availTop].join() : "");
     this.rafSamples = [];
     this.rafNext = now + 20000;
     if (v !== this.refreshHz) {

@@ -24,7 +24,7 @@
 // measured; attribute it with arms that remove one cost (?dpr=1 for pixels, ?vegsplat=0 for the far-tree splats).
 // After the hold the engine is suspended for 180 frames (3 s at 60 Hz) and bare rAF intervals are recorded: the
 // display's refresh as the browser paces it right now (a capture running or not), next to what engine.refreshHz
-// measured. From the match
+// measured (detail.page.refreshHzHold at the end of the hold, before the probe; refreshHz after it). From the match
 // start every frame also counts toward its match phase (fpsPhaseN, framesOver33msPhaseN), and the half-rate guard's
 // steps (__kr.resLog, engine/res-guard.ts; add --query resguard=1, it is off under automation) are kept in
 // detail.page.resLog and counted as resSteps.
@@ -114,7 +114,7 @@ const PLACE = (x: number, z: number, yaw: number, pitch: number) => `(() => {
 const KEEP = (yaw: number, pitch: number) => "(() => { const g = window.__kr.game, m = g.link && g.link.match; if (!m) return 'no host'; const q = m.players[g.cm.me]; q.hp = Math.max(q.hp, 90); g.input.yaw = " + yaw + "; g.input.pitch = " + pitch + "; return 'ok'; })()";
 // the phase counters stop with the hold, so the rAF probe's suspended frames after it count toward no phase
 const COLLECT = (on: boolean) => "(() => { const c = window.__kr.holdC; c.on = " + on + "; " + (on ? "" : "c.phaseOn = false; ") + "return String(c.n); })()";
-const RAF_PROBE = "(() => { const e = window.__kr.engine; e.suspended = true; const d = []; let last = 0; const f = (t) => { if (last) d.push(t - last); last = t; if (d.length < 180) requestAnimationFrame(f); else { e.suspended = false; window.__kr.rafProbe = d; } }; requestAnimationFrame(f); return 'ok'; })()";
+const RAF_PROBE = "(() => { const e = window.__kr.engine; window.__kr.refreshAtHold = e.refreshHz; e.suspended = true; const d = []; let last = 0; const f = (t) => { if (last) d.push(t - last); last = t; if (d.length < 180) requestAnimationFrame(f); else { e.suspended = false; window.__kr.rafProbe = d; } }; requestAnimationFrame(f); return 'ok'; })()";
 const READ = `JSON.stringify((() => {
   const k = window.__kr, c = k.holdC, e = k.engine, r = e.renderer, gl = r.getContext(), n = c.n, a = (x) => Array.from(x).slice(0, n);
   const dbg = gl.getExtension("WEBGL_debug_renderer_info"), d = k.display;
@@ -122,7 +122,7 @@ const READ = `JSON.stringify((() => {
   return { n, T: a(c.T), CPU: a(c.CPU), CALLS: a(c.CALLS), TRIS: a(c.TRIS), PTS: a(c.PTS), PROG: a(c.PROG),
     renderer: String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)), timerQuery: !!gl.getExtension("EXT_disjoint_timer_query_webgl2"),
     parallelCompile: !!gl.getExtension("KHR_parallel_shader_compile"), canvas: [r.domElement.width, r.domElement.height], dpr: devicePixelRatio, dprBase: e.dprBase,
-    renderScale: e.renderScale, refreshHz: e.refreshHz, dynamicRes: e.dynamicRes, video: d ? d.settings : null, gpuLevel: d ? d.gpuLevel : null,
+    renderScale: e.renderScale, refreshHz: e.refreshHz, refreshHzHold: k.refreshAtHold ?? null, dynamicRes: e.dynamicRes, video: d ? d.settings : null, gpuLevel: d ? d.gpuLevel : null,
     gpuScore: (() => { try { return JSON.parse(localStorage.getItem("kr-gpu-score") || "null"); } catch (x) { return null; } })(),
     programsAtReady: k.programsAtReady ?? null, programs: (r.info.programs || []).length, programNames: (r.info.programs || []).map((p) => p.name + "|" + String(p.cacheKey || "").slice(0, 80)),
     geometries: r.info.memory.geometries, textures: r.info.memory.textures,
