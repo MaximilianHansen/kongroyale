@@ -95,8 +95,11 @@ export class Engine implements WorldCtx {
   private holds = new Map<number, string>();
   private holdSeq = 0;
   private last = performance.now();
-  private frameMs = new Float32Array(240);
+  /** the newest drawn frames' intervals (ms), a ring indexed by frameCount (res-guard.ts reads it) */
+  readonly frameMs = new Float32Array(240);
   private frameIdx = 0;
+  /** frames drawn so far; frameMs[(frameCount - 1) % frameMs.length] is the newest */
+  get frameCount() { return this.frameIdx; }
   frames = 0;
   /** static-transform cache for world-module content (engine/static-cache.ts) */
   readonly statics: StaticCache;
@@ -717,6 +720,13 @@ export class Engine implements WorldCtx {
     const v = this.postTaa() ? s : 1;
     this.renderScale = +v.toFixed(3);
     post?.setRenderScale?.(this.renderScale);
+  }
+  /** the half-rate guard (res-guard.ts) sets the render scale while dynamic resolution is off; false = not here (dynamic
+   *  resolution on, ?dynres=0, a pinned ?scale, capture mode, or no post chain to upscale in) */
+  guardScale(s: number): boolean {
+    if (this.dynOn || this.dynForcedOff || this.dynPin > 0 || this.shotMode || !this.postTaa()) return false;
+    this.applyScale(Math.min(this.resBase, Math.max(0.5, s)));
+    return true;
   }
   private emaDt = 0; private emaCpu = 0; private dynHold = 0;
   // GPU time per frame (EXT_disjoint_timer_query_webgl2 when the browser exposes it): the controller then knows the

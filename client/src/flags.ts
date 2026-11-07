@@ -132,6 +132,7 @@ const FLAGS = {
   rockMerge: { kind: on, owner: "pois", purpose: "Mist Falls merges its near rock sets into meshes; =0 = the old instanced sets" },
   rocks: { kind: on, owner: "terrain", purpose: "draw the terrain rocks" },
   resaudit: { kind: present, owner: "engine", purpose: "__kr.resAudit(): what the renderer holds outside a scope" },
+  resguard: { kind: text, owner: "engine", purpose: "half-rate guard: =1 on, =0 off; absent = on unless automated" },
   scale: { kind: num(0), owner: "engine", purpose: "pin the 3D resolution scale; 0 = not pinned" },
   sculpt: { kind: present, owner: "pois", purpose: "town statue sculpts live instead of loading its baked mesh" },
   seed: { kind: num(0), owner: "game", purpose: "practice match seed (plane line, storm, loot); 0 = random" },
