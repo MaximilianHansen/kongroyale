@@ -11,8 +11,9 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-// reports go to a temp folder: `npm test` never changes a tracked file
-const tmp = (f) => path.join(os.tmpdir(), `kong-royale-${f}`);
+// reports go to a temp folder: `npm test` never changes a tracked file. CI sets KR_REPORT_DIR to keep them for the PR
+// metrics comment (tools/ci/pr-report.mts reads size.json and alloc.json from there)
+const tmp = (f) => (process.env.KR_REPORT_DIR ? path.join(process.env.KR_REPORT_DIR, f) : path.join(os.tmpdir(), `kong-royale-${f}`));
 
 /** id: the name --only takes; slow: skipped by --fast (each takes 10 s or more) */
 const checks = [
@@ -24,7 +25,8 @@ const checks = [
   { id: "triage", name: "playtest triage (fingerprints, clusters, ticker, no private text)", cmd: "npx", args: ["tsx", "tools/playtest/triage.test.mts"] },
   { id: "ab", name: "WebTransport A/B split by arm (playtest bundles, /health)", cmd: "npx", args: ["tsx", "tools/playtest/ab.test.mts"] },
   { id: "gate", name: "verifier flag and empty-input gates", cmd: "npx", args: ["tsx", "tools/gate.test.mts"] },
-  { id: "size", name: "download size (against tools/size-budgets.json)", cmd: "npx", args: ["tsx", "tools/check-size.mts", "--budgets", "tools/size-budgets.json"] },
+  { id: "size", name: "download size (against tools/size-budgets.json)", cmd: "npx", args: ["tsx", "tools/check-size.mts", "--budgets", "tools/size-budgets.json", "--json", tmp("size.json")] },
+  { id: "prreport", name: "PR metrics comment (tools/ci/pr-report.mts)", cmd: "npx", args: ["tsx", "tools/ci/pr-report.test.mts"] },
   { id: "farbake", name: "far impostors match their POI sources", cmd: "npx", args: ["tsx", "tools/world/far-bake.test.mts"] },
   { id: "assets", name: "asset sources (against tools/verify-assets.baseline.json)", cmd: "npx", args: ["tsx", "tools/verify-assets.mts", "--baseline", "tools/verify-assets.baseline.json"] },
   { id: "dmath", name: "deterministic math (shared/sim/dmath.ts)", cmd: "npx", args: ["tsx", "tools/dmath/test.mts"] },

@@ -32,7 +32,19 @@ jobs:
       # run that one package's script so npm test's wt checks run (tools/net/wt-endpoint.test.mts fails without it)
       - run: npm rebuild @fails-components/webtransport-transport-http3-quiche
       - run: npm run build
+      # KR_REPORT_DIR keeps npm test's reports (size, allocation) for the PR metrics comment (.github/workflows/pr-metrics.yml)
       - run: npm test
+        env:
+          KR_REPORT_DIR: ci-metrics
+      - name: keep the budgets beside the reports
+        if: always()
+        run: mkdir -p ci-metrics/budgets && cp tools/*budgets*.json ci-metrics/budgets/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ci-metrics-test
+          path: ci-metrics/
+          retention-days: 30
 
   secrets:
     name: no secrets
@@ -88,6 +100,12 @@ jobs:
         if: always()
         run: node tools/kr-verify.mjs down
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ci-metrics-boot
+          path: shots/memory/ci/result.json
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: boot-smoke-evidence
@@ -126,7 +144,7 @@ jobs:
         with:
           name: memory-result
           path: shots/memory/ci/
-          retention-days: 7
+          retention-days: 30
 
   lowmem-memory:
     name: no-GPU low-memory memory
@@ -159,7 +177,7 @@ jobs:
         with:
           name: memory-lowmem-result
           path: shots/memory/ci/
-          retention-days: 7
+          retention-days: 30
 
   context-restore:
     name: no-GPU context restore
