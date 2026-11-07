@@ -1,5 +1,5 @@
 {
-  "about": "Network tail budgets for tools/performance/net-tail.mts. Each row of the matrix (weapon x profile x RTT) is one deterministic tools/netlab.mts run with the game's two sockets (--aux). A budget applies to the rows its rtt range and profiles name. Set from main's own numbers; npm test runs net-tail --check against them (check id nettail).",
+  "about": "Network tail budgets for tools/performance/net-tail.mts. Each row of the matrix (transport x weapon x profile x RTT) is one deterministic tools/netlab.mts run. A budget applies to the rows its rtt range and profiles name. Rows run on each transport in 'transports': ws is the game's two WebSockets (--aux), wt is WebTransport (--transport wt: input windows and snapshots as datagrams). A budget with 'transports' holds only on those; one without holds on every transport. The wt-only budgets hold what datagrams buy on lossy links, from wt's own numbers. Set from main's own numbers; npm test runs net-tail --check against them (check id nettail).",
   "rtts": [
     50,
     150,
@@ -9,6 +9,10 @@
     "ar",
     "smg",
     "shotgun"
+  ],
+  "transports": [
+    "ws",
+    "wt"
   ],
   "profiles": {
     "jitter20": {
@@ -164,6 +168,70 @@
         "loss1"
       ],
       "why": "enemies freeze on screen when interpolation runs dry; under 2% of frames"
+    },
+    {
+      "id": "wtInputAckLossy",
+      "metric": "inputAckP99OverRttMs",
+      "max": 50,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "loss1"
+      ],
+      "transports": [
+        "wt"
+      ],
+      "why": "on datagrams a lost input is carried by the next window instead of waiting for a resend, so 1% loss keeps the steady link's budget up to 250 ms (wt: 40.3-44.4 ms; ws: 65.3-204 ms)"
+    },
+    {
+      "id": "wtInputAckBad",
+      "metric": "inputAckP99OverRttMs",
+      "max": 60,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "loss2j40"
+      ],
+      "transports": [
+        "wt"
+      ],
+      "why": "a bad connection (2% loss, 40 ms jitter) stays within about 3.5 ticks on datagrams (wt: 48.6-54.2 ms; ws: 54-299 ms)"
+    },
+    {
+      "id": "wtInstantMarkersLossy",
+      "metric": "deferredMarkerPct",
+      "max": 1,
+      "rtt": [
+        0,
+        250
+      ],
+      "profiles": [
+        "loss1"
+      ],
+      "transports": [
+        "wt"
+      ],
+      "why": "with 1% loss the link never stalls on datagrams, so hit markers stay instant up to 250 ms (wt: 0; ws: 24-32% at 250 ms)"
+    },
+    {
+      "id": "wtHitConfirm250Lossy",
+      "metric": "confirmPct",
+      "min": 99,
+      "rtt": [
+        151,
+        250
+      ],
+      "profiles": [
+        "loss1"
+      ],
+      "transports": [
+        "wt"
+      ],
+      "why": "and the instant markers are real: the server confirms them (wt: 100%)"
     }
   ]
 }
