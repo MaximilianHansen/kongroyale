@@ -52,7 +52,7 @@ const mod: WorldModule = {
     ctx.scene.add(group);
     const aniso = Math.min(ctx.renderer.capabilities.getMaxAnisotropy(), ctx.quality === "low" ? 4 : 8);
     // the baked atlases stream + transcode off the main thread while the parked plane is built on it
-    const atP = loadAtlases(ctx.renderer, aniso);
+    const atP = loadAtlases(ctx.assets, aniso);
     const pl = LOBBY.find((i) => i.kind === "plane");
     const tPlane = performance.now();
     const planeP = pl ? createPlane(ctx, { crew: false }).catch((e) => { console.warn("[lobby-islet] plane failed", e); return null; }) : Promise.resolve(null);

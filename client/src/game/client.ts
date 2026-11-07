@@ -8,18 +8,20 @@
 // - REMOTES are drawn at a render clock driven by snapshot ARRIVALS (newest data - adaptive jitter buffer), never
 //   extrapolated: when data runs out they hold the newest sample.
 // - LAG COMPENSATION: every input carries the exact blend (snapshot ticks A, A+span, fraction f) of the last drawn frame;
-//   the server rewinds to those same numbers with the same function (shared/sim/hitscan.ts).
-import { CHEST_OPEN_DIST, DT, MAX_PLAYERS, PLANE_SPEED, SNAP_EVERY, WARMUP_S, WEAPON_DEFS } from "../../../shared/sim/const";
+//   the server rewinds to those same numbers with the same function (shared/sim/hitscan.ts). A shot that will reach the
+//   server after its view fell out of the rewind window (MAX_REWIND_TICKS) is judged there against the pose at the cap,
+//   so its predicted hit is re-traced against that pose and reported as a miss when it misses there (lateVerdict).
+import { CHEST_OPEN_DIST, DT, MAX_PLAYERS, MAX_REWIND_TICKS, PLANE_SPEED, SNAP_EVERY, WARMUP_S, WEAPON_DEFS } from "../../../shared/sim/const";
 import { IK, lootReachable, type Chest, type Item } from "../../../shared/sim/loot";
 import { B, PS, currentSpread, eyeY, invDrop, invMove, makeInput, makePlayer, pelletDamage, poseFlags, stepPlayer, weaponDef, copyInput, type Input, type Player } from "../../../shared/sim/player";
 import { makeStormState, stormAt, type StormPlan, type StormState } from "../../../shared/sim/storm";
 import type { StaticWorld } from "../../../shared/sim/world";
-import { EV, INV, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, M, Reader, yawDec, Writer, makeCastStat, makePlayerSnap, makeSelfState, makeVehSnap, quantizeInput, readCastHeader, readCastStat, readInventory, readPlayer, readSelf, readSnapHeader, readVehicle, writeInput, writeInvOp, type CastHeader, type CastStat, type GunSelf, type PlayerSnap, type SelfState, type SnapHeader, type VehSelf, type VehSnap } from "../../../shared/net/proto";
+import { EV, INV, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, M, Reader, yawDec, Writer, makeCastStat, makePlayerSnap, makeSelfState, makeVehSnap, quantizeInput, readCastHeader, readCastStat, readInventory, readPlayer, readSelf, readSnapHeader, readVehicle, writeInput, writeInputs, writeInvOp, INPUT_BODY_BYTES, INPUT_WINDOW, INPUTS_HEAD_BYTES, type CastHeader, type CastStat, type GunSelf, type PlayerSnap, type SelfState, type SnapHeader, type VehSelf, type VehSnap } from "../../../shared/net/proto";
 import { SEAT_EYE, TUK, VF, VKind, VS, VehicleSet, blendVeh, rayVehicle, seatPoint, seatRiderAt, vehPose, vehicleInReach, type Vehicle } from "../../../shared/sim/vehicle";
 import { GUN_SHOT, TOP_BANANA, gunBarrel, gunOf } from "../../../shared/sim/heli";
 import { fleetSpots, type TukSpot } from "../../../shared/sim/tuk-spots";
 import { heliIslet, heliPads, heliRange } from "../../../shared/sim/heli-spots";
-import { TARGET_STRIDE, blendPose, blendYaw, qf16, shotDir, traceShot, type ShotResult } from "../../../shared/sim/hitscan";
+import { TARGET_STRIDE, blendPose, blendYaw, qf16, makeShotResult, shotDir, traceShot, type ShotResult } from "../../../shared/sim/hitscan";
 import type { Link } from "./net";
 import { planeStep } from "../../../shared/sim/plane";
 import type { GameInput } from "./input";
@@ -167,7 +169,7 @@ export class ClientMatch {
   private inputSeq = 0; private ackedSeq = 0;
   private readonly inRing: Input[] = Array.from({ length: PRING }, makeInput);
   private readonly pRing = new Float64Array(PRING * PS_STRIDE); private readonly pSeq = new Int32Array(PRING).fill(-1);
-  private readonly inputW = new Writer(new ArrayBuffer(64)); private readonly pingW = new Writer(new ArrayBuffer(16));
+  private readonly inputW = new Writer(new ArrayBuffer(64)); private readonly inputsW = new Writer(new ArrayBuffer(INPUTS_HEAD_BYTES + INPUT_WINDOW * INPUT_BODY_BYTES)); private readonly pingW = new Writer(new ArrayBuffer(16));
   private readonly scratch: Player;
   // ---- clocks
   private tickOffset = 0; private haveOffset = false; private lastPingAt = 0; private lastPongSent = 0;
@@ -263,6 +265,13 @@ export class ClientMatch {
     writeInvOp(this.invOpW.reset(), this.invOpSeq, op, a, b); this.link.sendBinary(this.invOpW.view());
     this.sink?.inventory();
     return true;
+  }
+  /** over datagrams (WebTransport) every input not yet acknowledged, so the next datagram repairs a lost one; over a
+   *  reliable link the one new input */
+  private sendInput(inp: Input) {
+    if (this.link.transport?.kind !== "wt") { writeInput(this.inputW.reset(), inp); this.link.sendBinary(this.inputW.view()); return; }
+    const first = Math.max(this.ackedSeq + 1, inp.seq - INPUT_WINDOW + 1);
+    writeInputs(this.inputsW.reset(), this.inRing, first, inp.seq - first + 1); this.link.sendBinary(this.inputsW.view());
   }
   private sendPing() { this.pingW.reset().u8(M.Ping).f64(performance.now()); this.link.sendBinary(this.pingW.view()); this.pingsSent++; }
   private readonly pings = new Float64Array(5); private readonly pingSort = new Float64Array(5); private pingN = 0; private pingsSent = 0;
@@ -746,7 +755,7 @@ export class ClientMatch {
       if (p.fired > 0) this.sink?.localFire();
       if (p.thrown > 0) this.sink?.localThrow?.(p.thrown);
       this.onTick?.(inp);
-      writeInput(this.inputW.reset(), inp); this.link.sendBinary(this.inputW.view());
+      this.sendInput(inp);
     }
     if (this.acc > DT * 6) this.acc = 0;
     this.stepStorm();
@@ -908,7 +917,7 @@ export class ClientMatch {
    */
   predictShot(k: number, out: ShotResult, dir: Float64Array = DIR): ShotResult {
     const p = this.pred, w = weaponDef(p);
-    this.predDmg = 0; this.predLeft = Infinity;
+    this.predDmg = 0; this.predLeft = Infinity; this.predLate = false;
     this.predVeh = -1;
     // a round of TOP BANANA (I man a helicopter's door gun): along its barrels at the pose I sat at for this input (my
     // seat was put on the helicopter as drawn — the server rewinds to the same blend)
@@ -921,6 +930,7 @@ export class ClientMatch {
       this.predVeh = this.rayVehicles(gun.id, p.x, ey, p.z, dir[0], dir[1], dir[2], out.t);
       if (this.predVeh >= 0) { out.t = this.vehT; out.victim = -1; out.zone = 0; out.worldHit = true; out.surf = 1; }
       glassShot(this.glass, p.x, ey, p.z, dir[0], dir[1], dir[2], out.t, GC.Shot, this.me);
+      this.lateVerdict(p.x, ey, p.z, dir, out);
       if (out.victim >= 0) { this.predDmg = pelletDamage(TOP_BANANA, 0, out.t, out.zone); this.predLeft = this.notePredictedHit(out.victim, this.predDmg); }
       return out;
     }
@@ -933,11 +943,40 @@ export class ClientMatch {
     glassShot(this.glass, p.x, eyeY(p), p.z, dir[0], dir[1], dir[2], out.t, GC.Shot, this.me);   // our panes shatter now; EV.Glass confirms
     // kill races: book the damage of this predicted hit; once our in-flight bullets take the target to 0, the rest of the
     // blast and every later pellet passes through it — exactly what the server will rule
+    this.lateVerdict(p.x, eyeY(p), p.z, dir, out);
     if (out.victim >= 0) { this.predDmg = pelletDamage(w, p.slots[p.active].rarity, out.t, out.zone); this.predLeft = this.notePredictedHit(out.victim, this.predDmg); }
     return out;
   }
   /** damage + the target's predicted health left after the last predictShot (0 dmg = no player hit) */
   predDmg = 0; predLeft = Infinity;
+  /** the last predictShot drew a hit the server will not grant, so it reported a miss: the server's EV.Hit decides */
+  predLate = false;
+  /**
+   * Will the server take back the hit this shot drew (out.victim)? Then report a miss and set predLate. It rewinds to
+   * my view only while that view is at most MAX_REWIND_TICKS old at the tick it simulates this input; an older shot is judged against the pose at the cap
+   * instead (Match.viewBlend), so re-trace it there. The server simulates one input per tick, so this input runs at
+   * about the last snapshot's tick plus the inputs it hasn't acknowledged yet. The pose at the cap is blended from the
+   * snapshots around it; when the cap is newer than the newest snapshot (a stall, or an RTT past the window) there is
+   * no sample to judge it by, so the drawn verdict stands.
+   */
+  private lateVerdict(ox: number, oy: number, oz: number, dir: Float64Array, out: ShotResult) {
+    const lo = this.authTick + (this.inputSeq - this.authSeq) - MAX_REWIND_TICKS;
+    if (out.victim < 0 || this.authSeq <= 0 || lo > this.lastSnapTick || !(this.viewA + this.viewSpan * this.viewF < lo)) return;
+    const T = this.viewTargets, L = LATE_TARGETS, bl = this.blend;
+    for (const rm of this.remotes) {
+      const o = rm.id * TARGET_STRIDE;
+      if (!(T[o + 3] > 0)) { L[o + 3] = 0; continue; }
+      let a: PlayerSnap | null = null, b: PlayerSnap | null = null;
+      const cnt = Math.min(rm.n, RING);
+      for (let i = 1; i <= cnt; i++) { const s = rm.ring[(rm.n - i) % RING]; if (s.tick <= lo) { a = s; break; } b = s; }
+      if (!a) { a = b!; b = null; }
+      const bb = b ?? a, f = b ? (lo - a.tick) / (b.tick - a.tick) : 0;
+      blendPose(a.x, a.y, a.z, poseFlags(a.st, a.crouch || a.swim), bb.x, bb.y, bb.z, poseFlags(bb.st, bb.crouch || bb.swim), f, bl, 0);
+      L[o] = bl[0]; L[o + 1] = bl[1]; L[o + 2] = bl[2]; L[o + 3] = bl[3]; L[o + 4] = blendYaw(a.yaw, bb.yaw, f);
+    }
+    traceShot(this.world, ox, oy, oz, dir[0], dir[1], dir[2], L, this.remotes.length, LATE);
+    if (LATE.victim !== out.victim) { this.predLate = true; out.victim = -1; }
+  }
   /** seconds left in the current phase's countdown (warm-up → plane) */
   warmupLeft() { return this.phase === 0 ? Math.max(0, WARMUP_S - (this.serverTick() - this.phaseTick) * DT) : 0; }
   /** the player being watched (self, or spectate target when dead) */
@@ -991,7 +1030,9 @@ export class ClientMatch {
   get unacked() { return this.inputSeq - this.ackedSeq; }
   get buttons() { return B; }
 }
-const DIR = new Float64Array(3);
+const DIR = new Float64Array(3), LATE = makeShotResult();
+/** the hitboxes at the rewind cap the server will judge a late shot against (ClientMatch.lateVerdict) */
+const LATE_TARGETS = new Float64Array(MAX_PLAYERS * TARGET_STRIDE);
 const FLIGHT_N = 128;
 const near = (a: number, b: number) => Math.abs(a - b) <= EPS;
 // movement state that carries into the next tick (sprint is recomputed every tick, so it is not compared)

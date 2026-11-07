@@ -80,9 +80,30 @@ little-endian, written with a `DataView`. The rare path (lobbies, match start, v
 Every binary frame decodes on its own: there is no delta compression against earlier frames. A lagging or late player
 can pick up from any frame.
 
-Each player holds **two WebSockets**. Binary frames travel on both, and each end keeps the first copy it gets. A
-WebSocket runs over TCP, so one lost packet stalls everything behind it; with two sockets, a stall needs both to lose
-a packet at once.
+The binary frames go through one `Transport` (`shared/net/transport.ts`), the same shape on the client and the server.
+`channelOf` puts each frame type on a channel: the input window (`M.Inputs`), pings, pongs and snapshots are
+unreliable (a newer one replaces or repairs a lost one), everything else is reliable, including a single input
+(`M.Input`, what a WebSocket client sends: each one is needed once and is sent once). JSON always rides the primary WebSocket. The receivers keep the ordering rules
+(newest snapshot tick, each input seq once), so a transport may deliver a frame twice, late or never.
+
+Today's transport is **two WebSockets** per player. Binary frames travel on both, and each end keeps the first copy it
+gets. A WebSocket runs over TCP, so one lost packet stalls everything behind it; with two sockets, a stall needs both
+to lose a packet at once.
+
+With `?wt=1`, and a server started with `KR_WT=1` (it offers its endpoint in `welcome`), the client loads a small lazy
+chunk (`client/src/game/wt.ts`) and opens a **WebTransport** session instead of the aux socket: unreliable frames ride
+QUIC datagrams, reliable ones the session's one stream. The session authenticates with the aux token and is in use once
+the server answers `{ t: "wt-ok" }`. If it can't be had, or closes later, the link stays on (or goes back to) the
+WebSocket pair. Either way the client tells the server once which transport it settled on and why (`{ t: "net" }`),
+and `/health` counts those reasons across players.
+
+Over datagrams nothing is resent, so the frames carry their own repair. Each tick the client sends its **input window**
+(`M.Inputs`): every input the snapshots haven't acknowledged yet, at most `INPUT_WINDOW` (30, the most the server can
+catch up), oldest first. A lost datagram costs nothing because the next one carries the same inputs, and the server
+queues each seq once, in order (`Match.pushInput`). Each snapshot goes out as two datagrams
+(`SNAPSHOT_DATAGRAM_COPIES`), the same downstream cost as the WebSocket pair. Over WebSockets the client keeps sending
+single `M.Input` frames: on TCP a window is pure overhead. `/health` counts inputs lost (a seq never queued) and recovered
+(queued from a window entry other than its newest).
 
 When a client connects, the server's `welcome` message carries `NET_VERSION` and a hash of the whole collision world.
 A client with a different world refuses to play and asks the player to reload.

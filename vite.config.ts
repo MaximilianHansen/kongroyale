@@ -58,7 +58,9 @@ export default defineConfig({
       "/health": { target: `http://127.0.0.1:${process.env.KR_PORT || 3020}` },
     },
   },
-  worker: { format: "es" },
+  // every worker is its own Rollup build, so a chunk is only shared if all builds emit identical bytes: the baked POI JSON
+  // (shared/pois/*.json, 1.35 MB) is that, while a chunk of shared/ code differs per entry (tree-shaking, mangling)
+  worker: { format: "es", rollupOptions: { output: { manualChunks: (id) => (/\/shared\/.*\.json$/.test(id) ? "shared-data" : undefined) } } },
   build: {
     target: "es2022", outDir: "dist", sourcemap: false,
     // registry.ts in its OWN chunk: main.ts boots with top-level await, and atmos afterBuild dynamic-imports the

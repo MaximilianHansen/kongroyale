@@ -3,13 +3,14 @@
 // Every binary server→client frame carries an id (tick / sequence), so a client listening on two redundant sockets
 // (see client/src/game/net.ts) processes each frame exactly once, in order.
 import type { Input, Player } from "../sim/player";
-import { HISTORY_TICKS, POS_Q } from "../sim/const";
+import { HISTORY_TICKS, INPUT_CREDIT_MAX, POS_Q } from "../sim/const";
 import { qf16 } from "../sim/hitscan";
 import { VKind, VS, qVPitch, qVRoll, specOf, vehPose, PITCH_VQ, ROLL_VQ, type Vehicle } from "../sim/vehicle";
 import { HELI } from "../sim/heli";
 import type { EconView } from "../sim/economy";
+import * as dmath from "../sim/dmath";
 
-export const enum M { Input = 1, Ping = 2, InvOp = 3, Snapshot = 16, Events = 17, Inventory = 18, Pong = 19,
+export const enum M { Input = 1, Ping = 2, InvOp = 3, Inputs = 4, Snapshot = 16, Events = 17, Inventory = 18, Pong = 19,
   /** (caster) the full-information snapshot a commentator seat gets: every player, exact health, every vehicle */
   CastSnap = 20,
   /** (caster) every player's loadout + match stats (~4 Hz) */
@@ -79,14 +80,35 @@ export class Reader {
 export const INPUT_BYTES = 21;
 export const LERP_SPAN_MAX = 16;
 export function writeInput(w: Writer, i: Input) {
-  w.u8(M.Input).u32(i.seq).i8(Math.round(clamp1(i.mx) * 127)).i8(Math.round(clamp1(i.mz) * 127)).u16(yawEnc(i.yaw)).i16(pitchEnc(i.pitch))
+  w.u8(M.Input).u32(i.seq); writeInputBody(w, i);
+}
+/** an input after its type and seq: what M.Input and each entry of M.Inputs carry */
+export const INPUT_BODY_BYTES = 16;
+function writeInputBody(w: Writer, i: Input) {
+  w.i8(Math.round(clamp1(i.mx) * 127)).i8(Math.round(clamp1(i.mz) * 127)).u16(yawEnc(i.yaw)).i16(pitchEnc(i.pitch))
     .u16(i.buttons & BUTTON_MASK).u8(i.slot & 0xff).u32(Math.max(0, Math.floor(i.lerpA))).u8(Math.max(0, Math.min(LERP_SPAN_MAX, i.lerpSpan | 0)))
     .u16(Math.round(Math.max(0, Math.min(1, i.lerpF)) * 65535));
 }
 /** decode + sanitise (every field is range-checked: this is the server's trust boundary). Caller checks the length. */
 export function readInput(r: Reader, out: Input) {
-  out.seq = r.u32(); out.mx = clamp1(r.i8() / 127); out.mz = clamp1(r.i8() / 127); out.yaw = yawDec(r.u16()); out.pitch = pitchDec(Math.max(-31200, Math.min(31200, r.i16())));
+  out.seq = r.u32(); readInputBody(r, out);
+}
+/** decode + sanitise one input body (readInput's fields after the seq) */
+export function readInputBody(r: Reader, out: Input) {
+  out.mx = clamp1(r.i8() / 127); out.mz = clamp1(r.i8() / 127); out.yaw = yawDec(r.u16()); out.pitch = pitchDec(Math.max(-31200, Math.min(31200, r.i16())));
   out.buttons = r.u16() & BUTTON_MASK; out.slot = r.u8(); out.lerpA = r.u32(); out.lerpSpan = Math.min(LERP_SPAN_MAX, r.u8()); out.lerpF = r.u16() / 65535;
+}
+
+// ---- input window (client → server over datagrams, NET_VERSION 11): [M.Inputs][count u8][firstSeq u32][count bodies],
+// seqs firstSeq .. firstSeq + count - 1, oldest first. The client sends every input not yet acknowledged (a snapshot's
+// lastSeq), so a lost datagram is repaired by the next one; never more than INPUT_WINDOW, since the server can't catch
+// up an input older than that anyway (INPUT_CREDIT_MAX). Over a reliable link the client sends single M.Input frames.
+export const INPUT_WINDOW = INPUT_CREDIT_MAX;
+export const INPUTS_HEAD_BYTES = 6;
+/** inputs seq first .. first + count - 1, each read from ring[seq % ring.length] */
+export function writeInputs(w: Writer, ring: readonly Input[], first: number, count: number) {
+  w.u8(M.Inputs).u8(count).u32(first);
+  for (let k = 0; k < count; k++) writeInputBody(w, ring[(first + k) % ring.length]);
 }
 /** snap an input to exactly what the server will decode (the client predicts with this) */
 export function quantizeInput(i: Input) {
@@ -229,7 +251,7 @@ const VPOSE = new Float64Array(6);
 const seatByte = (id: number) => (id < 0 ? 255 : id);
 export function writeVehicle(w: Writer, v: Vehicle) {
   vehPose(v, VPOSE);
-  const vf = -v.vx * Math.sin(v.yaw) - v.vz * Math.cos(v.yaw);
+  const vf = -v.vx * dmath.sin(v.yaw) - v.vz * dmath.cos(v.yaw);
   w.u8(v.id).i24(Math.round(VPOSE[0] * POS_Q)).i24(Math.round(VPOSE[1] * POS_Q)).i24(Math.round(VPOSE[2] * POS_Q))
     .u16(yawEnc(VPOSE[3])).i8(qVPitch(VPOSE[4])).i16(qVRoll(VPOSE[5]))
     .i16(Math.max(-32767, Math.min(32767, Math.round(vf * 256)))).i8(Math.max(-127, Math.min(127, Math.round(v.steer * 127))))
@@ -279,8 +301,9 @@ export function readInventory(r: Reader, p: Player, e: EconView | null = null) {
  *  held byte, bullets stop at the water surface · 9: INV.Spectate (the spectator picks who
  *  to watch) and EV.ChestReset (end-game loot regen re-closes a chest) · 10: event lobbies
  *  (admin lobby: shared/net/event.ts — JSON only, the binary frames are unchanged) — the server's "welcome" carries it; a
- *  client on another version reloads */
-export const NET_VERSION = 10;
+ *  client on another version reloads · 11: M.Inputs, the window of unacknowledged inputs a WebTransport client sends as
+ *  one datagram per tick */
+export const NET_VERSION = 11;
 export class Events {
   readonly w = new Writer(new ArrayBuffer(32768));
   n = 0;

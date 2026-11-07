@@ -1,19 +1,34 @@
-// Links: the same interface for a WebSocket to the Node server and for the in-browser offline host.
+// Links: the same interface for a WebSocket to the Node server and for the in-browser offline host. An online link is
+// the primary WebSocket (JSON: lobby, welcome, results) plus a binary Transport (shared/net/transport.ts) for the hot path.
 //
-// Redundant transport: a WebSocket is TCP, so ONE lost packet stalls everything behind it for ~RTT + 50 ms (head-of-line
-// blocking). After the server's "welcome" (which carries an aux token) we open a second socket; every binary frame
-// (inputs up; snapshots, events, inventory, pongs down) travels on both, and both ends keep the first copy (inputs by
-// seq, snapshots/events by tick, inventory by seq, pongs by timestamp). A stall now needs both sockets to lose a packet
-// at the same moment. JSON (lobby) stays on the primary. Disable with ?aux=0 on the page URL.
+// The WebSocket transport, the redundant pair: a WebSocket is TCP, so ONE lost packet stalls everything behind it for
+// ~RTT + 50 ms (head-of-line blocking). After the server's "welcome" (which carries an aux token) we open a second
+// socket; every binary frame (inputs up; snapshots, events, inventory, pongs down) travels on both, and both ends keep
+// the first copy (inputs by seq, snapshots/events by tick, inventory by seq, pongs by timestamp). A stall now needs both
+// sockets to lose a packet at the same moment. Disable the aux socket with ?aux=0 on the page URL.
+//
+// WebTransport (?wt=1, and the server offers it in "welcome"): the lazy chunk ./wt.ts dials QUIC; once the session is
+// up it carries the binary frames (datagrams for snapshots and pings) and the aux socket is never opened. If it can't
+// be had, or dies later, the link stays on (or goes back to) the WebSocket pair. Either way the link tells the server
+// once which transport it ended up on and why ({ t: "net" }), so /health counts fallbacks across real players.
 import { DT } from "../../../shared/sim/const";
 import { Match, type MatchOpts } from "../../../shared/sim/match";
 import type { BotDifficulty } from "../ui/api";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { MatchHost, matchInfo, type HostPeer } from "../../../shared/net/host";
 import { flag } from "../flags";
+import { countSent, makeTransportStats, sendFrame, type Channel, type FallbackReason, type Path, type Transport } from "../../../shared/net/transport";
+import type { WtOffer } from "./wt";
 
 export interface Link {
   readonly offline: boolean;
+  /** the binary transport of an online link now (none offline): the WebSocket pair or a WebTransport session */
+  readonly transport?: Transport;
+  /** why an online link is not on WebTransport (null: it is, or it hasn't decided yet) */
+  readonly fallback?: FallbackReason | null;
+  /** an online link's transport now, its fallback and a copy of its counters, for KONGBOT reports. It lives here, in
+   *  the lazy game chunk, so the entry (where the KONGBOT context is gathered) doesn't carry it */
+  report?(): { transport: Transport["kind"]; fallback: FallbackReason | null; stats: Transport["stats"] };
   onJSON: (m: Record<string, unknown>) => void;
   /** `at` = arrival time (MessageEvent.timeStamp on the performance.now() clock), when the transport knows it */
   onBinary: (u8: Uint8Array, at?: number) => void;
@@ -26,22 +41,54 @@ export interface Link {
 }
 
 const auxWanted = () => flag("aux");
+const wtWanted = () => flag("wt");
 /** a STALLED link — nothing at all from the server for this long (a match sends 30 snapshots + a pong a second)
  *  — takes no more binary frames until something arrives again. Inputs queued behind a dead TCP link came out as one burst
  *  when it recovered (60 a second of stall, on each socket) and tripped the server's per-socket rate limit: strikes, then
  *  the socket was closed. The server keeps ≤ 64 queued inputs (~1 s) anyway; the burst is now ≤ ~3 s of them. */
 const STALL_MS = 3000;
 
+/** the client never answers a server frame and never blames one: inbound frames come from the server it chose */
+const SERVER_PATH: Path = { reply: () => {}, strike: () => {} };
+
 export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url); ws.binaryType = "arraybuffer";
     let opened = false, closed = false, aux: WebSocket | null = null, lastRx = performance.now();
+    // the transport: every binary frame on the primary and the aux socket, both channels reliable
+    const stats = makeTransportStats("ws");
+    // WebSocket.send copies the bytes, so views over reused buffers are safe here
+    const send = (u8: Uint8Array, ch: Channel) => {
+      if (performance.now() - lastRx > STALL_MS) { stats.skipped++; return; }
+      countSent(stats, ch, u8.length);
+      if (ws.readyState === WebSocket.OPEN) ws.send(u8);
+      if (aux && aux.readyState === WebSocket.OPEN) aux.send(u8);
+    };
+    const bin: Transport = { kind: "ws", stats, sendReliable: (u8) => send(u8, 0), sendUnreliable: (u8) => send(u8, 1), onMessage: () => {}, close: () => aux?.close() };
+    const receive = (e: MessageEvent) => { const u8 = new Uint8Array(e.data as ArrayBuffer); stats.recv++; stats.recvBytes += u8.length; bin.onMessage(u8, e.timeStamp, SERVER_PATH); };
+    let active: Transport = bin, fallback: FallbackReason | null = null;
     const link: Link = {
       offline: false, onJSON: () => {}, onBinary: () => {}, onClose: () => {},
+      get transport() { return active; }, get fallback() { return fallback; },
+      report: () => ({ transport: active.kind, fallback, stats: structuredClone(active.stats) }),
       sendJSON: (o) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); },
-      // WebSocket.send copies the bytes, so views over reused buffers are safe here
-      sendBinary: (u8) => { if (performance.now() - lastRx > STALL_MS) return; if (ws.readyState === WebSocket.OPEN) ws.send(u8); if (aux && aux.readyState === WebSocket.OPEN) aux.send(u8); },
-      close: () => { closed = true; aux?.close(); ws.close(); },
+      sendBinary: (u8) => sendFrame(active, u8),
+      close: () => { closed = true; active.close(); bin.close(); ws.close(); },
+    };
+    bin.onMessage = (u8, at) => link.onBinary(u8, at);
+    /** the transport this link ended up on, once per change, to the server's counters */
+    const settle = (why: FallbackReason | null) => { fallback = why; link.sendJSON(why ? { t: "net", transport: "ws", why } : { t: "net", transport: "wt" }); };
+    const toWs = (token: string, why: FallbackReason) => { if (closed) return; active = bin; lastRx = performance.now(); openAux(token); settle(why); };
+    const tryWt = (token: string, offer: WtOffer | undefined) => {
+      if (!wtWanted()) return toWs(token, "flag-off");
+      if (!offer) return toWs(token, "server-off");
+      if (typeof WebTransport === "undefined") return toWs(token, "unsupported");
+      import("./wt").then((m) => m.dialWt(offer, token, (u8, at) => link.onBinary(u8, at))).then((wt) => {
+        if (typeof wt === "string") return toWs(token, wt);
+        if (closed) { wt.close(); return; }
+        active = wt; settle(null);
+        void wt.closed.then((why) => { if (active === wt) toWs(token, why); });
+      }, () => toWs(token, "connect-failed"));
     };
     const openAux = (token: string) => {
       if (aux || closed || !auxWanted()) return;
@@ -49,7 +96,7 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
       const u = new URL(url, location.href); u.searchParams.set("attach", "1");
       const a = new WebSocket(u.toString()); a.binaryType = "arraybuffer";
       a.onopen = () => a.send(JSON.stringify({ t: "aux", token }));
-      a.onmessage = (e) => { lastRx = performance.now(); if (typeof e.data !== "string") link.onBinary(new Uint8Array(e.data as ArrayBuffer), e.timeStamp); };
+      a.onmessage = (e) => { lastRx = performance.now(); if (typeof e.data !== "string") receive(e); };
       a.onclose = () => { if (aux === a) aux = null; };
       a.onerror = () => { /* the primary keeps working alone */ };
       aux = a;
@@ -57,14 +104,14 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
     const t = setTimeout(() => { if (!opened) { ws.close(); reject(new Error("timeout")); } }, timeoutMs);
     ws.onopen = () => { opened = true; clearTimeout(t); resolve(link); };
     ws.onerror = () => { if (!opened) { clearTimeout(t); reject(new Error("connect failed")); } };
-    ws.onclose = (e) => { aux?.close(); if (opened) link.onClose(e.reason || "disconnected"); };
+    ws.onclose = (e) => { bin.close(); if (opened) link.onClose(e.reason || "disconnected"); };
     ws.onmessage = (e) => {
       lastRx = performance.now();
       if (typeof e.data === "string") {
         let m: Record<string, unknown>; try { m = JSON.parse(e.data); } catch { return; }
-        if (m.t === "welcome" && typeof m.aux === "string") openAux(m.aux);
+        if (m.t === "welcome" && typeof m.aux === "string") tryWt(m.aux, m.wt as WtOffer | undefined);
         link.onJSON(m);
-      } else link.onBinary(new Uint8Array(e.data as ArrayBuffer), e.timeStamp);
+      } else receive(e);
     };
   });
 }

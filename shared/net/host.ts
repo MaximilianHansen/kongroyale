@@ -3,7 +3,7 @@
 import type { Match } from "../sim/match";
 import { PS, alive, makeInput } from "../sim/player";
 import { SNAP_EVERY } from "../sim/const";
-import { CSF, INPUT_BYTES, INVOP_BYTES, M, Reader, Writer, readInput, writeCastHeader, writeCastStat, writeInventory, writePlayer, writeVehicle } from "./proto";
+import { CSF, INPUT_BODY_BYTES, INPUT_BYTES, INPUT_WINDOW, INPUTS_HEAD_BYTES, INVOP_BYTES, M, Reader, Writer, readInput, readInputBody, writeCastHeader, writeCastStat, writeInventory, writePlayer, writeVehicle } from "./proto";
 import { makeEconView } from "../sim/economy";
 import { writeSnapshotFor } from "./host.hot";
 export { NEAR_R, writeSnapshotFor } from "./host.hot";
@@ -132,7 +132,8 @@ export class MatchHost {
   private readonly invW = new Writer(new ArrayBuffer(256));
   private readonly pongW = new Writer(new ArrayBuffer(32));
   private readonly castW = new Writer(new ArrayBuffer(16384)); private readonly castStatW = new Writer(new ArrayBuffer(4096));
-  private readonly inBuf = new Uint8Array(64); private readonly inR = new Reader(this.inBuf);
+  /** the largest frame a client sends: a full input window */
+  private readonly inBuf = new Uint8Array(INPUTS_HEAD_BYTES + INPUT_WINDOW * INPUT_BODY_BYTES); private readonly inR = new Reader(this.inBuf);
   private readonly inp = makeInput();
   private readonly deliveredOutcomes = new WeakMap<HostPeer, string>();
   constructor(readonly m: Match) { m.onInventory = (id) => this.sendInventoryTo(id); }
@@ -184,6 +185,17 @@ export class MatchHost {
       if (u8.length !== INPUT_BYTES) return false;
       this.inBuf.set(u8); this.inR.o = 1; readInput(this.inR, this.inp);
       if (peer.pid >= 0) this.m.pushInput(peer.pid, this.inp);
+      return true;
+    }
+    if (type === M.Inputs) {
+      const count = u8[1];
+      if (count < 1 || count > INPUT_WINDOW || u8.length !== INPUTS_HEAD_BYTES + count * INPUT_BODY_BYTES) return false;
+      this.inBuf.set(u8); this.inR.o = 2; const first = this.inR.u32();
+      for (let k = 0; k < count; k++) {
+        readInputBody(this.inR, this.inp); this.inp.seq = first + k;
+        // queued from any entry but the newest: the datagram that carried it as the newest was lost (or late)
+        if (peer.pid >= 0 && this.m.pushInput(peer.pid, this.inp) && k < count - 1) this.m.netStats.inputsRecovered++;
+      }
       return true;
     }
     if (type === M.InvOp) {

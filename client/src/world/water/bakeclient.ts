@@ -55,6 +55,7 @@ export function startBake(T: Terrain, texSize: number): WaterBake {
     timings.fields = Math.round(fd.ms);
   });
   texP.then(() => wTex.close());
+  fieldsP.then(() => wFld.close());
   const done = Promise.all([texP, fieldsP]).then(() => { timings.wall = Math.round(performance.now() - t0); });
   const beach = async (): Promise<CamSpec | null> => {
     const tb = performance.now();
@@ -70,7 +71,9 @@ export function startBake(T: Terrain, texSize: number): WaterBake {
       console.info(`[water] beach-view cache miss (terrain hash ${hash}, status ${r.status})`);
     } catch (e) { console.info("[water] beach-view cache unavailable", String(e)); }
     // 2. solve it in the worker (never on the main thread: ~3-7 s with the veg scatter replay)
-    const r = await wFld.job({ kind: "beach", heights: T.heights, biome: T.biome });
+    const wBeach = mk();
+    const r = await wBeach.job({ kind: "beach", heights: T.heights, biome: T.biome });
+    wBeach.close();
     timings.beach = Math.round(performance.now() - tb);
     if (r.error) {
       const { solveBeachView } = await import("./beachcam");
