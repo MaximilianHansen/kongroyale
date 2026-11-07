@@ -6,6 +6,8 @@ import { chromium, type CDPSession } from "playwright";
 import { env, save, source } from "./common.mts";
 import type { Audit } from "../../client/src/engine/res/audit.ts";
 import { RESULT_SCHEMA, RESULT_VERSION, parseResult, type CaseResult, type Metric, type RunResult } from "./schema.ts";
+import { POIS } from "../../shared/world/map.ts";
+import { MAX_HP, MAX_SHIELD } from "../../shared/sim/const.ts";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] ?? "help";
@@ -419,7 +421,7 @@ async function run() {
   const profile = profileOf(), nogpu = profile === "nogpu";
   const [vw, vh] = opt("--viewport", nogpu ? "640x360" : "1600x900").split("x").map(Number);
   const warmup = flag("--warmup");
-  const dpr = Number(opt("--dpr", "1")), seed = Number(opt("--seed", "42")), matchSecs = Number(opt("--match-secs", "60")), matches = Number(opt("--matches", "2"));
+  const dpr = Number(opt("--dpr", "1")), seed = Number(opt("--seed", "42")), matchSecs = Number(opt("--match-secs", "60")), matches = Number(opt("--matches", "2")), tourS = Number(opt("--tour", "0"));
   url.searchParams.set("seed", String(seed));
   if (nogpu && !url.searchParams.has("vegsplat")) url.searchParams.set("vegsplat", "0");
   const args = [`--use-angle=${{ nogpu: "swiftshader", mac: "metal", win: "d3d11" }[profile]}`, "--ignore-gpu-blocklist", nogpu ? "--enable-unsafe-swiftshader" : "--enable-gpu"];
@@ -438,7 +440,7 @@ async function run() {
   const pageCdp = await ctx.newCDPSession(page);
   const waitS = nogpu ? 900 : 180;
   const traceS = Number(opt("--trace-secs", "15")), maxMB = Number(opt("--max-mb", String(Math.round(os.totalmem() / MB * 0.7))));
-  const timeline: Array<{ atS: number; totalMB: number; byType: Record<string, number>; unmeasured: string[]; heapUsedMB: number; webglMB: number; textures: number; phase: number; stage: string; streamStage: string }> = [];
+  const timeline: Array<{ atS: number; totalMB: number; byType: Record<string, number>; unmeasured: string[]; heapUsedMB: number; webglMB: number; textures: number; phase: number; stage: string; streamStage: string; pois: number; evictions: number }> = [];
   let lastTrace = 0;
   const trace = async () => {
     if (Date.now() - lastTrace < traceS * 1000) return;
@@ -449,12 +451,24 @@ async function run() {
     const totalMB = Math.round(procs.reduce((a, p) => a + (procMB(p) ?? 0), 0)), unmeasured = procs.filter((p) => procMB(p) === null).map((p) => `${p.type} ${p.pid}`);
     const heap = await pageCdp.send("Runtime.getHeapUsage") as { usedSize: number };
     const g = await evalIn<{ textureBytes: number; textures: number; bufferBytes: number; phase: number; stage: string; streamStage: string }>(pageCdp, "window.__krMem.totals()");
-    const point = { atS: Math.round((performance.now() - t0) / 1000), totalMB, byType, unmeasured, heapUsedMB: mb(heap.usedSize), webglMB: mb(g.textureBytes + g.bufferBytes), textures: g.textures, phase: g.phase, stage: g.stage, streamStage: g.streamStage };
+    const res = await evalIn<{ pois: number; evictions: number }>(pageCdp, "({ pois: (window.__kr.modules || []).filter((x) => x.startsWith('poi:')).length, evictions: (window.__kr.evictions || []).length })");
+    const point = { atS: Math.round((performance.now() - t0) / 1000), totalMB, byType, unmeasured, heapUsedMB: mb(heap.usedSize), webglMB: mb(g.textureBytes + g.bufferBytes), textures: g.textures, phase: g.phase, stage: g.stage, streamStage: g.streamStage, ...res };
     timeline.push(point);
-    console.log(`    ${point.atS} s: ${totalMB} MB (GPU ${byType.GPU ?? 0}, renderer ${byType.renderer ?? 0}), JS heap ${point.heapUsedMB}, WebGL ${point.webglMB} in ${g.textures} textures, phase ${g.phase} ${g.stage} ${g.streamStage}`);
+    console.log(`    ${point.atS} s: ${totalMB} MB (GPU ${byType.GPU ?? 0}, renderer ${byType.renderer ?? 0}), JS heap ${point.heapUsedMB}, WebGL ${point.webglMB} in ${g.textures} textures, ${res.pois} POIs, ${res.evictions} evictions, phase ${g.phase} ${g.stage} ${g.streamStage}`);
   };
   const notes: string[] = [];
   let overCap = "";
+  const stops = POIS.filter((p) => p.id !== "lobby-islet");
+  const tour = async (secs: number) => {
+    const end = Date.now() + secs * 1000;
+    for (let i = 0; Date.now() < end && !overCap; i++) {
+      const p = stops[i % stops.length];
+      const moved = await evalIn<boolean>(pageCdp, `(() => { const k = window.__kr, me = k.game && k.game.link && k.game.link.match && k.game.link.match.players.find((q) => q && !q.bot); if (!me) return false; Object.assign(me, { x: ${p.x}, z: ${p.z}, y: k.engine.terrain.height(${p.x}, ${p.z}) + 1.5, vx: 0, vy: 0, vz: 0, hp: ${MAX_HP}, shield: ${MAX_SHIELD} }); return true; })()`);
+      if (!moved) { errors.push("--tour needs a practice match (no local host to move the player in)"); return; }
+      console.log(`    tour: ${p.id}`);
+      await hold(Math.min(tourS * 1000, Math.max(0, end - Date.now())));
+    }
+  };
   const watchdogBlind = new Map<number, number>();
   const watchdog = setInterval(() => {
     void processes(browserCdp).then((procs) => {
@@ -498,7 +512,7 @@ async function run() {
       } else {
       if (m === 1 && await waitFor("the plane phase", "((window.__kr.game.cm && window.__kr.game.cm.phase) | 0) >= 1", waitS, true)) samples.push(await takeSample("plane", browserCdp, pageCdp, t0));
       if (!await waitFor("the play phase", "((window.__kr.game.cm && window.__kr.game.cm.phase) | 0) >= 2", nogpu ? 1200 : 240)) break;
-      await hold(matchSecs * 1000);
+      if (tourS > 0) await tour(matchSecs); else await hold(matchSecs * 1000);
       samples.push(await takeSample(`match${suffix}`, browserCdp, pageCdp, t0));
       }
       await evalIn<void>(pageCdp, "window.__kr.game.leave()");
@@ -542,7 +556,7 @@ async function run() {
   const result = {
     schema: RESULT_SCHEMA, version: RESULT_VERSION, tool: "memory", startedAt, durationMs: Math.round(performance.now() - t0),
     source: source(process.cwd()), environment: { ...env(), gpu: gpu || null },
-    config: { url: url.pathname + url.search, profile, viewport: `${vw}x${vh}`, dpr, seed, matchSecs, matches, warmup, heap: flag("--heap") },
+    config: { url: url.pathname + url.search, profile, viewport: `${vw}x${vh}`, dpr, seed, matchSecs, matches, warmup, heap: flag("--heap"), tourS },
     cases, errors, notes, timeline, artifacts: [],
     leaks: [delta("left1", "left2"), delta("match", "match2"), delta("warmup", "warmup2"), delta("title", "left1")].filter(Boolean),
   } satisfies RunResult & { leaks: unknown[]; notes: string[]; timeline: unknown[] };
@@ -627,4 +641,4 @@ function table() {
 if (cmd === "run") { await run(); process.exit(process.exitCode ?? 0); }
 else if (cmd === "table") table();
 else if (cmd === "check") { const f = argv.slice(1).find((a) => !a.startsWith("--") && a !== opt("--budgets", "")) ?? ""; process.exitCode = checkBudgets(parseResult(JSON.parse(fs.readFileSync(f, "utf8")), f), opt("--budgets", "tools/memory-budgets.json")) ? 0 : 1; }
-else { console.log("usage: npx tsx tools/performance/memory.mts run --url http://127.0.0.1:PORT [--profile nogpu|mac|win] [--warmup] [--budgets FILE] [--max-mb N] [--heap] | table result.json... [--md] | check result.json [--budgets tools/memory-budgets.json]"); process.exitCode = cmd === "help" ? 0 : 2; }
+else { console.log("usage: npx tsx tools/performance/memory.mts run --url http://127.0.0.1:PORT [--profile nogpu|mac|win] [--warmup] [--budgets FILE] [--max-mb N] [--heap] [--tour SECONDS] | table result.json... [--md] | check result.json [--budgets tools/memory-budgets.json]"); process.exitCode = cmd === "help" ? 0 : 2; }

@@ -19,6 +19,7 @@ import { TownVeg } from "../_kit/town-veg";
 import { FruitBatch, beginFruit, endFruit, withoutFruit } from "../_kit/town-fruit";
 import { labViews, labRequested, buildLabs } from "../_kit/town-lab";
 import { addRock } from "../_kit/town-lagoon";
+import { SlicePace } from "../_kit/pace";
 
 const A = CAM_BUILDING;
 const AH = A.floors * (A.floorH ?? 3.2);
@@ -93,6 +94,7 @@ const mod: WorldModule = {
   async build(ctx) {
     if (labRequested()) { await buildLabs(ctx); return; }
     const t0 = performance.now();
+    const pace = new SlicePace(ctx);
     const group = new THREE.Group();
     group.name = "poi:mango-market";
     ctx.scene.add(group);
@@ -100,8 +102,9 @@ const mod: WorldModule = {
     // (__townPhase tags each long task with the phase it fell in — `after:<last lap>`)
     const lap = (k: string) => { const n = performance.now(); tm[k] = Math.round(n - tl); tl = n; (globalThis as { __townPhase?: string }).__townPhase = `after:${k}`; };
     (globalThis as { __townPhase?: string }).__townPhase = "mats";
-    await preloadTownTex(ctx.renderer);
+    await pace.wait(preloadTownTex(ctx.renderer, () => ctx.yield()));
     const mats = townMats(ctx.renderer);
+    await pace.pause();
     lap("mats");
     // (individual fruit to 8.5 m — the painted heap mound carries the pile beyond; 11 m drew ~35 k fruit tris at
     // mango-fountain-close)
@@ -122,6 +125,7 @@ const mod: WorldModule = {
       // the block pads overlap their neighbours (and run 3 m under the streets): each pad its own height, all
       // clear below the carriageways (+35 mm) — a hash step could put two neighbours (or a pad and a street) in one plane
       Mn(mx, mz).paving.add(polyGeo(poly, Y + 0.018 + (bi % 5) * 0.0025, 1), null, col("#c9c0b3"));
+      await pace.pause();
     }
     // the street plan: every street a paved ribbon with gutters + kerb lines (cut where the ground leaves the
     // pad), the second square paved, the school court painted, the orchard planted
@@ -130,29 +134,33 @@ const mod: WorldModule = {
       for (let k = 1; k < o.pts.length; k++) { const a = o.pts[k - 1], b = o.pts[k], dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); if (Math.hypot(x - a[0] - t * dx, z - a[1] - t * dz) < o.w / 2 + 0.6) return true; }
       return false;
     }) || LAYOUT.squares.some((sq) => { let ins = false; for (let i = 0, j = sq.length - 1; i < sq.length; j = i++) { const [xi, zi] = sq[i], [xj, zj] = sq[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) ins = !ins; } return ins; });
-    LAYOUT.streets.forEach((st, si) => {
+    for (const [si, st] of LAYOUT.streets.entries()) {
       // per ~30 m chunk so each piece lives in its own LOD cell
       for (let i = 0; i < st.pts.length - 1; i += 10) {
         const seg = st.pts.slice(i, Math.min(st.pts.length, i + 11)), m = seg[Math.floor(seg.length / 2)];
         addStreet(Mn(m[0], m[1]), seg, st.w, Y, st.kind, (x, z) => townFlat(x, z, -2), (x, z) => !onOtherStreet(x, z, si), (si % 4) * 0.001);
+        await pace.pause();
       }
-    });
+    }
     for (const sq of LAYOUT.squares) {
       const c = sq.reduce((a, p) => [a[0] + p[0] / sq.length, a[1] + p[1] / sq.length], [0, 0]);
       // (flush with the streets — a raised slab read as a stage; a darker border band + two ring bands)
       Mn(c[0], c[1]).paving.add(polyGeo(sq, Y + 0.04, 1), null, col("#e3d5bf"));
       for (let i = 0; i < sq.length; i++) { const a = sq[i], b = sq[(i + 1) % sq.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]); Mn(c[0], c[1]).paving.box(len + 0.4, 0.012, 0.9, M((a[0] + b[0]) / 2 - (a[0] + b[0] - 2 * c[0]) * 0.02, Y + 0.046, (a[1] + b[1]) / 2 - (a[1] + b[1] - 2 * c[1]) * 0.02, Math.atan2(b[0] - a[0], b[1] - a[1]) + Math.PI / 2), col("#a89a86")); }
       for (const [r0, r1, cc] of [[4.5, 5.2, "#c2b39b"], [9.0, 9.5, "#c8b9a2"]] as Array<[number, number, string]>) Mn(c[0], c[1]).paving.add(latheGeo([[r0, 0], [r1, 0]], 48, 1), M(c[0], Y + 0.045, c[1]), col(cc));
+      await pace.pause();
     }
     for (const pl of LAYOUT.places) {
       if (pl.kind === "court" && pl.poly) { const a = pl.poly[0], b = pl.poly[1], d = pl.poly[3], w = Math.hypot(b[0] - a[0], b[1] - a[1]), dd = Math.hypot(d[0] - a[0], d[1] - a[1]); addCourt(Mn(pl.x, pl.z), M(pl.x, Y, pl.z, Math.atan2(-(b[1] - a[1]), b[0] - a[0])), w, dd); }
     }
+    await pace.pause();
     const pl = PLAZA_POLY.map(([u, v]) => toW(u, v));
     Mn(FX, FZ).paving.add(polyGeo(pl, Y + 0.12, 1), null, col("#e9dccb"));
     for (let i = 0; i < pl.length; i++) {
       const a = pl[i], b = pl[(i + 1) % pl.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
       Mn(FX, FZ).stone.bbox(len + 0.3, 0.16, 0.34, M((a[0] + b[0]) / 2, Y + 0.06, (a[1] + b[1]) / 2, Math.atan2(b[0] - a[0], b[1] - a[1]) + Math.PI / 2), col("#c6bdb0"), 0.04);
     }
+    await pace.pause();
     // concentric ring bands of darker slabs round the fountain
     for (const [r0, r1, c] of [[FOUNTAIN_R + 1.5, FOUNTAIN_R + 2.4, "#b3aa9d"], [FOUNTAIN_R + 5.2, FOUNTAIN_R + 5.8, "#a79e91"], [FOUNTAIN_R + 9.0, FOUNTAIN_R + 9.5, "#b0a699"]] as Array<[number, number, string]>)
       Mn(FX, FZ).paving.add(latheGeo([[r0, 0], [r1, 0]], 72, 1), M(FX, Y + 0.125, FZ), col(c));
@@ -176,7 +184,7 @@ const mod: WorldModule = {
     const groupMid = new Map<string, number>();
     for (let i = 0; i < LAYOUT.parts.length; i++) { const k = groupOf(LAYOUT.parts[i].b, i); groupMid.set(k, Math.max(groupMid.get(k) ?? 0, midOf(i))); }
     for (let i = 0; i < LAYOUT.parts.length; i++) {
-      await ctx.yield(); // (time-sliced)
+      await pace.pause();
       const parts = LAYOUT.parts[i], b = parts.b;
       const dist = Math.hypot(b.x - FX, b.z - FZ);
       // bevelled trims (lod 2) only where the view camera / a kong sees them up close; the ring + plaza fabric at lod 1
@@ -191,6 +199,7 @@ const mod: WorldModule = {
       (it.main as Record<string, unknown>).trim = it.main.plaster;
       addBuildingLod1(it.lod1, parts);
       if (it.plod1) addBuildingLod1(it.plod1, parts);
+      await pace.pause();
       // rooftop props: `med` = the building's medium copy (no veg planting — that is its own LOD'd instance)
       const roofProp = (med: boolean) => (bins: TownBins, at: THREE.Matrix4, pr: RoofProp, r: () => number): boolean => {
         // rooftop planters grow real banana plants / small palms everywhere:
@@ -219,6 +228,7 @@ const mod: WorldModule = {
         // the ring's rooftop tanks/AC use the detailed market kit; the fabric keeps the cheap lathe tanks
         roofProp: roofProp(false),
       });
+      await pace.pause();
       // perf: the MEDIUM copy (drawn from 30 m to the group's `mid`): the painted LOD1 facade + real lintels / sills /
       // jambs + the low-detail rooftop kit — ~2–3 k tris a ring house instead of ~12 k (the rooftop tanks alone were ~5 k)
       lowDetail(() => addBuildingLod1(it.med, { ...parts, rng: mulberry(b.seed ?? 1) }, { frames: true, roofProp: roofProp(true) }));
@@ -233,9 +243,10 @@ const mod: WorldModule = {
       const fr = mulberry(4407);
       for (let i = 0; i < LAYOUT.parts.length; i++) {
         if (i === LAYOUT.ids.A) continue;
-        await ctx.yield();
+        await pace.pause();
         const p = LAYOUT.parts[i], b = p.b, c = Math.cos(b.yaw), sn = Math.sin(b.yaw), fh = b.floorH ?? 3.2;
         for (const w of p.walls) {
+          await pace.pause();
           const out = (u: number, o: number): [number, number] => { const lx = w.A[0] + w.dir[0] * u + w.n[0] * o, lz = w.A[1] + w.dir[1] * u + w.n[1] * o; return [b.x + lx * c + lz * sn, b.z - lx * sn + lz * c]; };
           const mid = out(w.len / 2, 2.6);
           if (inB(mid[0], mid[1], 0.1)) continue;   // a party wall / a slot: never seen
@@ -280,10 +291,12 @@ const mod: WorldModule = {
       K.addPot(hb, at(0.9, pF - 0.6, AH), rng, { size: 0.5, plant: "none" }); plant("fern", 0.9, pF - 0.6, AH + 0.46, 1.3, 0.4);
       K.addPot(hb, at(-2.6, pF - 0.45, AH, 0.5), rng, { size: 0.45, plant: "flowers" });
       K.addPlasticCrate(hb, at(1.9, pF - 0.5, AH, -0.3), "#4c9a3b", { fruit: "mango" });
+      await pace.pause();
       // the big banana plant left of the camera (its leaves frame the left edge) + a second one behind
       K.addPot(hb, at(-6.4, -24.3, 6.0, 0.4), rng, { size: 0.72, plant: "none" });
       K.addBananaPlant(hb, at(-6.4, -24.3, 6.0 + 0.66, 0), rng, { h: 2.0, leaf: 3.4, pitch: 0.6, yaws: [0.9, 1.3, 1.75, 2.2, 0.45, 2.7, -0.3] });
       K.addWaterTank(hb, at(1.8, F - 6.0, AH, 0.3), rng, { kind: "plastic", color: "#2f4f8f", scale: 1.1 });
+      await pace.pause();
       // C's front-right corner: crate of bananas on the parapet, a planter box, a pot with a banana plant
       const cy = 6.0 + 0.45 + 0.02;
       K.addFruitCrate(hb, at(-6.3, -23.25, cy, 0.08), rng, { fruit: "banana", heap: 1.0, color: "#b98b58", w: 0.66, d: 0.42 });
@@ -291,10 +304,12 @@ const mod: WorldModule = {
       K.addPot(hb, at(-9.4, -26.4, 6.0, 0.4), rng, { size: 0.78, plant: "none" });
       K.addBananaPlant(hb, at(-9.4, -26.4, 6.0 + 0.72, 0), rng, { h: 2.8, leaf: 3.3, pitch: 0.6, yaws: [0.2, 0.55, 0.95, 1.3, 1.75, 2.2, -0.2, 2.75, -2.9, -0.6] });
       K.addPlasticCrate(hb, at(-5.4, -25.4, 6.0, 0.4), "#d9483b", { fruit: "banana" });
+      await pace.pause();
       // big banana leaves up the left edge: a tall plant on C's roof just outside the frame, leaves fanned
       // toward the camera axis
       K.addPot(hb, at(-5.9, -25.0, 6.0, 0.4), rng, { size: 0.8, plant: "none" });
       K.addBananaPlant(hb, at(-5.9, -25.0, 6.0 + 0.74, 0), rng, { h: 1.3, leaf: 3.6, pitch: 0.16, yaws: [0.5, 0.9, 1.3, 1.7, 0.1, 2.2, 2.8] });
+      await pace.pause();
       // B's grey pipes on its yellow wall facing the camera (downpipe + elbow + a run under the pent + a valve)
       {
         const [px, pz] = toW(3.12, -20.45), pc = col("#9aa0a6");
@@ -305,6 +320,7 @@ const mod: WorldModule = {
         const [vx, vz] = toW(3.0, -21.4);
         hb.metal.add(new THREE.CylinderGeometry(0.11, 0.11, 0.18, 10).rotateZ(Math.PI / 2), M(vx, Y + 5.55, vz, yawUV(0, 1)), col("#c23a2a"));
       }
+      await pace.pause();
       // B's front-left corner (bottom-right): monstera + fern pots, a crate of mangoes on the parapet
       const by = 6.2 + 0.5 + 0.02;
       K.addFruitCrate(hb, at(3.9, -20.13, by, 0.06), rng, { heap: 1.0, color: "#2f8f86", w: 0.7, d: 0.45 });
@@ -313,19 +329,18 @@ const mod: WorldModule = {
       K.addPot(hb, at(4.0, -25.8, 6.2, 0.4), rng, { size: 0.42, plant: "flowers" });
     }
 
+    await pace.pause();
     lap("hero");
     // ---- fountain + statue + water (the fountain kit: shared dims = the colliders)
-    await addFountain(ctx, Mn(FX, FZ), mats, M(FX, Y + 0.12, FZ), extra, rng, { R: FOUNTAIN_R, statueHeight: STATUE_H, statueYaw: STATUE_YAW });
+    await addFountain(ctx, Mn(FX, FZ), mats, M(FX, Y + 0.12, FZ), extra, rng, { R: FOUNTAIN_R, statueHeight: STATUE_H, statueYaw: STATUE_YAW }, pace);
 
     lap("fountain");
     // ---- props (market kit), perf: every prop is built TWICE into its 12 m prop cell — the full kit (`hi`, drawn
     // within ~22 m) and the same kit inside `lowDetail()` (`lo`, plain boxes / fewer segments / no tiny parts / no fruit,
     // drawn out to 75 m). Individual fruit lives in the FruitBatch (own LOD); the painted heap mound carries the pile.
     // Each prop draws its random choices from its own seeded rng so both copies agree.
-    let tSl = performance.now();
     for (let pi = 0; pi < LAYOUT.props.length; pi++) {
-      // (time slices, not every 8th prop — a run of hero stalls makes 54 ms tasks)
-      if (performance.now() - tSl > 16) { await ctx.yield(); tSl = performance.now(); }
+      await pace.pause();
       const p = LAYOUT.props[pi];
       if (p.kind === "palm" || p.kind === "banana-plant" || p.kind === "bush" || p.kind === "monstera" || p.kind === "fern") { veg.plant(p.kind, p.x, p.z, p.yaw, p.s ?? 1, p.y ?? Y); continue; }
       // yards: shade trees (the veg area's broadleaf), walls / hedges / fences / washing lines (town-streets)
@@ -385,7 +400,9 @@ const mod: WorldModule = {
         }
       };
       build(hi, false);
+      await pace.pause();
       withoutFruit(() => mediumDetail(() => build(mid, false)));
+      await pace.pause();
       lowDetail(() => build(lo, true));
       if (plo) lowDetail(() => build(plo, true));
       // explicit shadow casters (a few boxes / a canopy card a prop) — ~10× cheaper than casting the low copy
@@ -399,11 +416,11 @@ const mod: WorldModule = {
       const bl: Partial<Record<string, [number, number]>> = { stall: [3.2, 2.2], scooter: [2.0, 0.9], bench: [2.0, 0.8], planter: [1.4, 0.8], pot: [0.9, 0.9], crate: [0.9, 0.7], pcrate: [0.8, 0.6], cratestack: [1.6, 0.8], barrel: [0.9, 0.9], table: [2.0, 0.8], cart: [2.0, 1.1] };
       const bd = bl[p.kind]; if (bd) blob(bd[0], bd[1]);
     }
-    veg.flush();
+    await veg.flushAsync(pace);
 
     // ---- lines: string lights + bunting (market kit) — full + low copies like the props
     for (let li = 0; li < LAYOUT.lines.length; li++) {
-      await ctx.yield();
+      await pace.pause();
       const l = LAYOUT.lines[li];
       const a = new THREE.Vector3(...l.a), b = new THREE.Vector3(...l.b);
       const { hi, lo, far } = lod.prop((a.x + b.x) / 2, (a.z + b.z) / 2, `l${li}`);
@@ -418,6 +435,7 @@ const mod: WorldModule = {
     for (const pl of LAYOUT.plinths) {
       Mn(pl.x, pl.z).stone.bbox(pl.w, pl.y1 - pl.y0, pl.d, M(pl.x, (pl.y0 + pl.y1) / 2, pl.z, pl.yaw), col("#b3a68c"), 0.06, (x, y, z, b, o) => { const k = Math.min(1, Math.max(0, (y - pl.y0) / 1.2)); o.multiplyScalar(0.75 + 0.25 * k); if (y < pl.y0 + 0.7) o.lerp(new THREE.Color("#6f7d4a"), 0.35 * (1 - k)); });
       lod.proxyGeo(boxGeo(pl.w, pl.y1 - pl.y0, pl.d), M(pl.x, (pl.y0 + pl.y1) / 2, pl.z, pl.yaw), "#a89b82");
+      await pace.pause();
     }
 
     // ---- the far proxy carries the town's GROUND PLAN: otherwise beyond 240 m the streets, squares, the plaza and the
@@ -428,13 +446,15 @@ const mod: WorldModule = {
     for (const [u0, v0, u1, v1] of [...LAYOUT.blocks, [-26, -46, 26, 37] as [number, number, number, number]]) {
       const e = 3.2, poly = [toW(u0 - e, v0 - e), toW(u1 + e, v0 - e), toW(u1 + e, v1 + e), toW(u0 - e, v1 + e)];
       lod.proxyGround(polyGeo(poly, Y + 0.03, 1), null, PGC);
+      await pace.pause();
     }
-    for (const st of LAYOUT.streets) { const g = ribbonGeo(st.pts, st.w, Y + 0.035, (x, z) => townFlat(x, z, -2)); if (g) lod.proxyGround(g, null, PGC); }
+    for (const st of LAYOUT.streets) { const g = ribbonGeo(st.pts, st.w, Y + 0.035, (x, z) => townFlat(x, z, -2)); if (g) lod.proxyGround(g, null, PGC); await pace.pause(); }
     // (one colour: the layers overlap a few mm apart — at 300 m+ they would fight in depth; same colour = invisible)
     for (const sq of LAYOUT.squares) lod.proxyGround(polyGeo(sq, Y + 0.04, 1), null, PGC);
     lod.proxyGround(polyGeo(PLAZA_POLY.map(([u, v]) => toW(u, v)), Y + 0.12, 1), null, PGC);
     // ---- far proxy: every building as a windowed box + roof (flat parapet slab / hip prism), tanks as boxes
     for (const pb of LAYOUT.parts) {
+      await pace.pause();
       const b = pb.b;
       lod.proxyBox(M(b.x, b.y, b.z, b.yaw), b.w, pb.H + (pb.roof.kind === "flat" ? pb.roof.parapet : 0), b.d, b.wall, pb.roof.kind === "flat" ? "#bfae94" : b.roofColor, true);
       // (a GABLE prism along the roof's ridge axis — a 4-sided pyramid turns every pitched roof into a
@@ -453,14 +473,15 @@ const mod: WorldModule = {
 
     lap("props+lines+proxy");
     endFruit();
-    fruit.build(ctx, group);
+    await fruit.buildAsync(ctx, group, pace);
     lap("fruit");
-    const n = await lod.buildAsync(ctx, group);
+    const n = await lod.buildAsync(ctx, group, pace);
     lap("merge");
-    await hedges.build(ctx, group);
+    await hedges.build(ctx, group, pace);
     lap("hedges");
     // furniture by the shared interiors kit (the rooms the server collides with), streamed in near the camera
     // (perf: rooms shown within 11 m of their cell — seen through a door / window from the street, never across the plaza)
+    await pace.pause();
     const ints = townInteriors(ctx, group, INTERIOR_ROOMS, { name: "mango", showDist: 11 });
     tm.intCells = ints.cells;
     // merge the painted signs by material (one draw per sign design instead of one per sign)
@@ -472,13 +493,15 @@ const mod: WorldModule = {
     const byMat = new Map<THREE.Material, THREE.Mesh[]>();
     for (const e of extra) { const m = e as THREE.Mesh; if (m.isMesh && m.name === "sign") { const k = m.material as THREE.Material; (byMat.get(k) ?? byMat.set(k, []).get(k)!).push(m); } else { e.userData.farShadow = false; nearGroup.add(e); } }
     for (const [mat, list] of byMat) {
+      await pace.pause();
       const geos = list.map((m) => { m.updateMatrix(); const g = m.geometry.clone(); g.applyMatrix4(m.matrix); return g; });
       const merged = mergeGeometries(geos, false);
       if (!merged) continue;
       const mesh = new THREE.Mesh(merged, mat); mesh.name = "mango:signs"; mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.farShadow = false; mesh.matrixAutoUpdate = false;
       nearGroup.add(mesh);
     }
-    console.info(`[mango-market] ${LAYOUT.buildings.length} buildings, ${n} merged meshes, ${fruit.count} fruit, ${lod.stats()}, veg fallbacks: ${veg.fallbacks}, build ${Math.round(performance.now() - t0)} ms ${JSON.stringify(tm)}`);
+    pace.finish();
+    console.info(`[mango-market] ${LAYOUT.buildings.length} buildings, ${n} merged meshes, ${fruit.count} fruit, ${lod.stats()}, veg fallbacks: ${veg.fallbacks}, build ${Math.round(performance.now() - t0)} ms ${JSON.stringify(tm)}, main-thread busy ${Math.round(pace.busyMs)} ms, longest slice ${Math.round(pace.maxMs)} ms`);
   },
 };
 export default mod;

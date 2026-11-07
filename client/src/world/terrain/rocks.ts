@@ -485,7 +485,7 @@ function dispDepthMaterial(disp: Disp) {
     shader.uniforms.uRkCam = SHARED.cam;
     shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nuniform vec3 uRkCam;");
   };
-  m.customProgramCacheKey = () => `kr-rock-depth-disp7-${disp.a.x}-${disp.a.y}`;
+  m.customProgramCacheKey = () => "kr-rock-depth-disp8";
   return m;
 }
 
@@ -822,7 +822,7 @@ function rockMaterial(arrays: LayerArrays, layer: number, opts: { moss: number; 
       .replace("#include <emissivemap_fragment>", opts.glow ? "totalEmissiveRadiance += rkEmis;" : "#include <emissivemap_fragment>")
       .replace("#include <normal_fragment_maps>", "normal = normalize((viewMatrix * vec4(rkN, 0.0)).xyz);");
   };
-  mat.customProgramCacheKey = () => `kr-rock14-${layer}-${opts.strata ? 1 : 0}-${tier}-${disp ? 1 : 0}-${opts.stack ? 1 : 0}-${opts.glow ? 1 : 0}-${opts.loMerged ? 1 : 0}${lodv ? "-lodv1" : ""}${skin ? "-skin" + (opts.skinTier ?? "s" + stk) : ""}`;
+  mat.customProgramCacheKey = () => `kr-rock15-${tier}-${disp ? 1 : 0}-${opts.stack ? 1 : 0}-${opts.glow ? 1 : 0}-${opts.loMerged ? 1 : 0}${lodv ? "-lodv1" : ""}${skin ? "-skin" + (opts.skinTier ?? "s" + stk) : ""}`;
   return mat;
 }
 
