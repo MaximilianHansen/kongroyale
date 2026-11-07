@@ -22,6 +22,7 @@ import type { Quality } from "../../engine/engine";
 import type { Terrain } from "../../../../shared/world/terrain";
 import { ATMOS_PARS, ATMOS_AO_PARS, type AtmosUniforms } from "./glsl";
 import { atmosFlags } from "./state";
+import { bake, onRestore } from "../../engine/res/restore";
 const atmosFlagsHas = (f: string) => atmosFlags().has(f);
 
 const TIER = {
@@ -497,7 +498,7 @@ export class SunShadows {
     this.fitCanopy();
     // initialise the map (depth 1 = open sky): the AO pass samples it before / without any bake (?modules without veg) —
     // an uninitialised depth texture on a sampler2DShadow made the whole AO pass output zero (a black world)
-    { const prev = renderer.getRenderTarget(); renderer.setRenderTarget(cl.shadow.map as THREE.WebGLRenderTarget); renderer.clear(true, true, false); renderer.setRenderTarget(prev); }
+    bake(() => { const prev = renderer.getRenderTarget(); renderer.setRenderTarget(cl.shadow.map as THREE.WebGLRenderTarget); renderer.clear(true, true, false); renderer.setRenderTarget(prev); });
 
     // the bake runs INSIDE a scene render (three's shadow renderer needs the live render state): a no-op mesh drawn
     // first in the opaque list calls renderer.shadowMap.render([farLight]) when a bake is pending
@@ -516,6 +517,7 @@ export class SunShadows {
     // visible only while a bake is pending (otherwise a no-op draw + program switch in every frame)
     this.hook.visible = false;
     scene.add(this.hook);
+    onRestore("bake", () => { if (this.farBakes) this.requestFarBake(); });
   }
 
   /** the video settings' shadow quality, live. epic = the ultra tier; high: shorter cascade 1; medium: 1024²

@@ -25,7 +25,6 @@ import * as THREE from "three";
 import { Engine, type Quality } from "./engine/engine";
 import { installKongbot } from "./kongbot";
 import { DEFAULT_VIEWS, applyView, parseCam, type CamSpec } from "./engine/views";
-import { enableFly } from "./engine/fly";
 import { MODULES, TITLE_MODULES } from "./world/registry";
 import type { WorldModule } from "./world/module";
 import { loadTerrain } from "./world/terrain/load";
@@ -38,6 +37,7 @@ import { WARMUP_S } from "../../shared/sim/const";
 import { resources, type Scope } from "./engine/res/scope";
 import { flag } from "./flags";
 import { afterPaint as nextFrame, noFrameWaitCount } from "./engine/frame";
+import { asOwner, contextEpoch, onRestore } from "./engine/res/restore";
 
 const shot = flag("shot");
 const errors: string[] = [];
@@ -92,6 +92,7 @@ const engine = (() => {
   catch (e) { bootFail("engine", e); throw e; }
 })();
 kr.engine = engine;
+if (flag("texprof")) await import("./engine/dev-probes").then((m) => m.installTexProf(engine), (e) => report("texprof", e));
 // the video settings (engine/display.ts): frame cap / 3D resolution now, the rest once atmos + veg exist
 const display = gameMode && !shot ? new Display(engine) : null;
 kr.display = display;
@@ -110,7 +111,7 @@ engine.renderer.debug.onShaderError = (gl, program, vs, fs) => {
   const name = (engine.renderer.info.programs as unknown as Array<{ program: WebGLProgram; name?: string }> | undefined)?.find((p) => p.program === program)?.name ?? "?";
   report("shader", `program "${name}" failed: ${log(vs) || log(fs) || (gl.getProgramInfoLog(program) ?? "").trim().slice(0, 300)}`);
 };
-kr.bench = (n?: number) => engine.bench(n);
+kr.bench = (n?: number) => import("./engine/dev-probes").then((m) => m.bench(engine, n));
 kr.fps = () => engine.liveFps();
 kr.info = () => ({ ...engine.renderer.info.render, geometries: engine.renderer.info.memory.geometries, textures: engine.renderer.info.memory.textures, programs: engine.renderer.info.programs?.length });
 // bug reports: `/` → /kongbot <message> (screenshot + context → the server)
@@ -224,9 +225,11 @@ async function buildOne(id: string, streamed: boolean): Promise<WorldModule | nu
   const t0 = performance.now();
   let m: WorldModule | null = null;
   const scope = resources.root.child(`region:${id}`);
+  const ctx = streamed && postBuild ? postBuild.moduleCtx(engine, world, id) : engine;
   try {
     m = await imports.get(id)!;
-    await m.build(engine, scope);
+    const mod = m;
+    await asOwner(id, async () => mod.build(ctx, scope));
     scopeOf.set(id, scope);
     loaded.push(m);
     modOf.set(id, m);
@@ -234,11 +237,11 @@ async function buildOne(id: string, streamed: boolean): Promise<WorldModule | nu
     Object.assign(views, m.views ?? {});
   } catch (e) { report(`build:${id}`, e); m = null; scope.dispose(); }
   buildMs[id] = Math.round(performance.now() - t0);
-  buildAdds = null; buildGate = null;
+  buildAdds = null; buildGate = null; engine.rebuilding = false;
   // behind the loading screen: start the parallel compile of what this module drew right away — the driver compiles on
   // its own threads while the next module builds (the game's prewarm compile then mostly hits the program cache)
   if (!streamed && gameMode && m) {
-    try { (engine.shared.get("atmos") as { sweep?: () => number } | undefined)?.sweep?.(); } catch { /* atmos reports */ }
+    try { atmos()?.sweep?.(); } catch { /* atmos reports */ }
     void engine.compileObjects(adds.filter((c) => c.parent === engine.scene));
   }
   rootsOf.set(id, [...new Set(adds)].filter((c) => c.parent === engine.scene));
@@ -249,7 +252,8 @@ async function runAfterBuild(m: WorldModule, streamed: boolean) {
   if (!m.afterBuild) return;
   if (!streamed) kr.stage = `afterBuild:${m.id}`;
   const t0 = performance.now();
-  try { await m.afterBuild(engine); } catch (e) { report(`afterBuild:${m.id}`, e); }
+  try { await m.afterBuild(streamed && postBuild ? postBuild.moduleCtx(engine, world, m.id) : engine); } catch (e) { report(`afterBuild:${m.id}`, e); }
+  engine.rebuilding = false;
   afterBuildMs[m.id] = (afterBuildMs[m.id] ?? 0) + Math.round(performance.now() - t0);
 }
 
@@ -294,6 +298,39 @@ function registerFar(id: string, m: WorldModule | null, streamed: boolean) {
   engine.far.register(id, roots, { x: poi.x, y, z: poi.z }, Math.max(240, poi.r * 2.2));
 }
 
+const world = { modOf, scopeOf, rootsOf, loaded, roots: (id: string) => moduleRoots(id, true), report, build: (id: string) => streamBuild(id, false) };
+
+const atmos = () => engine.shared.get("atmos") as { sweep?: () => number } | undefined;
+
+let buildQueue: Promise<unknown> = Promise.resolve();
+function streamBuild(id: string, fast: boolean): Promise<{ integrated: Promise<void> }> {
+  const built = buildQueue.then(() => buildStreamed(id, fast));
+  buildQueue = built.catch(() => {});
+  return built;
+}
+
+async function buildStreamed(id: string, fast: boolean): Promise<{ integrated: Promise<void> }> {
+  const m = await buildOne(id, true);
+  if (m) await runAfterBuild(m, true);
+  if (LOW_MEM) await postBuild!.warmTextures(moduleRoots(id, true));
+  registerStatics(id, true);
+  registerFar(id, m, true);
+  if (LOW_MEM) startFarBuild();
+  registerOcclusion(id, true);
+  kr.streamStage = `integrate:${id}`;
+  try { atmos()?.sweep?.(); } catch (e) { report(`stream-sweep:${id}`, e); }
+  // pipelined: this module's programs compile on the driver's threads while the NEXT module builds (its fresh
+  // materials stay hidden until its integration ends); at most one integration in flight
+  // (the build gate stays shut until integrateFresh's offscreen first draw has uploaded the module's vertex buffers:
+  // opened before it, the meshes on already-compiled materials drew on the next live frame and uploaded tens of MB of
+  // geometry inside it — 180-580 ms warm-up frames while Peel Harbor integrated)
+  const bg = buildGates.get(id); buildGates.delete(id);
+  let shut = !!bg;
+  const open = () => { if (!bg || !shut) return; shut = false; bg.gate.active = false; for (const o of bg.adds) ungate(o, bg.gate); engine.cull.reveal(bg.adds); };
+  return { integrated: integrateFresh(fast, moduleRoots(id, true), bg?.gate, open).finally(open).then(() => engine.markBuilt(id)) };
+}
+
+
 // ---- title modules (everything, in ?view / ?cam / ?shot pages or with ?nostream)
 const streamList: string[] = [];
 for (const [id] of entries) {
@@ -311,34 +348,28 @@ if (streamOn) {
   }
 }
 const LOW_MEM = (await postBuildImport)?.lowMemoryDevice(flag("lowmem"), flag("prepare") === "full");
+const owedBeforeMatch = new Set<string>();
 // ---- pre-ready stream (READY_BY above): largest first, each only while the predicted ready time still fits
-if (streamOn && READY_BY > 0 && !LOW_MEM) {
+if (streamOn && READY_BY > 0 && !LOW_MEM && postBuild) {
   const done = titleIds.filter((id) => buildMs[id] !== undefined);
   const want = done.reduce((a, id) => a + est(id), 0), got = done.reduce((a, id) => a + buildMs[id], 0);
   const factor = Math.min(3, Math.max(0.8, want > 0 ? got / want : 1));
   kr.bootFactor = +factor.toFixed(2);
-  const postEst = (flag("readyest") ? await postBuildImport : postBuild)?.postBuildEstimate(factor);
-  if (postEst) kr.postBuildEstimate = { ms: Math.round(postEst.ms), stored: postEst.stored };
-  const rest = postEst && flag("readyest")
-    ? (_n: number, preMs: number) => postEst.rest(preMs)
-    : (n: number) => (EXPECT.afterBuild + EXPECT.game + EXPECT.settle + 120 * n) * factor;
-  const plan = (t: number, ids: string[]) => {
-    const out: string[] = [];
-    let preMs = 0;
-    for (const id of [...ids].sort((a, b) => est(b) - est(a))) if (t + est(id) * factor + rest(out.length + 1, preMs + est(id) * factor) <= READY_BY) { out.push(id); t += est(id) * factor; preMs += est(id) * factor; }
-    return out;
-  };
-  const planned = plan(performance.now(), streamList);
+  const planner = postBuild.preReadyPlanner(est, factor, READY_BY, EXPECT.afterBuild + EXPECT.game + EXPECT.settle, flag("readyest"));
+  kr.postBuildEstimate = planner.estimate;
+  const planned = planner.plan(streamList);
   planSteps(planned);
   kr.preReadyPlan = planned.slice();
   const pre: string[] = [];
   for (const id of planned) {
-    if (performance.now() + est(id) * factor + rest(pre.length + 1, pre.reduce((a, p) => a + buildMs[p], 0) + est(id) * factor) > READY_BY) continue;
+    if (!planner.fits(id, pre.length, pre.reduce((a, p) => a + buildMs[p], 0))) continue;
     streamList.splice(streamList.indexOf(id), 1);
     pre.push(id);
     await buildOne(id, false);
   }
   kr.preReady = pre;
+  for (const id of planner.owed(streamList, pre.length)) owedBeforeMatch.add(id);
+  kr.owedBeforeMatch = [...owedBeforeMatch];
 }
 kr.programsAfterTitleModules = engine.renderer.info.programs?.length;
 enterStep("afterBuild");
@@ -368,7 +399,7 @@ if (!gameMode) {
       applyView(engine.camera, spec, engine.terrain);
     } else await setView(viewId!);
   } catch (e) { report("view", e); }
-  if (flag("fly")) enableFly(engine.camera, canvas, (fn) => engine.onUpdate(fn));
+  if (flag("fly")) void import("./engine/dev-probes").then((m) => m.enableFly(engine.camera, canvas, (fn) => engine.onUpdate(fn)), (e) => report("fly", e));
   engine.start();
 } else {
   kr.stage = "game";
@@ -459,11 +490,14 @@ let urgent = false;
 // (default: none — the match starts at once; a module that ignores the ctx.yield() contract then stalls warm-up frames,
 // which the POI modules should fix. ?heavyms=1500 = build the heavy ones behind the card.)
 const HEAVY_MS = flag("heavyms");
+const beforeMatch = (id: string) => est(id) >= HEAVY_MS || owedBeforeMatch.has(id);
 let streamNow: string | null = null;
 /** while PRACTICE waits only for the game's prefab warm-up, the island stream holds between modules — the
  *  measured 5.5 s click → match was 2.7 s of prefab warm-up + a 2.2 s module build the card sat through */
 let streamHold = false;
 const streamDone: Promise<void> = streamOn ? stream() : Promise.resolve();
+let streamFailed = false;
+streamDone.catch((e) => { streamFailed = true; report("stream", e); });
 if (!streamOn) { kr.streamed = true; engine.endStream(); startFarBuild(); }
 /**
  * called by the game before a match can start (PRACTICE / CREATE / JOIN): resolves at once when the island is complete;
@@ -482,12 +516,12 @@ kr.prepare = () => {
   // online, the plane phase switches the stream to back to back. ?prepare=full = build everything behind the card.
   if (flag("prepare") !== "full") {
     holdWarmupUntilStreamed();
-    const heavyLeft = () => !kr.streamed && (streamList.some((id) => est(id) >= HEAVY_MS) || (streamNow !== null && est(streamNow) >= HEAVY_MS));
+    const heavyLeft = () => !kr.streamed && !streamFailed && (streamList.some(beforeMatch) || (streamNow !== null && beforeMatch(streamNow)));
     if (!heavyLeft() && (!prefabs || kr.warmDone === true)) return Promise.resolve();
     return (preparing ??= (async () => {
       const card = (await prepareCardImport).prepareCard(kr); const tick = setInterval(() => card.set(), 100);
       const t0 = performance.now();
-      streamList.sort((a, b) => est(b) - est(a));
+      streamList.sort((a, b) => Number(beforeMatch(b)) - Number(beforeMatch(a)) || est(b) - est(a));
       urgent = true; kr.prepareUrgent = true; engine.sliceMs = 1e9; engine.suspended = true;
       try {
         while (heavyLeft()) await new Promise((r) => setTimeout(r, 30));
@@ -553,20 +587,22 @@ async function stream(): Promise<void> {
   streamList.sort((a, b) => dist(a) - dist(b));
   // the HEAVY modules first (the PRACTICE card waits only for them — the longer the player stays in the title, the
   // likelier they are done), then nearest to the islet first
-  streamList.sort((a, b) => (est(b) >= 1500 ? 1 : 0) - (est(a) >= 1500 ? 1 : 0));
+  streamList.sort((a, b) => Number(owedBeforeMatch.has(b)) - Number(owedBeforeMatch.has(a)) || (est(b) >= 1500 ? 1 : 0) - (est(a) >= 1500 ? 1 : 0));
   kr.streamTotal = streamList.length;
   kr.streamPending = () => streamList.slice();
   const streamMs: Record<string, number> = {};
   kr.streamMs = streamMs;
-  const atmos = () => engine.shared.get("atmos") as { sweep?: () => number } | undefined;
+  const trim = (incoming: string | null) => postBuild!.trimStreamed(engine, world, incoming, streamList, streamMs, POIS);
+  if (LOW_MEM) setInterval(() => void trim(null), 2000);
   const inflight: Promise<void>[] = [];
   // a grace of 2.5 s after ready before the first module build — several streamed POIs still build in single
   // 1-3 s tasks, and a PRACTICE click right at ready sat through one (measured 5.5-6.3 s click → match with a
   // 1.7-1.8 s card). A click in the grace holds the stream until the match is in; otherwise it starts 2.5 s later.
   { const graceUntil = performance.now() + flag("streamgrace");
     while (!urgent && !inMatch() && performance.now() < graceUntil) await new Promise((r) => setTimeout(r, 50)); }
-  while (streamList.length) {
-    const id = LOW_MEM ? await postBuild!.nextNearModule(streamList, engine.camera, POIS, flag("lowmemr")) : streamList.shift()!;
+  while (streamList.length || LOW_MEM) {
+    const id = LOW_MEM ? await postBuild!.nextNearModule(streamList, engine.camera, POIS, flag("lowmemr"), flag("lowmemview")) : streamList.shift()!;
+    if (LOW_MEM && id.startsWith("poi:")) await trim(id);
     streamNow = id;
     // in the title / lobby: one module per idle gap at the title's slice budget. In a match (warm-up) the plane must
     // not see an unbuilt POI: go flat out, and once the plane phase starts build the rest back to back.
@@ -580,26 +616,11 @@ async function stream(): Promise<void> {
     engine.sliceMs = fast ? 1e9 : engine.streamSlice(inMatch(), matchPhase(), 1.4 * (est(id) + streamList.reduce((a, x) => a + est(x), 0)), warmLeftMs()); // (×1.4: + integration)
     if (!fast) await nextFrame();
     const t0 = performance.now();
-    const m = await buildOne(id, true);
-    if (m) await runAfterBuild(m, true);
-    registerStatics(id, true);
-    registerFar(id, m, true);
-    if (LOW_MEM) startFarBuild();
-    registerOcclusion(id, true);
-    kr.streamStage = `integrate:${id}`;
-    try { atmos()?.sweep?.(); } catch (e) { report(`stream-sweep:${id}`, e); }
-    // pipelined: this module's programs compile on the driver's threads while the NEXT module builds (its fresh
-    // materials stay hidden until its integration ends); at most one integration in flight
-    // (the build gate stays shut until integrateFresh's offscreen first draw has uploaded the module's vertex buffers:
-    // opened before it, the meshes on already-compiled materials drew on the next live frame and uploaded tens of MB of
-    // geometry inside it — 180-580 ms warm-up frames while Peel Harbor integrated)
-    const bg = buildGates.get(id); buildGates.delete(id);
-    let shut = !!bg;
-    const open = () => { if (!bg || !shut) return; shut = false; bg.gate.active = false; for (const o of bg.adds) ungate(o, bg.gate); engine.cull.reveal(bg.adds); };
-    const done = integrateFresh(fast, moduleRoots(id, true), bg?.gate, open).finally(open).then(() => { engine.markBuilt(id); streamMs[id] = Math.round(performance.now() - t0); });
+    const { integrated } = await streamBuild(id, fast);
+    const done = integrated.then(() => { streamMs[id] = Math.round(performance.now() - t0); });
     inflight.push(done);
     if (inflight.length > 1) await inflight.shift();
-    if (est(id) >= HEAVY_MS) await done; // (the PRACTICE card waits for the heavy ones — integrated, not just built)
+    if (beforeMatch(id)) await done; // (the PRACTICE card waits for the heavy ones — integrated, not just built)
     streamNow = null;
   }
   await Promise.all(inflight.splice(0));
@@ -622,6 +643,11 @@ async function stream(): Promise<void> {
  *  compiled material, the second recorded `visible = false` (the first one's hiding) and restored THAT — Mist Falls' wood
  *  (all three bridges, the lookout) and its water stayed invisible for the whole session. */
 const heldFresh = new Map<THREE.Material, { vis: boolean; n: number }>();
+// materials in the scene when the context came back: their programs are gone, but they were shown before (or were about
+// to be), so the next frame compiles them where they are instead of an integration hiding the whole world until it has
+// compiled everything again. Integrations wait for the restore to finish, so this marking always comes first.
+const drawnBeforeLoss = new WeakSet<THREE.Material>();
+onRestore("source", () => engine.scene.traverse((o) => { const mm = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined; if (mm) for (const m of Array.isArray(mm) ? mm : [mm]) if (m) drawnBeforeLoss.add(m); }));
 const holdFresh = (m: THREE.Material) => { const h = heldFresh.get(m); if (h) h.n++; else heldFresh.set(m, { vis: m.visible, n: 1 }); m.visible = false; };
 const releaseFresh = (m: THREE.Material) => { const h = heldFresh.get(m); if (!h) return; if (--h.n <= 0) { heldFresh.delete(m); m.visible = h.vis; } };
 /**
@@ -630,6 +656,11 @@ const releaseFresh = (m: THREE.Material) => { const h = heldFresh.get(m); if (!h
  * textures uploaded one per slice, and only then shown. Nothing a streamed module adds can stall a frame.
  */
 async function integrateFresh(urgent: boolean, roots: THREE.Object3D[] = [], buildGate?: Gate, openGate?: () => void) {
+  while (!await integrateOnce(urgent, roots, buildGate, openGate));
+}
+
+async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate?: Gate, openGate?: () => void): Promise<boolean> {
+  while (engine.contextLost) await nextFrame();
   const r = engine.renderer;
   const props = r.properties as unknown as { get(o: object): Record<string, unknown> };
   const fresh = new Map<THREE.Material, boolean>();
@@ -642,7 +673,7 @@ async function integrateFresh(urgent: boolean, roots: THREE.Object3D[] = [], bui
       if (!m) continue;
       if (fresh.has(m)) { isFresh = true; continue; }
       const p = props.get(m);
-      if (p.programs === undefined && p.currentProgram === undefined) { fresh.set(m, m.visible); holdFresh(m); isFresh = true; }
+      if (p.programs === undefined && p.currentProgram === undefined && !drawnBeforeLoss.has(m)) { fresh.set(m, m.visible); holdFresh(m); isFresh = true; }
     }
     if (isFresh) objs.push(o);
   });
@@ -663,84 +694,102 @@ async function integrateFresh(urgent: boolean, roots: THREE.Object3D[] = [], bui
     }
     if (hit) objs.push(o);
   });
-  if (!fresh.size && !roots.length) return;
-  const t0 = performance.now();
-  // compile (parallel, against the post chain's HDR target) this module's objects + everything holding a fresh material.
-  // without KHR_parallel_shader_compile (Linux / ANGLE-Vulkan, some drivers) every compile is synchronous —
-  // then the objects go in small batches between frames (the program cache makes repeats free), so a module's shaders
-  // never freeze one frame for 0.5-2.7 s (measured in the warm-up)
-  const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile");
-  const tag = String(kr.streamStage ?? "").replace(/:(compile|draw|first-use|textures)$/, "");
-  const phase = (p: string) => { if (tag.startsWith("integrate")) kr.streamStage = `${tag}:${p}`; };
-  phase("compile");
-  if (parallel || urgent) await engine.compileObjects(objs);
-  else {
-    const leaves: THREE.Object3D[] = [];
-    // (each mesh once: `objs` holds the module roots AND the fresh objects below them)
-    const selected = new Set<THREE.Object3D>();
-    for (const o of objs) o.traverse((x) => { if ((x as THREE.Mesh).material && !selected.has(x)) { selected.add(x); leaves.push(x); } });
-    // (smaller steps under a small slice — the plane / skydive run at 7 ms; bigger ones made 57-166 ms compile gaps)
-    const cb = engine.sliceMs <= 8 ? 2 : 6;
-    // (already flattened: compiling a leaf's children again would repeat them across batches)
-    for (let i = 0; i < leaves.length; i += cb) { await engine.compileObjects(leaves.slice(i, i + cb), false); await engine.yield(); }
-  }
-  // textures FIRST, one per slice (a first draw uploads every texture it meets in that one task — the
-  // hitch log had 130-320 ms 'integrate:*:draw' gaps in the warm-up and the plane), then the first draw in chunks of
-  // ≤ 24 meshes (a top-level group can hold hundreds), then the programs' first use.
-  phase("textures");
-  const seen = new Set<THREE.Texture>();
-  const upload = (m: THREE.Material) => {
-    const out: THREE.Texture[] = [];
-    for (const v of Object.values(m as unknown as Record<string, unknown>)) {
-      const t = v as THREE.Texture;
-      if (!t || !t.isTexture || seen.has(t) || (t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) continue;
-      seen.add(t);
-      if (props.get(t).__webglTexture || !t.image) continue;
-      out.push(t);
-    }
-    // (a ShaderMaterial keeps its textures in uniforms)
-    const us = (m as THREE.ShaderMaterial).uniforms;
-    if (us) for (const k in us) { const t = us[k]?.value as THREE.Texture | undefined; if (t && t.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) { seen.add(t); if (!props.get(t).__webglTexture && t.image) out.push(t); } }
-    return out;
-  };
-  for (const [m] of fresh) for (const t of upload(m)) { try { r.initTexture(t); } catch { /* skip */ } if (!urgent) await engine.yield(); }
-  // first draw of this module's content (all LOD levels) offscreen: buffers / VAOs / first use, now — not on the frame the
-  // player first looks at it (the arrival hitch). Restored before any frame runs.
-  phase("draw");
-  if (roots.length) {
-    // (a streamed module's build gate is still shut: open for each synchronous offscreen draw only)
-    const warm = (c: THREE.Object3D[]) => { if (buildGate) buildGate.active = false; try { engine.warmDraw(c); } finally { if (buildGate) buildGate.active = true; } };
-    if (urgent) warm(roots);
+  if (!fresh.size && !roots.length) return true;
+  // a context loss resets every program, so an integration in flight would wait on compiles that never finish and
+  // keep its materials hidden: the restore resolves `restored`, this pass returns false, `finally` shows them again, and
+  // integrateFresh runs a new pass on the restored context
+  const epoch = contextEpoch();
+  let onRestored = () => {};
+  const restored = new Promise<void>((res) => { onRestored = res; });
+  const stopWatching = onRestore("source", () => onRestored());
+  const live = (p: Promise<unknown>) => Promise.race([p, restored]);
+  const gone = () => contextEpoch() !== epoch;
+  try {
+    const t0 = performance.now();
+    // compile (parallel, against the post chain's HDR target) this module's objects + everything holding a fresh material.
+    // without KHR_parallel_shader_compile (Linux / ANGLE-Vulkan, some drivers) every compile is synchronous —
+    // then the objects go in small batches between frames (the program cache makes repeats free), so a module's shaders
+    // never freeze one frame for 0.5-2.7 s (measured in the warm-up)
+    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile");
+    const tag = String(kr.streamStage ?? "").replace(/:(compile|draw|first-use|textures)$/, "");
+    const phase = (p: string) => { if (tag.startsWith("integrate")) kr.streamStage = `${tag}:${p}`; };
+    phase("compile");
+    if (parallel || urgent) await live(engine.compileObjects(objs));
     else {
-      await nextFrame();
-      const chunks: THREE.Object3D[][] = [];
-      let cur: THREE.Object3D[] = [], n = 0;
-      const CH = engine.sliceMs <= 8 ? 12 : 24;
-      // whole subtrees while they are small, their children otherwise (the mesh count bounds one warm draw)
-      const meshes = (o: THREE.Object3D) => { let k = 0; o.traverse((x) => { if ((x as THREE.Mesh).isMesh) k++; }); return k; };
-      const split = (o: THREE.Object3D) => {
-        const k = meshes(o);
-        if (k <= CH || !o.children.length) { if (n + k > CH && cur.length) { chunks.push(cur); cur = []; n = 0; } cur.push(o); n += k; return; }
-        if ((o as THREE.Mesh).isMesh) { cur.push(o); n++; } // (its own draw; children follow)
-        for (const c of o.children) split(c);
-      };
-      for (const root of roots) split(root);
-      if (cur.length) chunks.push(cur);
-      for (const c of chunks) { warm(c); await engine.yield(); }
+      const leaves: THREE.Object3D[] = [];
+      // (each mesh once: `objs` holds the module roots AND the fresh objects below them)
+      const selected = new Set<THREE.Object3D>();
+      for (const o of objs) o.traverse((x) => { if ((x as THREE.Mesh).material && !selected.has(x)) { selected.add(x); leaves.push(x); } });
+      // (smaller steps under a small slice — the plane / skydive run at 7 ms; bigger ones made 57-166 ms compile gaps)
+      const cb = engine.sliceMs <= 8 ? 2 : 6;
+      // (already flattened: compiling a leaf's children again would repeat them across batches)
+      for (let i = 0; i < leaves.length && !gone(); i += cb) { await live(engine.compileObjects(leaves.slice(i, i + cb), false)); await engine.yield(); }
     }
+    // textures FIRST, one per slice (a first draw uploads every texture it meets in that one task — the
+    // hitch log had 130-320 ms 'integrate:*:draw' gaps in the warm-up and the plane), then the first draw in chunks of
+    // ≤ 24 meshes (a top-level group can hold hundreds), then the programs' first use.
+    if (gone()) return false;
+    phase("textures");
+    const seen = new Set<THREE.Texture>();
+    const upload = (m: THREE.Material) => {
+      const out: THREE.Texture[] = [];
+      for (const v of Object.values(m as unknown as Record<string, unknown>)) {
+        const t = v as THREE.Texture;
+        if (!t || !t.isTexture || seen.has(t) || (t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) continue;
+        seen.add(t);
+        if (props.get(t).__webglTexture || !t.image) continue;
+        out.push(t);
+      }
+      // (a ShaderMaterial keeps its textures in uniforms)
+      const us = (m as THREE.ShaderMaterial).uniforms;
+      if (us) for (const k in us) { const t = us[k]?.value as THREE.Texture | undefined; if (t && t.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) { seen.add(t); if (!props.get(t).__webglTexture && t.image) out.push(t); } }
+      return out;
+    };
+    for (const [m] of fresh) for (const t of upload(m)) { try { r.initTexture(t); } catch { /* skip */ } if (!urgent) await engine.yield(); }
+    // first draw of this module's content (all LOD levels) offscreen: buffers / VAOs / first use, now — not on the frame the
+    // player first looks at it (the arrival hitch). Restored before any frame runs.
+    if (gone()) return false;
+    phase("draw");
+    if (roots.length) {
+      // (a streamed module's build gate is still shut: open for each synchronous offscreen draw only)
+      const warm = (c: THREE.Object3D[]) => { if (buildGate) buildGate.active = false; try { engine.warmDraw(c); } finally { if (buildGate) buildGate.active = true; } };
+      if (urgent) warm(roots);
+      else {
+        await nextFrame();
+        const chunks: THREE.Object3D[][] = [];
+        let cur: THREE.Object3D[] = [], n = 0;
+        const CH = engine.sliceMs <= 8 ? 12 : 24;
+        // whole subtrees while they are small, their children otherwise (the mesh count bounds one warm draw)
+        const meshes = (o: THREE.Object3D) => { let k = 0; o.traverse((x) => { if ((x as THREE.Mesh).isMesh) k++; }); return k; };
+        const split = (o: THREE.Object3D) => {
+          const k = meshes(o);
+          if (k <= CH || !o.children.length) { if (n + k > CH && cur.length) { chunks.push(cur); cur = []; n = 0; } cur.push(o); n += k; return; }
+          if ((o as THREE.Mesh).isMesh) { cur.push(o); n++; } // (its own draw; children follow)
+          for (const c of o.children) split(c);
+        };
+        for (const root of roots) split(root);
+        if (cur.length) chunks.push(cur);
+        for (const c of chunks) { warm(c); await engine.yield(); }
+      }
+    }
+    // first use: uniform / attribute tables of the new programs (a sync driver round trip — the compile is done now)
+    if (gone()) return false;
+    openGate?.();
+    phase("first-use");
+    for (const pr of (r.info.programs ?? []) as unknown as Array<{ getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
+      try { if (!pr.isReady || pr.isReady()) { pr.getUniforms?.(); pr.getAttributes?.(); } } catch { /* reported by three */ }
+      if (!urgent) await engine.yield();
+    }
+    // (what held a fresh material dissolves in instead of appearing in one frame — engine/cull.ts reveal)
+    engine.cull.reveal(objs.slice(roots.length));
+    const log = (kr.integrateLog as Array<unknown> | undefined) ?? (kr.integrateLog = []) as Array<unknown>;
+    log.push({ materials: fresh.size, textures: seen.size, ms: Math.round(performance.now() - t0) });
+    return true;
+
+  } finally {
+    stopWatching();
+    for (const [m] of fresh) releaseFresh(m);
   }
-  // first use: uniform / attribute tables of the new programs (a sync driver round trip — the compile is done now)
-  openGate?.();
-  phase("first-use");
-  for (const pr of (r.info.programs ?? []) as unknown as Array<{ getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
-    try { if (!pr.isReady || pr.isReady()) { pr.getUniforms?.(); pr.getAttributes?.(); } } catch { /* reported by three */ }
-    if (!urgent) await engine.yield();
-  }
-  for (const [m] of fresh) releaseFresh(m);
-  // (what held a fresh material dissolves in instead of appearing in one frame — engine/cull.ts reveal)
-  engine.cull.reveal(objs.slice(roots.length));
-  const log = (kr.integrateLog as Array<unknown> | undefined) ?? (kr.integrateLog = []) as Array<unknown>;
-  log.push({ materials: fresh.size, textures: seen.size, ms: Math.round(performance.now() - t0) });
 }
 
 function showError(msg: string) {

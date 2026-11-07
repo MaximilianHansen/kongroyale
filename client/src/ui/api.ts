@@ -258,6 +258,8 @@ export interface LobbyState {
   busy: boolean; error: string | null; offline: boolean;
   /** optional: match size bots fill up to (default 50) */
   capacity?: number;
+  /** optional: the host was removed for inactivity, so a guest's START takes the host role (server Lobby.claimHost) */
+  hostAway?: boolean;
   /** optional: seconds until the match starts (host pressed START) */
   startingIn?: number | null;
   /** optional: lobby code from an invite link (?join=CODE) — the home screen offers JOIN LOBBY after a callsign */

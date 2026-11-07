@@ -4,15 +4,16 @@
 // keeps BOMB.restitution of the normal speed and BOMB.friction of the tangential, and rest on a floor once slow.
 import { BOMB, WATER_LEVEL } from "./const";
 import { makeHit, type StaticWorld } from "./world";
+import * as dmath from "./dmath";
 
 export interface BombBody { x: number; y: number; z: number; vx: number; vy: number; vz: number; rest: boolean }
 const H = makeHit();
 /** the throw from the eye (ex, ey, ez) along (yaw, pitch) with the thrower's velocity: writes the start of the flight
  * into `b` (just in front of the eye, never through a wall right in front of it) */
 export function bombLaunch(world: StaticWorld, ex: number, ey: number, ez: number, yaw: number, pitch: number, pvx: number, pvz: number, b: BombBody) {
-  const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
+  const cp = dmath.cos(pitch), dx = -dmath.sin(yaw) * cp, dy = dmath.sin(pitch), dz = -dmath.cos(yaw) * cp;
   // the hand: a little right of and below the eye
-  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  const rx = dmath.cos(yaw), rz = -dmath.sin(yaw);
   const hx = ex + rx * 0.22, hy = ey - 0.12, hz = ez + rz * 0.22;
   world.raycast(ex, ey, ez, hx + dx * 0.45 - ex, hy + dy * 0.45 - ey, hz + dz * 0.45 - ez, 1, H, false);
   const k = H.hit ? Math.max(0, H.t - 0.08) : 1;
@@ -38,6 +39,6 @@ export function bombStep(world: StaticWorld, b: BombBody, dt: number): number {
   b.vx = tx * BOMB.friction - vn * BOMB.restitution * H.nx;
   b.vy = ty * BOMB.friction - vn * BOMB.restitution * H.ny;
   b.vz = tz * BOMB.friction - vn * BOMB.restitution * H.nz;
-  if (H.ny > 0.6 && Math.hypot(b.vx, b.vy, b.vz) < 1.4) { b.vx = b.vy = b.vz = 0; b.rest = true; }
+  if (H.ny > 0.6 && dmath.hypot3(b.vx, b.vy, b.vz) < 1.4) { b.vx = b.vy = b.vz = 0; b.rest = true; }
   return -vn;
 }

@@ -13,8 +13,8 @@ const BOUNDS_PAD_M = 0.01;
 // terrain slopes: full speed up to 35°, uphill
 // speed falls to SLOPE_SLOW_MUL at 45°, steeper TERRAIN is a slide (no uphill progress, no jump). Box ramps keep the
 // older SLOPE_LIMIT (51°) so designed ramps / stairs are untouched.
-export const TERRAIN_FULL_NY = Math.cos(35 * Math.PI / 180);   // 0.819
-export const TERRAIN_SLIDE_NY = Math.cos(45 * Math.PI / 180);  // 0.707
+export const TERRAIN_FULL_NY = dmath.cos(35 * Math.PI / 180);   // 0.819
+export const TERRAIN_SLIDE_NY = dmath.cos(45 * Math.PI / 180);  // 0.707
 export const SLOPE_SLOW_MUL = 0.5;
 /** the walk → slide transition is a blend over SLIDE_BLEND_LO..HI degrees (no hard edge at 45°) */
 export const SLIDE_BLEND_LO = 43, SLIDE_BLEND_HI = 47;
@@ -23,7 +23,7 @@ const RAD = 180 / Math.PI;
  * (0 ≤ 43°, smoothstep to 1 at 47°). Shared by the ground mover, the air steer over slopes and the tools. */
 export function slopeFeel(ny: number, out: Float64Array | number[]): Float64Array | number[] {
   if (ny >= TERRAIN_FULL_NY) { out[0] = 1; out[1] = 0; return out; }
-  const deg = Math.acos(Math.min(1, Math.max(-1, ny))) * RAD;
+  const deg = dmath.acos(Math.min(1, Math.max(-1, ny))) * RAD;
   let t = (deg - SLIDE_BLEND_LO) / (SLIDE_BLEND_HI - SLIDE_BLEND_LO); t = t < 0 ? 0 : t > 1 ? 1 : t;
   const s = t;                                                            // linear: an even blend per degree
   const walk = 1 - (1 - SLOPE_SLOW_MUL) * Math.min(1, (deg - 35) / 10);   // 35° → 1, 45° → 0.5
@@ -53,7 +53,7 @@ const NBX = [1, -1, 0, 0, 1, 1, -1, -1], NBZ = [0, 0, 1, -1, 1, -1, 1, -1];
 /** window cells in order of distance from the centre (ties by index — deterministic), for a (2c+1)² window */
 const orderFor = (c: number) => {
   const n = 2 * c + 1, a: number[] = []; for (let k = 0; k < n * n; k++) a.push(k);
-  const d = (k: number) => Math.hypot((k % n) - c, ((k / n) | 0) - c);
+  const d = (k: number) => dmath.hypot((k % n) - c, ((k / n) | 0) - c);
   a.sort((p, q) => d(p) - d(q) || p - q);
   return { order: Int32Array.from(a), dist: Float64Array.from(a, d) };   // dist in cells
 };
@@ -80,6 +80,7 @@ export interface Hit { hit: boolean; t: number; x: number; y: number; z: number;
 export const makeHit = (): Hit => ({ hit: false, t: 0, x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0, surf: 5, box: -1, cover: -1 });
 
 import type { Climb } from "./climb";
+import * as dmath from "./dmath";
 /** StaticWorld.roundDx: not a tree box; an offset (m) as whole centimetres, clamped to Int16 */
 const ROUND_NONE = -32768;
 const cm16 = (m: number) => Math.max(-32767, Math.min(32767, Math.round(m * 100)));
@@ -148,8 +149,8 @@ export class StaticWorld {
     for (let i = 0; i < n; i++) {
       const b = boxes[i];
       this.cx[i] = b.c[0]; this.cy[i] = b.c[1]; this.cz[i] = b.c[2];
-      this.hx[i] = b.h[0]; this.hy[i] = b.h[1] + (b.pitch ? Math.abs(Math.sin(b.pitch)) * b.h[2] : 0); this.hz[i] = b.h[2];
-      const yaw = b.yaw ?? 0; this.cos[i] = Math.cos(yaw); this.sin[i] = Math.sin(yaw);
+      this.hx[i] = b.h[0]; this.hy[i] = b.h[1] + (b.pitch ? Math.abs(dmath.sin(b.pitch)) * b.h[2] : 0); this.hz[i] = b.h[2];
+      const yaw = b.yaw ?? 0; this.cos[i] = dmath.cos(yaw); this.sin[i] = dmath.sin(yaw);
       this.surf[i] = surfaceIndex(b.surf); this.noShoot[i] = b.noShoot ? 1 : 0; this.noWalk[i] = b.noWalk ? 1 : 0; this.noDrive[i] = b.noDrive ? 1 : 0;
       if (b.round) { this.roundDx[i] = cm16(b.round[0] - this.cx[i]); this.roundDz[i] = cm16(b.round[1] - this.cz[i]); }
       if (this.surf[i] === GLASS_SURF && !b.noWalk && !b.pitch && isPaneBox(this.hx[i], this.hy[i], this.hz[i])) this.noShoot[i] = 1;   // glass: bullets break it, pass on
@@ -282,7 +283,7 @@ export class StaticWorld {
       P[0] = fx; P[1] = y; P[2] = fz; G[0] = 0; G[1] = 0; G[2] = 1; G[3] = 0; G[4] = 5; this.stepDy = 0;
       this.floorTerrain();
       if (this.solve(r, h, stepUp)) {
-        const bx = fx - x, bz = fz - z, bl = Math.hypot(bx, bz);
+        const bx = fx - x, bz = fz - z, bl = dmath.hypot(bx, bz);
         if (bl > 1e-9) { this.wallHit = true; this.wallNx = bx / bl; this.wallNz = bz / bl; } else { this.wallNx = wallX; this.wallNz = wallZ; }
         return;
       }
@@ -298,8 +299,8 @@ export class StaticWorld {
     }
     // converged, but the push goes far beyond this tick's own motion (the capsule started inside a box): glide out over
     // several ticks — toward the nearest free standable spot (a stable target tick after tick), else where it converged
-    const dx = P[0] - fx, dz = P[2] - fz, dl = Math.hypot(dx, dz);
-    const moveLen = Math.hypot(x - fx, z - fz);
+    const dx = P[0] - fx, dz = P[2] - fz, dl = dmath.hypot(dx, dz);
+    const moveLen = dmath.hypot(x - fx, z - fz);
     if (dl > DEPEN_STEP && dl > moveLen + 0.02) {
       const cx = P[0], cy = P[1], cz = P[2];
       if (this.findFree(fx, fy, fz, r, h)) this.glide(fx, fy, fz, this.FT[0], this.FT[1], this.FT[2]);
@@ -310,12 +311,12 @@ export class StaticWorld {
   /** P = from + (to - from) capped to DEPEN_STEP; held as grounded, the wall normal = the glide direction */
   private glide(fx: number, fy: number, fz: number, tx: number, ty: number, tz: number) {
     const P = this.P, G = this.G;
-    const dx = tx - fx, dy = ty - fy, dz = tz - fz, d = Math.hypot(dx, dy, dz);
+    const dx = tx - fx, dy = ty - fy, dz = tz - fz, d = dmath.hypot3(dx, dy, dz);
     const k = d > DEPEN_STEP ? DEPEN_STEP / d : 1;
     P[0] = fx + dx * k; P[1] = fy + dy * k; P[2] = fz + dz * k;
     const gy = this.terrain.height(P[0], P[2]); if (P[1] < gy) P[1] = gy;
     G[0] = 1; G[1] = 0; G[2] = 1; G[3] = 0;
-    const hl = Math.hypot(dx, dz);
+    const hl = dmath.hypot(dx, dz);
     if (hl > 1e-9) { this.wallHit = true; this.wallNx = dx / hl; this.wallNz = dz / hl; }
     this.depen = true;
   }
@@ -371,7 +372,7 @@ export class StaticWorld {
         if (viol <= 0.004) break;
       }
       if (ns === 0) return true;
-      const vl = Math.hypot(vx, vz);
+      const vl = dmath.hypot(vx, vz);
       if (viol > 0.004 || vl > 3) {                     // opposing contacts: no single move clears them all
         const k = vl > 0.5 ? 0.5 / vl : 1; P[0] += vx * k; P[2] += vz * k;   // best effort (probe callers see it moved)
         return false;
@@ -672,15 +673,15 @@ export class StaticWorld {
     const acc = this.stepAcc;                           // probe lifts must not count as the player's step
     try {
       for (let d = 0; d < 16; d++) {
-        const a = d / 16 * Math.PI * 2, dx = Math.sin(a) * 0.1, dz = Math.cos(a) * 0.1;
+        const a = d / 16 * Math.PI * 2, dx = dmath.sin(a) * 0.1, dz = dmath.cos(a) * 0.1;
         let px = x, py = y, pz = z;
         for (let k = 0; k < 24; k++) {
           this.velY = 0; this.headBump = false; this.wallHit = false;
           this.resolveMove(px + dx, py, pz + dz, dx, 0, dz, r, h, true);    // exactly as the mover moves (reverts a squeeze)
           if (this.depen || this.overlap) break;                             // a depenetration glide is not walking
-          const prog = Math.hypot(this.P[0] - px, this.P[2] - pz);
+          const prog = dmath.hypot(this.P[0] - px, this.P[2] - pz);
           px = this.P[0]; py = this.P[1]; pz = this.P[2];
-          if (Math.hypot(px - x, pz - z) >= 1.5) return true;
+          if (dmath.hypot(px - x, pz - z) >= 1.5) return true;
           if (prog < 0.02) break;
         }
       }
@@ -792,7 +793,7 @@ export class StaticWorld {
     if (S[3] !== 0) {
       if (Math.abs(p.x - S[7]) + Math.abs(p.z - S[8]) > 0.5) S[3] = 0;             // moved by something else: drop it
       else {
-        const dx = S[4] - p.x, dy = S[5] - p.y, dz = S[6] - p.z, d = Math.hypot(dx, dy, dz);
+        const dx = S[4] - p.x, dy = S[5] - p.y, dz = S[6] - p.z, d = dmath.hypot3(dx, dy, dz);
         if (d <= DEPEN_STEP) { p.x = S[4]; p.y = S[5]; p.z = S[6]; S[3] = 0; S[0] = 0; S[1] = p.x; S[2] = p.z; }
         else { const k = DEPEN_STEP / d; p.x += dx * k; p.y += dy * k; p.z += dz * k; }
         p.vx = 0; p.vy = 0; p.vz = 0; p.grounded = true; p.fallV = 0; p.airT = 0;
@@ -801,14 +802,14 @@ export class StaticWorld {
       }
     }
     if (!moving || p.swim) { S[0] = 0; S[1] = p.x; S[2] = p.z; return false; }
-    if (Math.hypot(p.x - S[1], p.z - S[2]) > UNSTICK_D) { S[0] = 0; S[1] = p.x; S[2] = p.z; return false; }
+    if (dmath.hypot(p.x - S[1], p.z - S[2]) > UNSTICK_D) { S[0] = 0; S[1] = p.x; S[2] = p.z; return false; }
     S[0] += dt;
     if (S[0] < UNSTICK_T) return false;
     S[0] = 0;                                                                        // re-arm: next check in 1 s
     // the direction the player is steering (forward = (-sin yaw, -cos yaw), right = (cos yaw, -sin yaw)): prefer a way out
     // that way, so holding the stick carries on instead of walking straight back into the next pocket
-    const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
-    let wx = mz * -sy + mx * cy, wz = mz * -cy + mx * -sy; const wl = Math.hypot(wx, wz); wx /= wl; wz /= wl;
+    const sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw);
+    let wx = mz * -sy + mx * cy, wz = mz * -cy + mx * -sy; const wl = dmath.hypot(wx, wz); wx /= wl; wz /= wl;
     // judge from the floor under the player (mid-jump the feet are up to 1.2 m above it)
     let fy = p.y;
     if (!p.grounded) { this.raycast(p.x, p.y + 0.05, p.z, 0, -1, 0, 3.05, UH, false); if (UH.hit) fy = UH.y; }
@@ -822,10 +823,11 @@ export class StaticWorld {
   unstickReset(p: object) { US.delete(p); }
 
   // ---- raycast against boxes + terrain. Writes into `out`. dir need not be normalised (t in units of dir).
-  raycast(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number, out: Hit, bullets = true): Hit {
+  // `firstHit` stops at the first hit found, which need not be the nearest: only for yes/no tests like clear().
+  raycast(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number, out: Hit, bullets = true, firstHit = false): Hit {
     out.hit = false; out.t = maxT; out.box = -1; out.cover = -1;
     // terrain: march with adaptive steps, refine with bisection
-    const len = Math.hypot(dx, dy, dz);
+    const len = dmath.hypot3(dx, dy, dz);
     if (len > 0) {
       let t = 0, prevAbove = oy - this.terrain.height(ox, oz);
       if (prevAbove < 0) { // start under ground → immediate hit
@@ -850,6 +852,8 @@ export class StaticWorld {
         }
       }
     }
+    // firstHit (a line-of-sight test): any hit decides the answer, so stop at the first one instead of finding the nearest
+    if (firstHit && out.hit) return out;
     // boxes: walk grid cells along the ray (2D DDA over x/z)
     const ex = ox + dx * out.t, ez = oz + dz * out.t;
     const rx0 = Math.min(ox, ex), rx1 = Math.max(ox, ex), rz0 = Math.min(oz, ez), rz1 = Math.max(oz, ez);
@@ -861,7 +865,7 @@ export class StaticWorld {
       // Skipping changes which cell first offers a box, so rayBox settles an exact tie as the full walk would have.
       const ix = 1 / dx, iz = 1 / dz;
       if (span > 2) { this.tieX0 = cx0; this.tieZ0 = cz0; }
-      for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
+      cells: for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
         if (span > 2) {
           const x0 = this.gridMin + cx * GRID_CELL - 1, z0 = this.gridMin + cz * GRID_CELL - 1, x1 = x0 + GRID_CELL + 2, z1 = z0 + GRID_CELL + 2;
           let t0 = 0, t1 = out.t;
@@ -872,6 +876,7 @@ export class StaticWorld {
           if (t0 > t1) continue;
         }
         this.rayCell(cz * this.gridN + cx, ox, oy, oz, dx, dy, dz, out, bullets, rx0, rx1, rz0, rz1);
+        if (firstHit && out.hit) break cells;
       }
       this.tieX0 = this.tieZ0 = -1;
     } else {
@@ -886,12 +891,12 @@ export class StaticWorld {
       for (let guard = 0; guard < 400; guard++) {
         // visit this cell and its neighbours across (boxes may straddle)
         this.rayCell(cz * this.gridN + cx, ox, oy, oz, dx, dy, dz, out, bullets, rx0, rx1, rz0, rz1);
-        if (cx === tcx && cz === tcz) break;
+        if ((firstHit && out.hit) || (cx === tcx && cz === tcz)) break;
         if (tmx < tmz) { if (tmx > out.t) break; cx += sx; tmx += tdx; } else { if (tmz > out.t) break; cz += sz; tmz += tdz; }
         if (cx < 0 || cz < 0 || cx >= this.gridN || cz >= this.gridN) break;
       }
     }
-    if (this.cover !== null && this.cover.n > 0) this.cover.ray(ox, oy, oz, dx, dy, dz, out);
+    if (!(firstHit && out.hit) && this.cover !== null && this.cover.n > 0) this.cover.ray(ox, oy, oz, dx, dy, dz, out);
     return out;
   }
   private lastCellVisited = -1;
@@ -949,7 +954,7 @@ export class StaticWorld {
 
   /** quick line-of-sight test (no hit details) */
   clear(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
-    this.raycast(ax, ay, az, bx - ax, by - ay, bz - az, 1, LOS, true);
+    this.raycast(ax, ay, az, bx - ax, by - ay, bz - az, 1, LOS, true, true);
     return !LOS.hit;
   }
 }

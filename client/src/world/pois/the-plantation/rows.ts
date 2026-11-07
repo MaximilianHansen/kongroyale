@@ -116,7 +116,7 @@ function sweep(pts: THREE.Vector3[], radial: number, rad: (t: number) => number,
   g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx); g.computeVertexNormals();
-  if (capTop) { const top = curve.getPoint(1), cap = new THREE.CircleGeometry(rad(1), radial); cap.rotateX(-Math.PI / 2); cap.translate(top.x, top.y, top.z); const cc = new Float32Array(cap.attributes.position.count * 3).fill(0.8); cap.setAttribute("color", new THREE.BufferAttribute(cc, 3)); return mergeGeometries([g, cap.toNonIndexed().index ? cap : cap], false)!; }
+  if (capTop) { const top = curve.getPoint(1), cap = new THREE.CircleGeometry(rad(1), radial); cap.rotateX(-Math.PI / 2); cap.translate(top.x, top.y, top.z); const cc = new Float32Array(cap.attributes.position.count * 3).fill(0.8); cap.setAttribute("color", new THREE.BufferAttribute(cc, 3)); return mergeGeometries([g, cap], false)!; }
   return g;
 }
 
@@ -261,7 +261,7 @@ function buildVariant(v: number): Variant {
     };
     // a light sky-blue plastic (target lit #3a9ee8 → #7cc4f2)
     const BLUE: [number, number, number] = [0.1, 0.46, 1.0], GREEN: [number, number, number] = [0.2, 0.3, 0.07], FRUIT: [number, number, number] = [0.3, 0.55, 0.08], TIE: [number, number, number] = [0.03, 0.03, 0.035];
-    if (lod >= 2) { const oc = new THREE.OctahedronGeometry(0.33, 0); oc.scale(0.95, 1.7, 0.95); oc.translate(bagTop.x, bagTop.y - 0.55, bagTop.z); return tint(oc.toNonIndexed(), BLUE); }
+    if (lod >= 2) { const oc = new THREE.OctahedronGeometry(0.33, 0); oc.scale(0.95, 1.7, 0.95); oc.translate(bagTop.x, bagTop.y - 0.55, bagTop.z); return tint(oc, BLUE); }
     const parts = [tint(bag, BLUE, true), tint(stalk, GREEN)];
     if (lod === 0) {
       parts.push(tint(bagHand(bagTop.clone().add(new THREE.Vector3(0, -BL, 0)), BR, 950 + v), FRUIT, true));

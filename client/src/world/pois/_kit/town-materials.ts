@@ -1,6 +1,8 @@
 // poi-town material set: one PBR material per surface family, all vertex-colour tinted, so a whole POI merges into
 // ~a dozen draw calls. `TownBins` = the GeoBins a POI fills, then `buildBins` adds the merged meshes to a group.
 import { Coplanar } from "./coplanar";
+import type { CoStats } from "./coplanar-solve";
+import { ctxPace, PACE_CHECK_MS, type Pace } from "./pace";
 import * as THREE from "three";
 import { GeoBin } from "./town-geo";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -189,6 +191,9 @@ export const NO_CAST: BinName[] = ["fruit", "bulb", "rope", "net", "glass", "lea
 // ================================================================================================ distance LOD
 type Tier = "fine" | "near" | "main" | "lod1" | "lo" | "shadow" | "mid" | "far" | "med";
 const TIERS: Tier[] = ["fine", "near", "main", "lod1", "lo", "shadow", "mid", "far", "med"];
+/** a tier's index in TIERS: TownLod.update keeps each unit's per-tier state in arrays indexed by it, because a
+ *  Record read with a variable tier name is a megamorphic keyed load (most of update's time at Mango Market) */
+const enum TI { Fine, Near, Main, Lod1, Lo, Shadow, Mid, Far, Med }
 /** coplanar-resolver tags: tiers drawn at the same time compare their boxes (fine + near + main = up close) */
 const CO_TAG: Record<Tier, number> = { fine: 1, near: 1, main: 1, lod1: 2, lo: 3, shadow: 9, mid: 4, far: 5, med: 6 };
 /** (perf) the TownLod switch tests as plain functions: no per-frame closures (two per LOD
@@ -214,7 +219,8 @@ interface LodItem {
   bins: Partial<Record<Tier, TownBins>>;
   ids: Record<Tier, Array<[THREE.BatchedMesh, number, boolean, number]>>;
   tris: Record<Tier, number>;
-  on: Record<Tier, boolean>;
+  /** per tier (indexed by TI): switched on by distance */
+  on: boolean[];
   cx: number; cz: number; r: number;
   /** 3D bounding sphere of the content (frustum test) */
   sy: number; sr: number;
@@ -223,7 +229,7 @@ interface LodItem {
   applied: number;
   /** drawn coverage per tier 0..1: a tier switch is a TOWN_FADE_T s dithered crossfade (both tiers
    *  drawn through complementary masks), never a one-frame swap; `fading` = some tier is between 0 and 1 */
-  f: Record<Tier, number>;
+  f: number[];
   fading: boolean;
 }
 /** props (stalls, crates, scooters, carts…) cast from their big solid parts in both their full and low copies */
@@ -310,6 +316,7 @@ function fadeProxyMaterial(m: THREE.Material, u: { value: number }) {
   m.customProgramCacheKey = () => `${k0}|town-proxy-xfade1`;
 }
 const _c4 = new THREE.Vector4(1, 1, 1, 1);
+const _bb = new THREE.Box3(), _bs = new THREE.Sphere();
 
 let shadowOnly: THREE.ShaderMaterial | null = null;
 /** the invisible material of the shadow-proxy batches: in the MAIN pass every vertex is thrown outside the clip volume
@@ -367,7 +374,7 @@ export class TownLod {
   private get(k: string, kind: LodItem["kind"], o: { mid?: number; near?: number; fine?: number } = {}): LodItem {
     let it = this.items.get(k);
     if (!it) {
-      it = { k, kind, bins: {}, ids: tierRec(() => []), tris: tierRec(() => 0), on: tierRec(() => false), f: tierRec(() => 0), fading: false, cx: 0, cz: 0, r: 0, sy: 0, sr: 0, applied: -1, maxMid: 0, top: 1e9,
+      it = { k, kind, bins: {}, ids: tierRec(() => []), tris: tierRec(() => 0), on: TIERS.map(() => false), f: TIERS.map(() => 0), fading: false, cx: 0, cz: 0, r: 0, sy: 0, sr: 0, applied: -1, maxMid: 0, top: 1e9,
         mid: Math.max(PARITY ? 80 : 0, o.mid ?? (kind === "item" ? this.o.mid ?? 1e9 : this.o.cellMid ?? 1e9)),
         near: o.near ?? (kind === "prop" ? this.o.propLo ?? this.o.near ?? 95 : kind === "item" ? this.o.itemNear ?? this.o.near ?? 95 : this.o.near ?? 95),
         fine: o.fine ?? (kind === "prop" ? this.o.propHi ?? 22 : kind === "item" ? this.o.itemFine ?? this.o.fine ?? 45 : this.o.fine ?? 45) };
@@ -468,7 +475,13 @@ export class TownLod {
 
   build(ctx: WorldCtx, group: THREE.Group): number { const o = { n: 0 }; for (const _ of this.steps(ctx, group, o)) void _; return o.n; }
   /** the same build, time-sliced (ctx.yield between LOD units / batches — no main-thread task > 50 ms) */
-  async buildAsync(ctx: WorldCtx, group: THREE.Group): Promise<number> { const o = { n: 0 }; for (const _ of this.steps(ctx, group, o)) { void _; await ctx.yield(); } return o.n; }
+  async buildAsync(ctx: WorldCtx, group: THREE.Group, pace: Pace = ctxPace(ctx)): Promise<number> {
+    if (this.co.boxes.length) { this.logCo(await this.co.resolveAsync(pace, PACE_CHECK_MS)); await pace.pause(); }
+    const o = { n: 0 };
+    for (const _ of this.steps(ctx, group, o)) { void _; await pace.pause(); }
+    return o.n;
+  }
+  private logCo(r: CoStats) { if (r.moved && flag("codebug")) console.info(`[${this.prefix}] coplanar: ${r.boxes} boxes, ${r.pairs} coplanar pairs, ${r.moved} faces moved (${r.ms} ms, longest pass ${r.maxPass} ms)`); }
   private *steps(ctx: WorldCtx, group: THREE.Group, out: { n: number }): Generator<void> {
     // 1. every non-empty (item, tier, bin) → one geometry, grouped by (material, casts)
     type Entry = { it: LodItem; tier: Tier; g: THREE.BufferGeometry };
@@ -477,11 +490,10 @@ export class TownLod {
     const posOnly = (g: THREE.BufferGeometry) => { const o = new THREE.BufferGeometry(); o.setAttribute("position", g.attributes.position); o.setIndex(g.index); return o; };
     // the coplanar resolver first: it moves box faces inside the bins' buffers, before they become geometries
     if (this.co.boxes.length) {
-      const it = this.co.steps(); let st = it.next(); while (!st.done) { yield; st = it.next(); }
-      const r = st.value; if (r.moved && flag("codebug")) console.info(`[${this.prefix}] coplanar: ${r.boxes} boxes, ${r.pairs} coplanar pairs, ${r.moved} faces moved (${r.ms} ms, longest pass ${r.maxPass} ms)`);
+      const it = this.co.steps(PACE_CHECK_MS); let st = it.next(); while (!st.done) { yield; st = it.next(); }
+      this.logCo(st.value);
       yield;
     }
-    let tS1 = performance.now();
     for (const it of this.items.values()) {
       box.makeEmpty();
       const shadowParts: THREE.BufferGeometry[] = [];
@@ -491,7 +503,7 @@ export class TownLod {
       for (const tier of TIERS) {
         const bins = it.bins[tier]; if (!bins) continue;
         for (const [name, b] of Object.entries(bins) as Array<[BinName, GeoBin]>) {
-          if (performance.now() - tS1 > 18) { yield; tS1 = performance.now(); }
+          yield;
           const g = b.buildGeometry(); if (!g) continue;
           if (tier === "shadow") { g.computeBoundingBox(); box.union(g.boundingBox!); shadowParts.push(posOnly(g)); continue; }
           const n = g.attributes.position.count, ni = g.index!.count;
@@ -529,7 +541,7 @@ export class TownLod {
       yield;
     }
     // 2. one BatchedMesh per group; each entry = one geometry + one instance (identity matrix: geometry is in world space)
-    let n = 0, tSlice = performance.now();
+    let n = 0;
     for (const grp of groups.values()) {
       const bm = new THREE.BatchedMesh(grp.list.length, grp.verts, grp.idx, grp.mat);
       bm.name = `${this.prefix}:${grp.name}${grp.cast ? "" : ":nc"}`;
@@ -544,9 +556,10 @@ export class TownLod {
       if (TOWN_XFADE && grp.name !== ("shadow" as BinName)) fadeMaterial(grp.mat);
       for (const e of grp.list) {
         // (a time slice inside a big batch too — the plaster batch alone is a 60 ms task)
-        if (performance.now() - tSlice > 18) { yield; tSlice = performance.now(); }
+        yield;
         const gid = bm.addGeometry(e.g);
         const iid = bm.addInstance(gid);
+        bm.getBoundingBoxAt(gid, _bb); bm.getBoundingSphereAt(gid, _bs);
         bm.setVisibleAt(iid, false);
         e.it.ids[e.tier].push([bm, iid, grp.cast, e.g.index!.count / 3]);
       }
@@ -591,7 +604,7 @@ export class TownLod {
     const dx = Math.max(this.minX - p.x, 0, p.x - this.maxX), dz = Math.max(this.minZ - p.z, 0, p.z - this.maxZ);
     return Math.hypot(dx, dz);
   }
-  private setTier(it: LodItem, t: Tier, on: boolean) { it.on[t] = on; }
+  private setTier(it: LodItem, t: TI, on: boolean) { it.on[t] = on; }
   /** (town-xfade) the far proxy's coverage (signed) and its fade state */
   private proxyU = { value: 1 };
   private proxyF = 0;
@@ -636,56 +649,56 @@ export class TownLod {
       // props + fine cells: 3D distance to their bounding sphere (a rooftop camera 11 m up sees them smaller)
       const dc = it.kind === "prop" || it.kind === "fine" || it.kind === "pdist" ? dist3(p.x - it.cx, p.y - it.sy, p.z - it.cz) - it.sr : dist2(p.x - it.cx, p.z - it.cz) - it.r;
       const par = it.parent;
-      const covered = !!par && (par.on.lo || par.on.far || par.on.lod1);
+      const covered = !!par && (par.on[TI.Lo] || par.on[TI.Far] || par.on[TI.Lod1]);
       if (it.kind === "pdist") {
-        const lo = !farOn && past(force, dc, it.on.lo || it.on.far, this.o.propMid ?? 0, 4);
-        const far = lo && past(force, dc, it.on.far, this.o.propLo ?? 1e9, 10);
-        this.setTier(it, "lo", lo && !far);
-        this.setTier(it, "far", far && hyst(force, dc, it.on.far, this.o.propFar ?? 0, 15));
-        this.setTier(it, "shadow", lo && !far && hyst(force, dc, it.on.shadow, this.o.castProp ?? 1e9, 4));
+        const lo = !farOn && past(force, dc, it.on[TI.Lo] || it.on[TI.Far], this.o.propMid ?? 0, 4);
+        const far = lo && past(force, dc, it.on[TI.Far], this.o.propLo ?? 1e9, 10);
+        this.setTier(it, TI.Lo, lo && !far);
+        this.setTier(it, TI.Far, far && hyst(force, dc, it.on[TI.Far], this.o.propFar ?? 0, 15));
+        this.setTier(it, TI.Shadow, lo && !far && hyst(force, dc, it.on[TI.Shadow], this.o.castProp ?? 1e9, 4));
       } else if (it.kind === "igroup") {
-        const on = !farOn && past(force, dc, it.on.lod1, it.maxMid, 10);
-        this.setTier(it, "lod1", on);
-        this.setTier(it, "shadow", on && hyst(force, dc, it.on.shadow, this.o.castItem ?? 1e9, 6));
-      } else if (it.kind === "fine") this.setTier(it, "fine", !farOn && hyst(force, dc, it.on.fine, it.fine, 6));
+        const on = !farOn && past(force, dc, it.on[TI.Lod1], it.maxMid, 10);
+        this.setTier(it, TI.Lod1, on);
+        this.setTier(it, TI.Shadow, on && hyst(force, dc, it.on[TI.Shadow], this.o.castItem ?? 1e9, 6));
+      } else if (it.kind === "fine") this.setTier(it, TI.Fine, !farOn && hyst(force, dc, it.on[TI.Fine], it.fine, 6));
       else if (it.kind === "prop") {
         const vis = !farOn && !covered;
-        const hi = vis && hyst(force, dc, it.on.fine, it.fine, 3);
+        const hi = vis && hyst(force, dc, it.on[TI.Fine], it.fine, 3);
         const hasMid = it.ids.mid.length > 0;
-        const mid = hasMid && vis && !hi && hyst(force, dc, it.on.mid, this.o.propMid ?? 0, 4);
+        const mid = hasMid && vis && !hi && hyst(force, dc, it.on[TI.Mid], this.o.propMid ?? 0, 4);
         // a cell inside an un-covered district shows its own low copy at any distance (the district covers it beyond)
-        const lo = vis && !hi && !mid && (par ? true : hyst(force, dc, it.on.lo, it.near, 10));
-        this.setTier(it, "fine", hi);
-        this.setTier(it, "mid", mid);
-        this.setTier(it, "lo", lo);
-        this.setTier(it, "far", vis && !par && !hi && !mid && !lo && hyst(force, dc, it.on.far, this.o.propFar ?? 0, 15));
-        this.setTier(it, "shadow", (hi || mid || lo) && hyst(force, dc, it.on.shadow, this.o.castProp ?? 1e9, 4));
+        const lo = vis && !hi && !mid && (par ? true : hyst(force, dc, it.on[TI.Lo], it.near, 10));
+        this.setTier(it, TI.Fine, hi);
+        this.setTier(it, TI.Mid, mid);
+        this.setTier(it, TI.Lo, lo);
+        this.setTier(it, TI.Far, vis && !par && !hi && !mid && !lo && hyst(force, dc, it.on[TI.Far], this.o.propFar ?? 0, 15));
+        this.setTier(it, TI.Shadow, (hi || mid || lo) && hyst(force, dc, it.on[TI.Shadow], this.o.castProp ?? 1e9, 4));
       } else if (it.kind === "item") {
         const vis = !farOn && !covered;
         const hasMed = it.ids.med.length > 0;
-        const mainOn = vis && hyst(force, dc, it.on.main, hasMed ? Math.min(this.o.itemMed ?? it.mid, it.mid) : it.mid, 8);
-        const medOn = hasMed && vis && !mainOn && hyst(force, dc, it.on.med, it.mid, 12);
+        const mainOn = vis && hyst(force, dc, it.on[TI.Main], hasMed ? Math.min(this.o.itemMed ?? it.mid, it.mid) : it.mid, 8);
+        const medOn = hasMed && vis && !mainOn && hyst(force, dc, it.on[TI.Med], it.mid, 12);
         const lod1On = vis && !mainOn && !medOn;
-        this.setTier(it, "main", mainOn);
-        this.setTier(it, "med", medOn);
-        this.setTier(it, "shadow", vis && hyst(force, dc, it.on.shadow, this.o.castItem ?? 1e9, 6));
-        this.setTier(it, "lod1", lod1On);
-        this.setTier(it, "near", mainOn && hyst(force, dc, it.on.near, it.near, 10));
+        this.setTier(it, TI.Main, mainOn);
+        this.setTier(it, TI.Med, medOn);
+        this.setTier(it, TI.Shadow, vis && hyst(force, dc, it.on[TI.Shadow], this.o.castItem ?? 1e9, 6));
+        this.setTier(it, TI.Lod1, lod1On);
+        this.setTier(it, TI.Near, mainOn && hyst(force, dc, it.on[TI.Near], it.near, 10));
         // furniture only with the camera below the roof (it is only ever seen through a window or a door)
-        this.setTier(it, "fine", mainOn && p.y < it.top + 1 && hyst(force, dc, it.on.fine, it.fine, 6));
+        this.setTier(it, TI.Fine, mainOn && p.y < it.top + 1 && hyst(force, dc, it.on[TI.Fine], it.fine, 6));
       } else {
         // grid cells: main (+ near within `near`)
-        const mainOn = !farOn && hyst(force, dc, it.on.main, it.mid, 12);
-        this.setTier(it, "main", mainOn);
-        this.setTier(it, "near", mainOn && hyst(force, dc, it.on.near, it.near, 10));
-        this.setTier(it, "fine", mainOn && hyst(force, dc, it.on.fine, it.fine, 6));
+        const mainOn = !farOn && hyst(force, dc, it.on[TI.Main], it.mid, 12);
+        this.setTier(it, TI.Main, mainOn);
+        this.setTier(it, TI.Near, mainOn && hyst(force, dc, it.on[TI.Near], it.near, 10));
+        this.setTier(it, TI.Fine, mainOn && hyst(force, dc, it.on[TI.Fine], it.fine, 6));
       }
       // (town-xfade) every tier's coverage eases toward its switch (the invisible shadow tier switches at once)
       let fading = false;
-      for (const t of TIERS) {
-        const want = it.on[t] ? 1 : 0;
-        let f = it.f[t];
-        if (f !== want) { f = instant || t === "shadow" ? want : want > f ? Math.min(1, f + step) : Math.max(0, f - step); it.f[t] = f; }
+      for (let ti = 0; ti < TIERS.length; ti++) {
+        const want = it.on[ti] ? 1 : 0;
+        let f = it.f[ti];
+        if (f !== want) { f = instant || ti === TI.Shadow ? want : want > f ? Math.min(1, f + step) : Math.max(0, f - step); it.f[ti] = f; }
         if (f !== want) fading = true;
         if (f > 0 || want > 0) detailActive = true;
       }
@@ -696,15 +709,15 @@ export class TownLod {
       }
       // CPU: only touch the batches when this unit's state changed (not ~5 k instance flags every frame)
       let state = (inT ? 1 : 0) | (inC ? 2 : 0);
-      for (let ti = 0; ti < TIERS.length; ti++) if (it.f[TIERS[ti]] > 0) state |= 4 << ti;
+      for (let ti = 0; ti < TIERS.length; ti++) if (it.f[ti] > 0) state |= 4 << ti;
       if (state === it.applied && !force && !fading && !it.fading) continue;
       it.applied = state;
       const wasFading = it.fading;
       it.fading = fading;
-      for (const t of TIERS) {
-        const f = it.f[t], on = f > 0;
+      for (let ti = 0; ti < TIERS.length; ti++) {
+        const t = TIERS[ti], f = it.f[ti], on = f > 0;
         // coverage in the instance colour's alpha: 1 at rest, +f fading in, −f fading out (complementary masks)
-        const a = f >= 1 ? 1 : it.on[t] ? f : -f;
+        const a = f >= 1 ? 1 : it.on[ti] ? f : -f;
         for (const [bm, id, cast] of it.ids[t]) {
           const v = on && (cast ? inC : inT);
           if (TOWN_XFADE && v && t !== "shadow" && (fading || wasFading || force)) bm.setColorAt(id, _c4.set(1, 1, 1, a));
