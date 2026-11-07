@@ -1,11 +1,11 @@
 ---------------------------- MODULE VehicleSeats ----------------------------
 (* Vehicle seats in the match simulation: v.seats[k] (shared/sim/vehicle.ts) and each rider's own st = Ride, veh, seat
    (shared/sim/player.ts) store one fact twice. This model checks that every way in and out of a seat keeps the two
-   copies equal. Checked with TLC by tools/formal/tlc.mjs (node tools/formal/tlc.mjs VehicleSeats).
+   copies equal. Checked with TLC by tools/formal/tlc.mjs (the verify-vehicle-seats skill says how to run and read it).
 
    One step is one function call that runs to completion inside Match.step (shared/sim/match.ts unless named):
      Enter     useVehicle: freeSeat then enterVehicle (vehicle.ts)
-     GetOut    stepRide (player.ts): E pressed, or the vehicle is not on its wheels any more: exitVehicle; a vehicle
+     GetOut    stepRide (player.hot.ts): E pressed, or the vehicle is not on its wheels any more: exitVehicle; a vehicle
                already Gone is passed as null, so its seat is not touched
      Switch    stepRide: crouch (switchSeat) or a seat key (takeSeat), vehicle.ts
      Die       kill: frees the seat if it is still this kong's, then veh = -1, st = Dead

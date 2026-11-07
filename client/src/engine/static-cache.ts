@@ -97,7 +97,8 @@ function entryOf(o: THREE.Object3D | null): Entry | null {
 }
 
 export class StaticCache {
-  private entries: Entry[] = [];
+  readonly entries: Entry[] = [];
+  readonly rootKey = ROOT_KEY;
   readonly enabled: boolean;
   /** objects recomposed last frame / frozen in total / roots handed back (diagnostics: __kr.engine.statics) */
   moved = 0;
@@ -130,7 +131,7 @@ export class StaticCache {
     for (const e of this.entries) { if (!on) this.unfreeze(e); else e.stale = true; }
   }
 
-  private unfreeze(e: Entry) {
+  unfreeze(e: Entry) {
     for (const o of e.frozen as Node[]) { o.matrixAutoUpdate = true; unwatchVec(o.position); unwatchVec(o.scale); unwatchRot(o); unwatchWorld(o); o.__krEntry = null; o.__krQ = false; }
     for (const o of e.manual as Node[]) { unwatchWorld(o); o.__krEntry = null; }
     e.dirty.length = 0;
@@ -138,6 +139,8 @@ export class StaticCache {
     for (const o of e.overridden as Node[]) { if (o.__krUMW) { o.updateMatrixWorld = o.__krUMW; delete o.__krUMW; } }
     e.frozen = []; e.overridden = []; e.manual = []; e.always = [];
   }
+
+
 
   /** give a root back to three for good (its structure churns: re-collecting it would cost more than it saves) */
   private release(e: Entry) {

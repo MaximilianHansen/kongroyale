@@ -1,6 +1,7 @@
 // The heightfield every system stands on: rendering, water depth, vegetation scatter, POI placement, collision,
 // bots and the server all sample THIS object. The API below is a contract.
 import { Biome, WORLD } from "./map";
+import * as dmath from "../sim/dmath";
 
 export class Terrain {
   readonly half = WORLD.HALF;
@@ -41,7 +42,7 @@ export class Terrain {
     const e = this.cell;
     const dx = this.height(x + e, z) - this.height(x - e, z);
     const dz = this.height(x, z + e) - this.height(x, z - e);
-    const nx = -dx, ny = 2 * e, nz = -dz, l = Math.hypot(nx, ny, nz);
+    const nx = -dx, ny = 2 * e, nz = -dz, l = dmath.hypot3(nx, ny, nz);
     out[0] = nx / l; out[1] = ny / l; out[2] = nz / l;
     return out;
   }

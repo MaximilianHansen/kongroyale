@@ -1,8 +1,8 @@
 ---------------------------- MODULE MatchPhases ----------------------------
 (* Match phases: Warmup, Plane, Play, Results, then the match is over (a lobby match) or warms up again (practice).
    A model of Match.step's phase logic (shared/sim/match.ts) and the warm-up hold the host wires
-   (MatchHost.holdForStream, shared/net/host.ts). Checked with TLC by tools/formal/tlc.mjs
-   (node tools/formal/tlc.mjs MatchPhases).
+   (MatchHost.holdForStream, shared/net/host.ts). Checked with TLC by tools/formal/tlc.mjs; the verify-match-phases
+   skill says how to run and read it.
 
    Time is counted in steps of the match clock. Constants stand for the real ones at a smaller scale:
      W = WARMUP_S (25 s), Lead = the 3 s before the plane where the hold parks the clock, Cap = holdForStream's maxS

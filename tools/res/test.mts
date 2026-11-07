@@ -122,6 +122,10 @@ const mb = (r: ReturnType<Ledger["report"]>, k: keyof ReturnType<Ledger["report"
   ig.setAttribute("position", new THREE.InterleavedBufferAttribute(ib, 3, 0));
   ig.setAttribute("normal", new THREE.InterleavedBufferAttribute(ib, 3, 3));
   assert.equal(geometryBytes(ig), 48);
+  const pos = g.getAttribute("position") as THREE.BufferAttribute & { releasedBytes?: number };
+  pos.releasedBytes = pos.array.byteLength;
+  (pos as unknown as { array: null }).array = null;
+  assert.equal(geometryBytes(g), 72, "a geometry whose arrays were dropped after upload still counts its GPU bytes");
   console.log("PASS  geometry bytes count each GPU buffer once: separate views separately, interleaved data once");
 }
 

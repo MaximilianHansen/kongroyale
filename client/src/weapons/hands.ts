@@ -23,6 +23,7 @@ import * as THREE from "three";
 import { rbox } from "./lib/geo";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { flag } from "../flags";
+import { releaseGeometryAfterUpload } from "../engine/geometry-release";
 
 // ------------------------------------------------------------------------------------------------ dimensions (m)
 /** palm: thickness (x), width along the grip (y), length heel → knuckles (z) */
@@ -61,7 +62,7 @@ export const ARMS2: boolean = (() => {
 const AB: THREE.SkinnedMesh[] | null = (() => { try { return flag("armsab") ? [] : null; } catch { return null; } })();
 export function swapArmsAB(v2: boolean): number {
   if (!AB) return 0;
-  for (const m of AB) { const side = m.name.endsWith("L") ? "L" : "R"; m.geometry = (v2 ? (geoCache[`${side}2`] ??= buildHandGeo(side === "L", true)) : (geoCache[side] ??= buildHandGeo(side === "L"))).geo; }
+  for (const m of AB) m.geometry = handGeo(m.name.endsWith("L") ? "L" : "R", v2).geo;
   return AB.length;
 }
 
@@ -179,7 +180,7 @@ function skin(g: THREE.BufferGeometry, bone: number, bone2 = bone, w2: (p: THREE
   return g;
 }
 
-interface HandGeo { geo: THREE.BufferGeometry; bones: THREE.Bone[] }
+interface HandGeo { geo: THREE.BufferGeometry; bones: THREE.Bone[]; /** ?geofree: the skinned bind-pose bounds */ bounds?: [THREE.Box3, THREE.Sphere] }
 
 // v2 fur: a step warmer / lighter than v1 (the target art's mid-brown clumps with lit tips; v1 read as a black stump)
 const FUR2_ROOT = new THREE.Color("#3a170b"), FUR2_MID = new THREE.Color("#5c2a13"), FUR2_TIP = new THREE.Color("#93502a");
@@ -616,6 +617,21 @@ function buildHandGeo(mirror: boolean, v2 = false): HandGeo {
 
 /** bind-pose geometry is built with x mirrored for the left hand (positions were built with sx already) */
 const geoCache: Partial<Record<"R" | "L" | "R2" | "L2", HandGeo>> = {};
+/** one geometry per side and look, shared by every hand; under ?geofree it drops its CPU arrays after upload (the skin
+ * is GPU-skinned and the hands are never culled or raycast) and a context restore rebuilds them */
+function handGeo(side: "R" | "L", v2: boolean): HandGeo {
+  const key = v2 ? (`${side}2` as const) : side;
+  let g = geoCache[key];
+  if (g) return g;
+  geoCache[key] = g = buildHandGeo(side === "L", v2);
+  releaseGeometryAfterUpload(g.geo, () => {
+    const fresh = buildHandGeo(side === "L", v2).geo, out: Record<string, THREE.TypedArray> = {};
+    for (const [name, a] of Object.entries(fresh.attributes)) out[name] = (a as THREE.BufferAttribute).array;
+    if (fresh.index) out.index = fresh.index.array;
+    return out;
+  });
+  return g;
+}
 
 // ------------------------------------------------------------------------------------------------ grip solver
 const SCAN = 72;
@@ -670,7 +686,7 @@ const tmpF = [0, 0, 0], tmpT = [0, 0, 0];
 
 export function createHand(side: "R" | "L"): Hand {
   const mirror = side === "L";
-  const src = ARMS2 ? (geoCache[`${side}2`] ??= buildHandGeo(mirror, true)) : (geoCache[side] ??= buildHandGeo(mirror));
+  const src = handGeo(side, ARMS2);
   // fresh bones per hand instance (same bind pose)
   const bones = src.bones.map((b) => { const n = new THREE.Bone(); n.name = b.name; n.position.copy(b.position); n.quaternion.copy(b.quaternion); return n; });
   const parentOf = (i: number) => { const p = src.bones[i].parent; return p ? src.bones.indexOf(p as THREE.Bone) : -1; };
@@ -684,6 +700,12 @@ export function createHand(side: "R" | "L"): Hand {
   mesh.add(root);
   root.updateMatrixWorld(true);
   mesh.bind(new THREE.Skeleton(bones), new THREE.Matrix4());
+  // ?geofree: skinned bounds read CPU vertices, so the first hand of a geometry takes them before the upload drops the
+  // arrays and later hands copy them (a Box3 over the viewmodel would otherwise compute them from a released geometry)
+  if (flag("geofree")) {
+    if (!src.bounds) { mesh.computeBoundingBox(); mesh.computeBoundingSphere(); src.bounds = [mesh.boundingBox!.clone(), mesh.boundingSphere!.clone()]; }
+    else { mesh.boundingBox = src.bounds[0].clone(); mesh.boundingSphere = src.bounds[1].clone(); }
+  }
   const sx = mirror ? -1 : 1;
   const palm = bones[B_PALM], wrist = bones[B_WRIST];
   const knuckle = FY.map((_, f) => bones[B_F + f * 3].position.clone());

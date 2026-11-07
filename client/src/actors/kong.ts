@@ -10,7 +10,10 @@
 // (the lo body shrunk 1.5 cm along its normals, or the min body for small kongs) — the hi/lo/min meshes never do; the
 // proxy is skipped in the colour pass. Friend/foe: team rim for squad mates, a warm-red rim for foes that grows with
 // distance. The held weapon is a real Object3D on a per-kong hand socket that follows the right wrist bone
-// (weapons area's createHeldWeapon); it is hidden once the kong is tiny on screen.
+// (weapons area's createHeldWeapon); it is hidden once the kong is tiny on screen. Animation is budgeted by the same
+// projected height: a min-tier kong re-poses at most 30 times a second, one out of view and casting no shadow into it 10
+// times, and its last pose follows its body rigidly in between (ANIM_SMALL_S); drawing never changes, only how often a pose
+// is computed.
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { WorldCtx } from "../engine/engine";
@@ -55,6 +58,11 @@ const UPV = new THREE.Vector3(0, 1, 0);
 /** near fade (m from the camera to the kong's body axis): [gone, fully opaque] */
 const NEAR_FADE = [0.5, 1.3];
 const PX_HI = 320, PX_LO = 52, HYST = 0.08, FADE_S = 0.3, PX_SHADOW_LO = 200, PX_SHADOW = 26, PX_WEAPON = 22;
+/** animation budget (s between full re-poses): a kong drawn under PX_LO (the min tier) re-poses at most every ANIM_SMALL_S,
+ *  one that is neither in view nor casting a shadow into it every ANIM_HIDDEN_S; in between, its last pose follows its
+ *  body (KongAnimator.follow). Bigger kongs, staged ones (IK, overlays, show poses, post-processed bones) and stills
+ *  re-pose every frame. */
+const ANIM_SMALL_S = 1 / 30, ANIM_HIDDEN_S = 0.1;
 /** held weapons follow the kong's tier: the real (full-detail, shadow-casting) weapon object only on hi kongs; lo kongs
  *  draw an instanced ≤1.5k-tri LOD per weapon id (no shadow), min kongs a ≤0.35k-tri silhouette, hidden below PX_WEAPON */
 const WPN_TRIS = [1500, 350], WPN_CELL = [0.03, 0.07];
@@ -85,6 +93,8 @@ interface Batch { tier: Tier | "shadow-lo" | "shadow-min" | "weapon" | "wshadow"
   /** kong-variety: an accessory batch — 0..2 = hats (outfits.ts HAT_IDS), 3..5 = tops (TOP_IDS) */
   acc?: number }
 interface Slot { idx: number; anim: KongAnimator; pose: KongPose | null; visible: boolean; alive: boolean; team: THREE.Color; rim: number; foe: boolean; friend: boolean; socket: THREE.Object3D; offSocket: THREE.Object3D | null; weaponVisible: boolean; weaponRarity: Rarity; px: number; inView: boolean; maxTier: Tier; shorts: THREE.Color; fur: number; lodBias: number; rimOverride: THREE.Color | null; rimOverrideK: number; fill: THREE.Color; key: number; hat: number; top: number; wpn: WeaponId | null; off: WeaponId | null; sockW: THREE.Matrix4; offW: THREE.Matrix4; wTier: number; shadow: boolean; wShadow: boolean; tier: Tier; prevTier: Tier; fade: number; seen: boolean; upTick: number; near: number; pov: boolean;
+  /** seconds of animation owed since the last full re-pose (the animation budget, ANIM_SMALL_S) */
+  animDt: number;
   /** (caster) this kong's team outline colour, linear (null = none) — only drawn once kongOutlines() turned them on */
   outline: THREE.Color | null }
 
@@ -802,6 +812,11 @@ class KongManager {
     return d;
   }
 
+  warmBatches(): THREE.Object3D {
+    for (const id of this.wpnGeo.keys()) { this.weaponBatch(id, 0); this.weaponBatch(id, 1); this.weaponShadowBatch(id); }
+    return this.group;
+  }
+
   private addBatch(tier: Batch["tier"], mat: Batch["mat"], merged: THREE.BufferGeometry, material: THREE.Material, proxy: boolean, weapon = false): Batch {
     const geo = new THREE.InstancedBufferGeometry();
     for (const k of Object.keys(merged.attributes)) geo.setAttribute(k, merged.attributes[k]);
@@ -842,7 +857,7 @@ class KongManager {
     const s: Slot = {
       idx, anim: new KongAnimator(seed), pose: null, visible: true, alive: true, team: new THREE.Color("#ffffff"), rim: 0, foe: false, friend: false, socket: new THREE.Object3D(), offSocket: null,
       weaponVisible: false, weaponRarity: "common", px: 0, inView: false, maxTier: 0, shorts: SHORTS[seed % SHORTS.length].clone(), fur: 0.9 + r(1) * 0.2, lodBias: 1, rimOverride: null, rimOverrideK: 0, fill: FILL.clone(), key: 0, hat: -1, top: -1,
-      wpn: null, off: null, sockW: new THREE.Matrix4(), offW: new THREE.Matrix4(), wTier: -1, shadow: false, wShadow: false, tier: 1, prevTier: 1, fade: 0, seen: false, upTick: -9, near: 1, pov: false, outline: null,
+      wpn: null, off: null, sockW: new THREE.Matrix4(), offW: new THREE.Matrix4(), wTier: -1, shadow: false, wShadow: false, tier: 1, prevTier: 1, fade: 0, seen: false, upTick: -9, near: 1, pov: false, outline: null, animDt: 0,
     };
     s.socket.name = "hand-socket";
     this.slots.push(s);
@@ -1138,20 +1153,26 @@ export async function createKong(ctx: WorldCtx, opts: { variant?: number; lod?: 
       slot.team.set(TEAM_COLORS[p.team % TEAM_COLORS.length]);
       slot.friend = !!p.team && p.friendly;
       slot.foe = !!p.team && !p.friendly;
-      // eye contact: the camera in front of the face within 12 m → the eyes find it (lobby, view cameras, a foe facing
-      // you); else free saccades. Head bone frame = rest model axes at the head joint (face −Z, eyes ≈ (±0.07, 0.2, −0.16)).
-      {
-        eyeM.copy(slot.anim.bone("head")).invert();
+      // the animation budget: the size and visibility from the last frame() pick how often this kong re-poses (a kong
+      // seen for the first time has px 0 and re-poses at once); between re-poses the owed time accumulates
+      const an = slot.anim;
+      const every = ctx.shotMode || FORCE_TIER !== null || slot.px === 0 || slot.px >= PX_LO || an.ik || an.overlay || an.showPose || an.postPose ? 0
+        : slot.inView || slot.shadow ? ANIM_SMALL_S : ANIM_HIDDEN_S;
+      slot.animDt += dt;
+      if (slot.animDt >= every) {
+        // eye contact: the camera in front of the face within 12 m → the eyes find it (lobby, view cameras, a foe facing
+        // you); else free saccades. Head bone frame = rest model axes at the head joint (face −Z, eyes ≈ (±0.07, 0.2, −0.16)).
+        eyeM.copy(an.bone("head")).invert();
         eyeV.copy(ctx.camera.position).applyMatrix4(eyeM).sub(EYE_MID);
         const d = eyeV.length();
-        slot.anim.gazeAt = d > 0.3 && d < 12 && -eyeV.z > 0.35 * d && p.state !== "dead"
+        an.gazeAt = d > 0.3 && d < 12 && -eyeV.z > 0.35 * d && p.state !== "dead"
           ? (gazeXY.x = THREE.MathUtils.clamp(-eyeV.x / d, -0.36, 0.36), gazeXY.y = THREE.MathUtils.clamp(eyeV.y / d + 0.03, -0.28, 0.3), gazeXY) : null;
-      }
-      slot.anim.update(p, dt);
-      if (ctx.shotMode) slot.anim.settleFace();
+        an.update(p, slot.animDt);
+        slot.animDt = 0;
+        if (ctx.shotMode) an.settleFace();
+      } else an.follow(p);
       ensureWeapon(p.state === "dead" || p.state === "freefall" || p.state === "glide" || p.state === "plane" || p.state === "emote" || p.state === "zip" || p.state === "drive" ? null : p.weapon);
       // hand socket at the right fist, aimed along yaw/pitch (world) — expressed in g's parent space
-      const an = slot.anim;
       fistPos.copy(FIST).applyMatrix4(an.bone("wristR"));
       const rl = an.reloadDip;
       aimE.set(an.gunPitch + an.aimPitchOff + an.recoil.x * 0.05 - rl * 0.5, p.yaw + an.aimYawOff + (an.twoHanded ? 0.0 : 0.04), -rl * 0.9 + (an.twoHanded ? 0 : -0.12));

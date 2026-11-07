@@ -8,7 +8,7 @@ export const RESULT_VERSION = 1;
 /** Distribution of correlated samples (ticks, frames, packets) inside ONE run. Not a set of independent trials. */
 export interface Summary { n: number; mean: number; p50: number; p95: number; p99: number; max: number }
 
-export type Unit = "ms" | "bytes" | "bytes/s" | "count" | "1/s" | "MB";
+export type Unit = "ms" | "bytes" | "bytes/s" | "count" | "1/s" | "MB" | "%";
 
 /** A metric a runner could not measure is recorded with its reason, never as zero. */
 export type Metric =

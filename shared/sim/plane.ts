@@ -9,6 +9,7 @@
 // - at planeTime ≥ PLANE_OPEN_S + PLANE_BAY_S an input exits by itself (the bay closes), at the closing tick's position.
 import { DT, PLANE_ALT, PLANE_BAY_S, PLANE_SPEED } from "./const";
 import { B, PS, type Input, type Player } from "./player";
+import * as dmath from "./dmath";
 
 export interface PlaneLine { x0: number; z0: number; x1: number; z1: number; dx: number; dz: number }
 /** seconds after the plane phase began until the ramp opens */
@@ -27,7 +28,7 @@ const P = { x: 0, z: 0 };
 export function planeExit(p: Player, plane: PlaneLine, start: number, T: number) {
   planePosAt(plane, start, T, P);
   const a = p.id * 2.399963229728653, r = 1.4 + (p.id % 4) * 0.9;
-  p.st = PS.Freefall; p.x = P.x + Math.cos(a) * r; p.z = P.z + Math.sin(a) * r; p.y = PLANE_ALT - 3;
+  p.st = PS.Freefall; p.x = P.x + dmath.cos(a) * r; p.z = P.z + dmath.sin(a) * r; p.y = PLANE_ALT - 3;
   p.vx = plane.dx * PLANE_SPEED * 0.4; p.vz = plane.dz * PLANE_SPEED * 0.4; p.vy = -5;
   p.grounded = false; p.crouch = false; p.swim = false; p.under = false; p.slope = false; p.sprint = false;
   p.coyote = 0; p.jumpBuf = 0; p.airT = 0; p.fallV = 0;

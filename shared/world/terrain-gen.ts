@@ -17,6 +17,7 @@ import { Biome, POIS, WORLD, poiById } from "./map";
 import { Simplex2, clamp, lerp, mulberry32, smoothstep } from "./noise";
 import type { Box } from "./colliders";
 import { gzipSync, gunzipSync } from "three/examples/jsm/libs/fflate.module.js";
+import * as dmath from "../sim/dmath";
 
 export interface TerrainData {
   heights: Float32Array;
@@ -108,12 +109,12 @@ function lagoonKeepD(x: number, z: number): number {
   const bx = Math.max(380 - x, x - 470, Math.abs(z + 336) - 34);
   // + veg's STILT TOWN clearing (shared/pois/stilt-town.ts: r 120 round (350, −330)) — an islet inside it would stay a
   // bare mud flat
-  const vegClear = Math.hypot(x - 350, z + 330) - 124;
+  const vegClear = dmath.hypot(x - 350, z + 330) - 124;
   // + THE MURK's swamp (its pools / hummocks overwrite the lagoon heights out to ~1.4 r)
-  const murk = Math.hypot(x - MURK.x, (z - MURK.z) * 1.1) - MURK.r * 0.85;
+  const murk = dmath.hypot(x - MURK.x, (z - MURK.z) * 1.1) - MURK.r * 0.85;
   // (the mouth keep only where the channel cuts the barrier, z < −470 — inside the lagoon body islets may flank it)
-  return Math.min(vegClear, murk, Math.hypot(x - STILT_KEEP.x, z - STILT_KEEP.z) - STILT_KEEP.r, bx, z < -470 ? polyDist(LAGOON_MOUTH, x, z).d - 26 : 1e9,
-    Math.hypot(x - 280, z + 322) - 34, Math.hypot(x - 245, z + 336) - 36);   // river mouth (poi-jungle's water ends at (240,−330))
+  return Math.min(vegClear, murk, dmath.hypot(x - STILT_KEEP.x, z - STILT_KEEP.z) - STILT_KEEP.r, bx, z < -470 ? polyDist(LAGOON_MOUTH, x, z).d - 26 : 1e9,
+    dmath.hypot(x - 280, z + 322) - 34, dmath.hypot(x - 245, z + 336) - 36);   // river mouth (poi-jungle's water ends at (240,−330))
 }
 export function lagoonIslets(): Islet[] {
   if (ISLETS) return ISLETS;
@@ -132,7 +133,7 @@ export function lagoonIslets(): Islet[] {
   }
   // open channels ≥ 14 m between neighbours (conservative: the ellipses' major semi-axes)
   for (let pass = 0; pass < 3; pass++) for (let a = 0; a < out.length; a++) for (let b = a + 1; b < out.length; b++) {
-    const A = out[a], B = out[b], d = Math.hypot(A.x - B.x, A.z - B.z), ra = A.R * Math.sqrt(A.el), rb = B.R * Math.sqrt(B.el);
+    const A = out[a], B = out[b], d = dmath.hypot(A.x - B.x, A.z - B.z), ra = A.R * Math.sqrt(A.el), rb = B.R * Math.sqrt(B.el);
     const over = ra + rb + 13 - d;
     if (over <= 0) continue;
     const s = (ra + rb - over) / (ra + rb);
@@ -147,8 +148,8 @@ function isletD(n: Simplex2, x: number, z: number): number {
   for (const q of lagoonIslets()) {
     const dx = wx - q.x, dz = wz - q.z;
     if (Math.abs(dx) > 70 || Math.abs(dz) > 70) continue;
-    const c = Math.cos(q.an), s = Math.sin(q.an), lx = dx * c + dz * s, lz = -dx * s + dz * c;
-    best = Math.max(best, q.R - Math.hypot(lx / Math.sqrt(q.el), lz * Math.sqrt(q.el)));
+    const c = dmath.cos(q.an), s = dmath.sin(q.an), lx = dx * c + dz * s, lz = -dx * s + dz * c;
+    best = Math.max(best, q.R - dmath.hypot(lx / Math.sqrt(q.el), lz * Math.sqrt(q.el)));
   }
   return best + 1.6 * n.fbm(x / 11, z / 11, 2);
 }
@@ -161,7 +162,7 @@ export function lagoonShoreAt(x: number, z: number): number {
   const e = edgeDist(poly, x, z);
   // (fades out 90–130 m from the shore — the splat's "low ground within 80 m of water → sand" rule would paint a
   // sand band 60–100 m inland round the lagoon)
-  return Math.max(1 - smoothstep(90, 130, e), 1 - smoothstep(MURK.r * 0.9, MURK.r * 1.5, Math.hypot(x - MURK.x, (z - MURK.z) * 1.1)));
+  return Math.max(1 - smoothstep(90, 130, e), 1 - smoothstep(MURK.r * 0.9, MURK.r * 1.5, dmath.hypot(x - MURK.x, (z - MURK.z) * 1.1)));
 }
 /** STILT TOWN market (keep its water open) */
 const STILT_KEEP = { x: 368, z: -333, r: 78 };
@@ -169,7 +170,7 @@ const STILT_KEEP = { x: 368, z: -333, r: 78 };
  * around the pad centre, rows run along ROW_DIR (0.8, −0.6), 3.7 m apart). `yaw` = direction ACROSS the rows (the farm
  * texture's u axis), so the furrows run with the planted rows. */
 const PLANT_POI = poiById("the-plantation");
-export const PLANTATION_FIELD = { x: PLANT_POI.x, z: PLANT_POI.z, r: 150, yaw: Math.atan2(0.8, 0.6), rowGap: 3.7 };
+export const PLANTATION_FIELD = { x: PLANT_POI.x, z: PLANT_POI.z, r: 150, yaw: dmath.atan2(0.8, 0.6), rowGap: 3.7 };
 /** THE MURK: low mangrove swamp with pools at the lagoon's SE end */
 export const MURK = { x: 572, z: -214, r: 120 };
 
@@ -181,10 +182,10 @@ export const VOLCANO = { x: -380, z: -430, peak: 252, rim: 252, floor: 208, crat
 export const BADLANDS = { x: -640, z: -540, r: 170 };
 /** 0..1 badlands membership (shared by biome + client material): fan of lava tongues NW of the cone */
 export function badlandsW(n: Simplex2, x: number, z: number): number {
-  const dx = x - VOLCANO.x, dz = z - VOLCANO.z, r = Math.hypot(dx, dz), a = Math.atan2(dz, dx);
+  const dx = x - VOLCANO.x, dz = z - VOLCANO.z, r = dmath.hypot(dx, dz), a = dmath.atan2(dz, dx);
   // centred on bearing ≈ 205° (WNW), spanning ±55°, from the cone foot (r≈150) out to the coast
   let da = a - 3.6; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
-  const tongues = 0.5 + 0.5 * Math.sin(a * 9 + 1.3 * n.fbm(r / 90, a * 2, 2));
+  const tongues = 0.5 + 0.5 * dmath.sin(a * 9 + 1.3 * n.fbm(r / 90, a * 2, 2));
   const fan = 1 - smoothstep(0.32, 0.6, Math.abs(da) + 0.18 * n.fbm(x / 120 + 3, z / 120, 3) - 0.2 * tongues);
   // (the lava field runs out to the black cliffs of the NW lobe)
   return fan * smoothstep(140, 180, r) * (1 - smoothstep(400, 450, r + 30 * n.fbm(x / 80, z / 80, 2)));
@@ -197,12 +198,12 @@ const NOISE_GULLY = new Simplex2(WORLD.SEED + 71), NOISE_GULLY_W = new Simplex2(
  * U-shaped channels (rounded floor, soft shoulders — the profile has no crease, so the 2 m grid can no longer
  * zipper a V-notch along every gully line) with sharper ribs left standing between them. */
 export function coneGully(x: number, z: number): number {
-  const V = VOLCANO, dx = x - V.x, dz = z - V.z, vr = Math.hypot(dx, dz);
+  const V = VOLCANO, dx = x - V.x, dz = z - V.z, vr = dmath.hypot(dx, dz);
   if (vr < V.crater * 0.8 || vr > V.cone + 40) return 0;
-  const ang = Math.atan2(dz, dx), arc = ang * 150;
+  const ang = dmath.atan2(dz, dx), arc = ang * 150;
   // trunk gullies: a function of the angle (continuous from the rim to the foot), wandering slowly with radius.
   // ~16 trunks round the cone, cut 3.5 m deep right below the lip — sharp ribs all the way up a ridged cone
-  const wu = arc + 16 * NOISE_GULLY_W.fbm(Math.cos(ang) * 1.7 + 3, Math.sin(ang) * 1.7 + vr / 150, 3);
+  const wu = arc + 16 * NOISE_GULLY_W.fbm(dmath.cos(ang) * 1.7 + 3, dmath.sin(ang) * 1.7 + vr / 150, 3);
   const t = clamp((vr - V.crater) / (V.cone - V.crater), 0, 1);
   const q1 = Math.abs(NOISE_GULLY.noise(wu / 58, vr / 900));
   const trunk = 1 - smoothstep(0, 0.36, q1);
@@ -222,12 +223,12 @@ const NOISE_RILL = new Simplex2(WORLD.SEED + 74);
  * screen-derivative flute bump drew dotted grids and moiré at eye level). Weaker on ripe-peak's terraced fan (bearing
  * 2.40 ± 0.8), where poi-jungle's benches stand. Depth (m, ≥ 0). */
 export function coneRill(x: number, z: number): number {
-  const V = VOLCANO, dx = x - V.x, dz = z - V.z, vr = Math.hypot(dx, dz);
+  const V = VOLCANO, dx = x - V.x, dz = z - V.z, vr = dmath.hypot(dx, dz);
   if (vr < V.crater + 3 || vr > V.cone + 55) return 0;
-  const ang = Math.atan2(dz, dx), t = clamp((vr - V.crater) / (V.cone - V.crater), 0, 1.3);
-  const wand = 0.045 * NOISE_RILL.fbm(Math.cos(ang) * 1.6 + 2, Math.sin(ang) * 1.6 + vr / 130, 2);
+  const ang = dmath.atan2(dz, dx), t = clamp((vr - V.crater) / (V.cone - V.crater), 0, 1.3);
+  const wand = 0.045 * NOISE_RILL.fbm(dmath.cos(ang) * 1.6 + 2, dmath.sin(ang) * 1.6 + vr / 130, 2);
   const set = (n: number, s: number) => {
-    const ph = (ang + wand) * n / (2 * Math.PI) + 0.28 * NOISE_RILL.noise(Math.cos(ang) * 3 + s, Math.sin(ang) * 3 + vr / 70);
+    const ph = (ang + wand) * n / (2 * Math.PI) + 0.28 * NOISE_RILL.noise(dmath.cos(ang) * 3 + s, dmath.sin(ang) * 3 + vr / 70);
     const u = Math.abs(ph - Math.floor(ph) - 0.5) * 2;   // 0 at the rill floor, 1 on the crest
     const k = 0.5 + 0.5 * NOISE_RILL.noise(Math.floor(ph) * 0.37 + s, vr / 90);   // per-rill depth (continuous at the crest)
     return (1 - u * u) * (0.35 + 0.65 * k);
@@ -247,9 +248,9 @@ export const CRATER_BREACH = 3.55;
 /** crater lip height at bearing `a`: an irregular, LOW-frequency lip — a high N/NE wall, a lower S rim and a
  * 12 m breach notch on the WSW side — instead of a uniform ring (a narrow uniform crest aliased into sawteeth) */
 export function craterRim(a: number): number {
-  const c = Math.cos(a), s = Math.sin(a);
-  return VOLCANO.rim + 6.5 * NOISE_RIM.noise(c * 1.1 + 5, s * 1.1) + 3.5 * NOISE_RIM.noise(c * 2.4, s * 2.4 + 9) + 4.5 * Math.cos(a - 5.5)
-    - 8 * Math.exp(-((angD(a, CRATER_BREACH) / 0.14) ** 2));
+  const c = dmath.cos(a), s = dmath.sin(a);
+  return VOLCANO.rim + 6.5 * NOISE_RIM.noise(c * 1.1 + 5, s * 1.1) + 3.5 * NOISE_RIM.noise(c * 2.4, s * 2.4 + 9) + 4.5 * dmath.cos(a - 5.5)
+    - 8 * dmath.exp(-(dmath.pow(angD(a, CRATER_BREACH) / 0.14, 2)));
 }
 /** rocky buttress spurs (radial ridges with a sharp crest) + shoulder humps that break the cone's smooth silhouette:
  * [bearing, half-width (m), crest height (m), r0, r1]. Kept off the ripe-peak terraces (bearings 0 … 1.55). */
@@ -262,22 +263,22 @@ export const CONE_SPURS: Array<[number, number, number, number, number]> = [
 const CONE_HUMPS: Array<[number, number, number, number]> = [[5.34, 122, 34, 26], [2.14, 150, 32, 22], [3.95, 168, 26, 10], [2.45, 120, 22, 14]];
 /** extra relief of the cone at (x, z): spurs + humps (m, ≥ 0) and the crest weight 0..1 (for crag placement) */
 export function coneSpur(x: number, z: number): { h: number; crest: number } {
-  const V = VOLCANO, dx = x - V.x, dz = z - V.z, vr = Math.hypot(dx, dz);
+  const V = VOLCANO, dx = x - V.x, dz = z - V.z, vr = dmath.hypot(dx, dz);
   if (vr < V.crater || vr > V.cone + 60) return { h: 0, crest: 0 };
-  const a = Math.atan2(dz, dx);
+  const a = dmath.atan2(dz, dx);
   let h = 0, crest = 0;
   for (const [sa, w, sh, r0, r1] of CONE_SPURS) {
     const lat = Math.abs(angD(a, sa + 0.06 * NOISE_RIM.noise(vr / 60, sa))) * vr;
     if (lat > w) continue;
     const along = smoothstep(r0, r0 + 35, vr) * (1 - smoothstep(r1 - 45, r1, vr));
     const p = 1 - lat / w, k = along * (0.75 + 0.25 * NOISE_RIM.noise(vr / 23 + sa * 7, sa));
-    h = Math.max(h, sh * p ** 1.7 * k);
+    h = Math.max(h, sh * dmath.pow(p, 1.7) * k);
     crest = Math.max(crest, smoothstep(0.55, 0.9, p) * along);
   }
   for (const [ha, hr, br, hh] of CONE_HUMPS) {
-    const hx = V.x + Math.cos(ha) * hr, hz = V.z + Math.sin(ha) * hr, d = Math.hypot(x - hx, z - hz);
+    const hx = V.x + dmath.cos(ha) * hr, hz = V.z + dmath.sin(ha) * hr, d = dmath.hypot(x - hx, z - hz);
     if (d > br * 1.6) continue;
-    const g = Math.exp(-((d / br) ** 2) * 1.6);
+    const g = dmath.exp(-(dmath.pow(d / br, 2)) * 1.6);
     h = Math.max(h, hh * g * (0.8 + 0.2 * NOISE_RIM.noise(x / 14, z / 14)));
     crest = Math.max(crest, smoothstep(0.45, 0.85, g));
   }
@@ -489,9 +490,9 @@ const CAM_KEEP_R = 3;
 
 // ================================================================ helpers
 function ellipseD(e: Ellipse, x: number, z: number): number {
-  const c = Math.cos(e.rot), s = Math.sin(e.rot);
+  const c = dmath.cos(e.rot), s = dmath.sin(e.rot);
   const lx = (x - e.x) * c - (z - e.z) * s, lz = (x - e.x) * s + (z - e.z) * c;
-  const q = Math.hypot(lx / e.a, lz / e.b);
+  const q = dmath.hypot(lx / e.a, lz / e.b);
   return (1 - q) * Math.min(e.a, e.b);
 }
 const smax = (a: number, b: number, k: number) => { const h = clamp(0.5 + 0.5 * (a - b) / k, 0, 1); return lerp(b, a, h) + k * h * (1 - h); };
@@ -504,16 +505,16 @@ function polyDist(pts: Pt[], x: number, z: number): { d: number; t: number; seg:
     const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
     let u = L2 > 0 ? ((x - ax) * dx + (z - az) * dz) / L2 : 0;
     u = clamp(u, 0, 1);
-    const px = ax + dx * u, pz = az + dz * u, d = Math.hypot(x - px, z - pz);
+    const px = ax + dx * u, pz = az + dz * u, d = dmath.hypot(x - px, z - pz);
     if (d < best) { best = d; bt = acc + Math.sqrt(L2) * u; bs = i; }
     acc += Math.sqrt(L2);
   }
   return { d: best, t: bt, seg: bs };
 }
-function polyLen(pts: Pt[]) { let l = 0; for (let i = 0; i + 1 < pts.length; i++) l += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); return l; }
+function polyLen(pts: Pt[]) { let l = 0; for (let i = 0; i + 1 < pts.length; i++) l += dmath.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); return l; }
 function polyAt(pts: Pt[], t: number): Pt {
   for (let i = 0; i + 1 < pts.length; i++) {
-    const L = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    const L = dmath.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
     if (t <= L || i === pts.length - 2) { const u = clamp(t / L, 0, 1); return [lerp(pts[i][0], pts[i + 1][0], u), lerp(pts[i][1], pts[i + 1][1], u)]; }
     t -= L;
   }
@@ -568,7 +569,7 @@ function edgeDist(poly: Pt[], x: number, z: number): number {
   for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
     const ax = poly[b][0], az = poly[b][1], dx = poly[a][0] - ax, dz = poly[a][1] - az, L2 = dx * dx + dz * dz;
     const u = L2 > 0 ? clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1) : 0;
-    best = Math.min(best, Math.hypot(x - ax - dx * u, z - az - dz * u));
+    best = Math.min(best, dmath.hypot(x - ax - dx * u, z - az - dz * u));
   }
   return inPoly(poly, x, z) ? -best : best;
 }
@@ -608,7 +609,7 @@ function erode(h: Float32Array, res: number, seed: number, drops: number, landW:
   const R = 3, inertia = 0.06, capacityK = 4.5, minCap = 0.01, deposit = 0.25, erodeK = 0.35, evap = 0.012, gravity = 4, life = 36;
   const bx: number[] = [], by: number[] = [], bw: number[] = [];
   let wsum = 0;
-  for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) { const d = Math.hypot(x, y); if (d <= R) { bx.push(x); by.push(y); const w = 1 - d / R; bw.push(w); wsum += w; } }
+  for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) { const d = dmath.hypot(x, y); if (d <= R) { bx.push(x); by.push(y); const w = 1 - d / R; bw.push(w); wsum += w; } }
   for (let i = 0; i < bw.length; i++) bw[i] /= wsum;
   const grad = (px: number, py: number) => {
     const x0 = px | 0, y0 = py | 0, u = px - x0, v = py - y0, k = y0 * res + x0;
@@ -624,7 +625,7 @@ function erode(h: Float32Array, res: number, seed: number, drops: number, landW:
       if (x0 < 1 || y0 < 1 || x0 >= res - 2 || y0 >= res - 2) break;
       const g = grad(px, py);
       dx = dx * inertia - g.gx * (1 - inertia); dy = dy * inertia - g.gy * (1 - inertia);
-      const len = Math.hypot(dx, dy); if (len === 0) break;
+      const len = dmath.hypot(dx, dy); if (len === 0) break;
       dx /= len; dy /= len;
       const nx = px + dx, ny = py + dy;
       if (nx < 1 || ny < 1 || nx >= res - 2 || ny >= res - 2) break;
@@ -658,11 +659,11 @@ export function groundWarp(n: Simplex2, x: number, z: number): [number, number] 
   return [x + 38 * n.fbm(x / 150 + 13.1, z / 150 + 2.7, 3), z + 38 * n.fbm(x / 150 - 5.3, z / 150 + 9.9, 3)];
 }
 export function padWeight(n: Simplex2, px: number, pz: number, pad: number, blend: number, x: number, z: number): number {
-  const d = Math.hypot(x - px, z - pz);
+  const d = dmath.hypot(x - px, z - pz);
   if (d <= pad) return 1;
   if (d >= pad + blend) return 0;
-  const a = Math.atan2(z - pz, x - px);
-  const wob = 0.5 + 0.5 * n.fbm(Math.cos(a) * 1.9 + px * 0.011, Math.sin(a) * 1.9 + pz * 0.013, 2);
+  const a = dmath.atan2(z - pz, x - px);
+  const wob = 0.5 + 0.5 * n.fbm(dmath.cos(a) * 1.9 + px * 0.011, dmath.sin(a) * 1.9 + pz * 0.013, 2);
   const be = blend * (0.45 + 0.55 * wob);
   const t = clamp((d - pad) / be, 0, 1);
   return 1 - t * t * t * (t * (t * 6 - 15) + 10);
@@ -677,9 +678,9 @@ export function pathLines(): Array<{ id: string; pts: Pt[]; w: number }> {
     // meander: offset each point sideways by low-frequency noise (not at the ends — they must hit the POIs)
     const L = polyLen(sm); let acc = 0;
     const out: Pt[] = sm.map((p, i) => {
-      if (i > 0) acc += Math.hypot(p[0] - sm[i - 1][0], p[1] - sm[i - 1][1]);
+      if (i > 0) acc += dmath.hypot(p[0] - sm[i - 1][0], p[1] - sm[i - 1][1]);
       const a = sm[Math.max(0, i - 1)], b = sm[Math.min(sm.length - 1, i + 1)];
-      const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
+      const dx = b[0] - a[0], dz = b[1] - a[1], l = dmath.hypot(dx, dz) || 1;
       const end = smoothstep(0, 40, acc) * smoothstep(0, 40, L - acc);
       const m = (P.mw ?? (P.w ? 5 : 9)) * n.fbm(acc / 90 + P.id.length * 3.7, 0.5, 2) * end;
       return [p[0] - (dz / l) * m, p[1] + (dx / l) * m];
@@ -693,10 +694,10 @@ export function pathLines(): Array<{ id: string; pts: Pt[]; w: number }> {
  * rounded square would leave bare brown soil corners outside the rows. A ragged edge (±7 m lobes, ±3 m wobble); the far bake
  * paints the rows 1:1 as leafy stripes on brown furrows with ragged row ends, harvest lanes and a perimeter track. */
 export function plantationW(n: Simplex2, x: number, z: number): number {
-  const F = PLANTATION_FIELD, dx = x - F.x, dz = z - F.z, d = Math.hypot(dx, dz);
+  const F = PLANTATION_FIELD, dx = x - F.x, dz = z - F.z, d = dmath.hypot(dx, dz);
   if (d > 185) return 0;
-  const a = Math.atan2(dz, dx);
-  const edge = 155 + 7 * n.fbm(Math.cos(a) * 2.1 + 9, Math.sin(a) * 2.1, 2) + 3 * n.fbm(x / 22, z / 22, 2);
+  const a = dmath.atan2(dz, dx);
+  const edge = 155 + 7 * n.fbm(dmath.cos(a) * 2.1 + 9, dmath.sin(a) * 2.1, 2) + 3 * n.fbm(x / 22, z / 22, 2);
   return 1 - smoothstep(edge - 4, edge + 4, d);
 }
 
@@ -711,7 +712,7 @@ export function poiGroundAt(x: number, z: number): number {
   let warped: [number, number] | null = null;
   for (const p of POIS) {
     if (p.padY === null || p.id === "peel-harbor" || p.id === "the-plantation" || p.id === "lobby-islet") continue;
-    const dd = Math.hypot(x - p.x, z - p.z);
+    const dd = dmath.hypot(x - p.x, z - p.z);
     if (dd > p.pad + p.blend + 45) continue;
     if (dd < p.pad * 0.8) return 1;
     warped ??= groundWarp(NOISE_BAD, x, z);
@@ -744,7 +745,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
   fillPoly(mask, res, lagoonPoly, 0);
   for (let i = 0; i < res; i++) for (let j = 0; j < res; j++) {
     const x = X(j), z = Z(i), k = i * res + j;
-    if (ellipseD(LOBBY, x, z) > 0 || Math.hypot(x - LOBBY.x, z - LOBBY.z) < 84) mask[k] = 1; // the pad (r 60) never reaches the shore
+    if (ellipseD(LOBBY, x, z) > 0 || dmath.hypot(x - LOBBY.x, z - LOBBY.z) < 84) mask[k] = 1; // the pad (r 60) never reaches the shore
     if (polyDist(LAGOON_MOUTH, x, z).d < LAGOON_MOUTH_W + 5 * n3.fbm(x / 30, z / 30, 2)) mask[k] = 0;
     if (inPoly(lagoonPoly, x, z)) {
       // mangrove islets + channels; open water kept for STILT TOWN (market + its camera corridor east of it), the
@@ -773,9 +774,9 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       const x = X(j), k = i * res + j;
       // coast crenellation (headlands / coves); calm near the POI shores that other areas built against
       const calm = Math.max(
-        1 - smoothstep(60, 140, Math.hypot(x - 650, z - 380)), 1 - smoothstep(40, 110, Math.hypot(x - WRECK_BEACH.x, z - WRECK_BEACH.z)),
-        1 - smoothstep(50, 130, Math.hypot(x - 180, z - 540)), 1 - smoothstep(30, 80, Math.hypot(x - 330, z - 330)) * 0,
-        1 - smoothstep(80, 150, Math.hypot(x - LOBBY.x, z - LOBBY.z)));
+        1 - smoothstep(60, 140, dmath.hypot(x - 650, z - 380)), 1 - smoothstep(40, 110, dmath.hypot(x - WRECK_BEACH.x, z - WRECK_BEACH.z)),
+        1 - smoothstep(50, 130, dmath.hypot(x - 180, z - 540)), 1 - smoothstep(30, 80, dmath.hypot(x - 330, z - 330)) * 0,
+        1 - smoothstep(80, 150, dmath.hypot(x - LOBBY.x, z - LOBBY.z)));
       // (the lagoon bed profile only inside the lagoon + the mouth channel's banks — a wide band round the mouth line
       // would show as a squared shallow turquoise lobe in the open sea)
       const inLag = inPoly(lagoonPoly, x, z) || (x > 480 && x < 660 && z < -440 && z > -680 && polyDist(LAGOON_MOUTH, x, z).d < 34 && sdf[k] > -30);
@@ -785,7 +786,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
 
       // cliff zones (0..1)
       let cw = 0, ch = 0;
-      for (const c of CLIFF_ZONES) { const w = 1 - smoothstep(c.w * 0.55, c.w, Math.hypot(x - c.x, z - c.z)); if (w > cw) { cw = w; ch = c.h; } }
+      for (const c of CLIFF_ZONES) { const w = 1 - smoothstep(c.w * 0.55, c.w, dmath.hypot(x - c.x, z - c.z)); if (w > cw) { cw = w; ch = c.h; } }
       cw *= smoothstep(-0.35, 0.1, n2.fbm(x / 200 + 9, z / 200, 3) + 0.45);
       cliffW[k] = cw; cliffH[k] = ch;
 
@@ -839,16 +840,16 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
         const cliffProfile = 0.8 + 1.4 * smoothstep(0, 3, d) + wall * plateau + smoothstep(50, 240, d) * hills * 0.6;
         h = lerp(base, Math.max(cliffProfile, base * 0.4 + cliffProfile * 0.6), cw);
         // THE WRECK beach profile
-        const wb = 1 - smoothstep(WRECK_BEACH.r * 0.6, WRECK_BEACH.r, Math.hypot(x - WRECK_BEACH.x, (z - WRECK_BEACH.z) * 0.8));
+        const wb = 1 - smoothstep(WRECK_BEACH.r * 0.6, WRECK_BEACH.r, dmath.hypot(x - WRECK_BEACH.x, (z - WRECK_BEACH.z) * 0.8));
         if (wb > 0) h = lerp(h, Math.min(h, 0.085 * d + (d > 55 ? (d - 55) * 0.35 : 0)), wb);
       }
       if (d < 0) {
-        const wb = 1 - smoothstep(WRECK_BEACH.r * 0.6, WRECK_BEACH.r, Math.hypot(x - WRECK_BEACH.x, (z - WRECK_BEACH.z) * 0.8));
+        const wb = 1 - smoothstep(WRECK_BEACH.r * 0.6, WRECK_BEACH.r, dmath.hypot(x - WRECK_BEACH.x, (z - WRECK_BEACH.z) * 0.8));
         if (wb > 0) h = lerp(h, Math.max(-9, -0.07 * -d), wb);
       }
       // sink the grid rim to the abyss plane (−72 m) so the heightfield edge never shows
       // (not under the lobby islet, which sits near the south rim: its pad must hold out to r = 60)
-      h = lerp(h, -72, smoothstep(1060, 1195, Math.max(Math.abs(x), Math.abs(z))) * smoothstep(100, 160, Math.hypot(x - LOBBY.x, z - LOBBY.z)));
+      h = lerp(h, -72, smoothstep(1060, 1195, Math.max(Math.abs(x), Math.abs(z))) * smoothstep(100, 160, dmath.hypot(x - LOBBY.x, z - LOBBY.z)));
       heights[k] = h;
       landW[k] = smoothstep(-4, 16, d);
     }
@@ -864,10 +865,10 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       const shore = smoothstep(0, 40, d); // features never cross the beach
       let h = heights[k];
       // volcano
-      const vr = Math.hypot(x - V.x, z - V.z);
+      const vr = dmath.hypot(x - V.x, z - V.z);
       if (vr < V.base + 60) {
-        const ang = Math.atan2(z - V.z, x - V.x);
-        const warp = 0.55 * n.fbm(Math.cos(ang) * 2.5 + 4, Math.sin(ang) * 2.5 + vr / 260, 3);
+        const ang = dmath.atan2(z - V.z, x - V.x);
+        const warp = 0.55 * n.fbm(dmath.cos(ang) * 2.5 + 4, dmath.sin(ang) * 2.5 + vr / 260, 3);
         let hv: number;
         // the lip height varies with bearing at LOW frequency (craterRim) and fades into the flank; a broad
         // rounded lip (~26 m wide Gaussian), since a narrow 22 m ring crest aliases into sawteeth on the 8 m LODs
@@ -876,13 +877,13 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
           // crest = a SMOOTH min of the rising inner bowl and the falling outer flank (both extended across the lip):
           // a rounded crest instead of a hard V-kink, which the 2 m checkerboard triangulation zigzagged into a comb
           const t = (vr - V.crater) / (V.cone - V.crater);
-          const inner = lerp(V.floor, rimA - 5, Math.pow(vr / V.crater, 2.2)) + 0.8 * n3.fbm(x / 9, z / 9, 2) * (1 - smoothstep(0.85, 1.0, vr / V.crater));
-          let outer = V.coneH + (V.rim + dRim * Math.pow(Math.max(0, 1 - t), 0.6) - V.coneH) * Math.pow(1 - t, 1.25);
+          const inner = lerp(V.floor, rimA - 5, dmath.pow(vr / V.crater, 2.2)) + 0.8 * n3.fbm(x / 9, z / 9, 2) * (1 - smoothstep(0.85, 1.0, vr / V.crater));
+          let outer = V.coneH + (V.rim + dRim * dmath.pow(Math.max(0, 1 - t), 0.6) - V.coneH) * dmath.pow(1 - t, 1.25);
           if (t > 0) outer -= coneGully(x, z) * smoothstep(0.03, 0.25, t) + coneRill(x, z) * smoothstep(0.0, 0.1, t);
           // craggy rock relief on the flanks: sharp ridged crests + small broken ledges at 12–30 m (a faceted rock
           // cone; smooth scree reads as clay at every distance)
           // (anisotropic: ~14 m across × ~40 m down the fall line → sharp secondary ribs and broken rock buttresses)
-          { const ang2 = Math.atan2(z - V.z, x - V.x), arcM = ang2 * Math.max(vr, 40);
+          { const ang2 = dmath.atan2(z - V.z, x - V.x), arcM = ang2 * Math.max(vr, 40);
             // (2 octaves — a third (3.5 m × 10 m) reads as blobby lumps at 300–500 m; 1.2 m and 110 m down the fall
             // line — shorter lobes read as stacked "melted wax" at the cone foot; the rills carry the small-scale relief)
             outer += (1.2 * n2.ridged(arcM / 16 + 3.3, vr / 110 - 1.7, 2) - 0.55) * smoothstep(0.06, 0.3, t) * (1 - smoothstep(0.82, 1.0, t)); }
@@ -893,7 +894,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
           hv += 4.0 * smoothstep(0.02, 0.3, t) * (1 - smoothstep(0.3, 0.75, t)) * n2.ridged(x / 70 + warp, z / 70, 3); // lava-flow lobes
           hv -= coneGully(x, z) + coneRill(x, z);   // the gullies run out over the skirt (no pit where they end)
         }
-        hv += 5 * Math.exp(-(((vr - V.crater - 2) / 15) ** 2)) * (1 - 0.7 * Math.exp(-((angD(ang, CRATER_BREACH) / 0.2) ** 2)));
+        hv += 5 * dmath.exp(-(dmath.pow((vr - V.crater - 2) / 15, 2))) * (1 - 0.7 * dmath.exp(-(dmath.pow(angD(ang, CRATER_BREACH) / 0.2, 2))));
         // buttress spurs + shoulder humps: a jagged silhouette (the rock meshes along their crests do the rest)
         hv += coneSpur(x, z).h;
         const vw = 1 - smoothstep(V.base - 20, V.base + 60, vr);
@@ -905,22 +906,22 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
         if (q.d > R.w * 1.1) continue;
         let acc = 0, hh = R.pts[R.pts.length - 1][2];
         for (let s = 0; s + 1 < R.pts.length; s++) {
-          const L = Math.hypot(R.pts[s + 1][0] - R.pts[s][0], R.pts[s + 1][1] - R.pts[s][1]);
+          const L = dmath.hypot(R.pts[s + 1][0] - R.pts[s][0], R.pts[s + 1][1] - R.pts[s][1]);
           if (q.t <= acc + L) { hh = lerp(R.pts[s][2], R.pts[s + 1][2], (q.t - acc) / L); break; }
           acc += L;
         }
         const dd = q.d + 22 * n.fbm(x / 140 + R.id.length, z / 140, 3);
-        const prof = R.sharp ? Math.pow(1 - smoothstep(0, 1, clamp((dd - 5) / R.w, 0, 1)) * 0.25 - clamp((dd - 5) / R.w, 0, 1) * 0.75, R.sharp) : Math.pow(1 - smoothstep(6, R.w, dd), 1.25);
+        const prof = R.sharp ? dmath.pow(1 - smoothstep(0, 1, clamp((dd - 5) / R.w, 0, 1)) * 0.25 - clamp((dd - 5) / R.w, 0, 1) * 0.75, R.sharp) : dmath.pow(1 - smoothstep(6, R.w, dd), 1.25);
         const crest = hh * (0.9 + 0.2 * n.ridged(x / 200 + 8, z / 200, 4));
         h = smax(h, lerp(h, crest, prof * shore), 10);
       }
       // mesas: flat grassy tops, steep rock sides
       for (const [mx, mz, mr, top] of MESAS) {
-        const md = Math.hypot(x - mx, z - mz);
+        const md = dmath.hypot(x - mx, z - mz);
         if (md > mr + 40) continue;
-        const a = Math.atan2(z - mz, x - mx);
+        const a = dmath.atan2(z - mz, x - mx);
         // irregular lobed outline (no cake tins): low-frequency lobes + noise
-        const edge = mr * (1 + 0.3 * n.fbm(Math.cos(a) * 1.3 + mx * 0.01, Math.sin(a) * 1.3 + mz * 0.01, 3) + 0.14 * Math.sin(a * 2 + mx) + 0.08 * Math.sin(a * 3 + mz));
+        const edge = mr * (1 + 0.3 * n.fbm(dmath.cos(a) * 1.3 + mx * 0.01, dmath.sin(a) * 1.3 + mz * 0.01, 3) + 0.14 * dmath.sin(a * 2 + mx) + 0.08 * dmath.sin(a * 3 + mz));
         const m = 1 - smoothstep(edge - 3, edge + 12, md);
         const hm = top + 1.5 * n3.fbm(x / 25, z / 25, 2);
         h = Math.max(h, lerp(h, hm, m * shore));
@@ -934,7 +935,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
           // FLOW SHEETS (so the field is no empty plain) — lobes elongated down the flow (radial from the cone):
           // 20–40 m wide × 60–120 m long, ~1.3 m thick with rounded fronts, smaller toes on top of them, soft pressure
           // ridges and grit; KIPUKAS (older vegetated islands the flows went round) stand ~2 m proud of the field
-          const vr2 = Math.hypot(x - V.x, z - V.z), a2 = Math.atan2(z - V.z, x - V.x), across = a2 * 300;
+          const vr2 = dmath.hypot(x - V.x, z - V.z), a2 = dmath.atan2(z - V.z, x - V.x), across = a2 * 300;
           const lobe = smoothstep(-0.05, 0.25, n2.fbm(across / 34 + 7.1, vr2 / 95 - 2.3, 3));
           const toe = smoothstep(0.0, 0.3, n3.fbm(across / 15 - 3.3, vr2 / 40 + 5.9, 2));
           const ra = n2.noise(x / 13 + 4, z / 13);
@@ -945,7 +946,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
         }
       }
       // THE MURK: low swamp with pools, merging into the lagoon
-      const md = Math.hypot(x - MURK.x, (z - MURK.z) * 1.1);
+      const md = dmath.hypot(x - MURK.x, (z - MURK.z) * 1.1);
       // (not on the lagoon's islets — they keep their forested crowns next to the swamp)
       if (md < MURK.r * 1.4 && d > -10 && !(d > 0 && inPoly(lagoonPoly, x, z))) {
         const w = 1 - smoothstep(MURK.r * 0.7, MURK.r * 1.4, md);
@@ -961,7 +962,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
   if (erosion) {
     const pre = Float32Array.from(heights);
     erode(heights, res, WORLD.SEED + 101, 170_000, (k) => {
-      const j = k % res, i = (k - j) / res, vr = Math.hypot(X(j) - V.x, Z(i) - V.z);
+      const j = k % res, i = (k - j) / res, vr = dmath.hypot(X(j) - V.x, Z(i) - V.z);
       return landW[k] * smoothstep(3, 7, heights[k]) * smoothstep(V.cone + 10, V.base, vr);
     });
     const relaxed = blur(heights, res, 1);
@@ -981,11 +982,11 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
     for (let i = 1; i < res - 1; i++) for (let j = 1; j < res - 1; j++) {
       const k = i * res + j;
       const x = X(j), z = Z(i);
-      if (Math.hypot(x - V.x, z - V.z) < V.cone + 30) continue;
+      if (dmath.hypot(x - V.x, z - V.z) < V.cone + 30) continue;
       const sx = (src[k + 1] - src[k - 1]) / (2 * WORLD.CELL), sz = (src[k + res] - src[k - res]) / (2 * WORLD.CELL);
-      const slope = Math.hypot(sx, sz);
+      const slope = dmath.hypot(sx, sz);
       const coastal = 1 - smoothstep(60, 140, sdf[k]);
-      let mesa = 0; for (const [mx, mz, mr] of MESAS) mesa = Math.max(mesa, 1 - smoothstep(mr + 10, mr + 30, Math.hypot(x - mx, z - mz)));
+      let mesa = 0; for (const [mx, mz, mr] of MESAS) mesa = Math.max(mesa, 1 - smoothstep(mr + 10, mr + 30, dmath.hypot(x - mx, z - mz)));
       // (barely on the sea cliffs — the carved tiers carry the strata; terraces there turn the wall into a
       // staircase of dirt treads with boxes on the risers)
       const c = smoothstep(0.8, 1.6, slope) * smoothstep(3, 10, src[k]) * Math.max(0.2 * cliffW[k], 0.3 * coastal * (1 - cliffW[k]), mesa);
@@ -1006,7 +1007,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       const x = X(j), k = i * res + j;
       let W = 0, num = 0, den = 0;
       for (const p of padList) {
-        if (Math.hypot(x - p.x, z - p.z) > p.pad + p.blend) continue;
+        if (dmath.hypot(x - p.x, z - p.z) > p.pad + p.blend) continue;
         const w = padWeight(n2, p.x, p.z, p.pad, p.blend, x, z);
         const w6 = w * w * w * w * w * w;
         num += w6 * p.padY!; den += w6; W = Math.max(W, w);
@@ -1023,10 +1024,10 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
     for (let i = 0; i < res; i++) {
       const z = Z(i); if (Math.abs(z - L.z) > R) continue;
       for (let j = 0; j < res; j++) {
-        const x = X(j), k = i * res + j, dd = Math.hypot(x - L.x, z - L.z);
+        const x = X(j), k = i * res + j, dd = dmath.hypot(x - L.x, z - L.z);
         if (dd <= L.pad || dd > R || sdf[k] < 2 || inPoly(lagoonPoly, x, z)) continue;
-        const a = Math.atan2(z - L.z, x - L.x);
-        const K = 0.4 + 0.12 * n3.fbm(Math.cos(a) * 1.6 + 7, Math.sin(a) * 1.6, 2);
+        const a = dmath.atan2(z - L.z, x - L.x);
+        const K = 0.4 + 0.12 * n3.fbm(dmath.cos(a) * 1.6 + 7, dmath.sin(a) * 1.6, 2);
         const tgt = L.padY! - K * (dd - L.pad) - 2.5 * n2.fbm(x / 35 + 2, z / 35, 2) * smoothstep(0, 25, dd - L.pad);
         heights[k] = Math.max(heights[k], lerp(heights[k], tgt, smoothstep(2, 24, sdf[k])));
       }
@@ -1061,10 +1062,10 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
     for (let i = Math.max(0, Math.floor((p.z - R + WORLD.HALF) / WORLD.CELL)); i <= Math.min(res - 1, Math.ceil((p.z + R + WORLD.HALF) / WORLD.CELL)); i++) {
       const z = Z(i);
       for (let j = Math.max(0, Math.floor((p.x - R + WORLD.HALF) / WORLD.CELL)); j <= Math.min(res - 1, Math.ceil((p.x + R + WORLD.HALF) / WORLD.CELL)); j++) {
-        const x = X(j), k = i * res + j, dd = Math.hypot(x - p.x, z - p.z) - p.pad;
+        const x = X(j), k = i * res + j, dd = dmath.hypot(x - p.x, z - p.z) - p.pad;
         if (dd <= 0 || dd > p.blend * 1.5 || heights[k] < 0.5) continue;
         // past the blend ring the cone opens quadratically, so its outer edge never leaves a step in a taller hill
-        const open = Math.max(0, dd - p.blend) ** 2 * 0.05, hi = p.padY! + PAD_RIM_K * dd + open, lo = p.padY! - PAD_RIM_K * dd - open;
+        const open = dmath.pow(Math.max(0, dd - p.blend), 2) * 0.05, hi = p.padY! + PAD_RIM_K * dd + open, lo = p.padY! - PAD_RIM_K * dd - open;
         if (heights[k] > hi) heights[k] = hi;
         else if (heights[k] < lo && sdf[k] > 40 && !inPoly(lagoonPoly, x, z)) heights[k] = lo;
       }
@@ -1075,7 +1076,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
   // ---- pass 7: waterfall gorge + pool + river bed
   {
     const gorge: Pt[] = [[FALLS.top.x, FALLS.top.z], [FALLS.lip.x, FALLS.lip.z], [FALLS.pool.x, FALLS.pool.z]];
-    const gorgeLen = polyLen(gorge), lipT = Math.hypot(FALLS.lip.x - FALLS.top.x, FALLS.lip.z - FALLS.top.z);
+    const gorgeLen = polyLen(gorge), lipT = dmath.hypot(FALLS.lip.x - FALLS.top.x, FALLS.lip.z - FALLS.top.z);
     const riverLen = polyLen(RIVER);
     for (let i = 0; i < res; i++) {
       const z = Z(i);
@@ -1083,32 +1084,32 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       for (let j = 0; j < res; j++) {
         const x = X(j), k = i * res + j;
         if (x < -300 || x > 340) continue;
-        const pd = Math.hypot(x - FALLS.pool.x, z - FALLS.pool.z);
+        const pd = dmath.hypot(x - FALLS.pool.x, z - FALLS.pool.z);
         if (pd < FALLS.pool.r + 30) {
           const w = 1 - smoothstep(FALLS.pool.r, FALLS.pool.r + 30, pd);
-          const bowl = FALLS.pool.floor + 0.6 * smoothstep(0, FALLS.pool.r, pd) ** 2;
+          const bowl = FALLS.pool.floor + 0.6 * dmath.pow(smoothstep(0, FALLS.pool.r, pd), 2);
           heights[k] = lerp(heights[k], Math.min(heights[k], bowl), w);
         }
         const g = polyDist(gorge, x, z);
         if (g.d < 34) {
           let floor: number;
           if (g.t < lipT) floor = lerp(FALLS.top.h, FALLS.lip.h, g.t / lipT);
-          else floor = lerp(FALLS.lip.h, FALLS.pool.floor + 1.0, smoothstep(0, 1, (g.t - lipT) / (gorgeLen - lipT)) ** 0.55);
+          else floor = lerp(FALLS.lip.h, FALLS.pool.floor + 1.0, dmath.pow(smoothstep(0, 1, (g.t - lipT) / (gorgeLen - lipT)), 0.55));
           const w = 9 + 3 * n3.fbm(x / 9, z / 9, 2);
-          const wall = floor + Math.max(0, (g.d - w) / 12) ** 2 * 34;
+          const wall = floor + dmath.pow(Math.max(0, (g.d - w) / 12), 2) * 34;
           const fade = 1 - smoothstep(24, 34, g.d);
           heights[k] = lerp(heights[k], Math.min(heights[k], wall), fade);
         }
         for (const [fx, fz, fh, fr] of FALLS_RIM) {
-          const fd = Math.hypot(x - fx, z - fz);
+          const fd = dmath.hypot(x - fx, z - fz);
           if (fd < fr + 20) heights[k] = lerp(heights[k], Math.min(heights[k], fh), 1 - smoothstep(fr, fr + 20, fd));
         }
         const r = polyDist(RIVER, x, z);
         if (r.d < 60) {
           const u = r.t / riverLen;
-          const bed = lerp(FALLS.pool.floor - 0.4, -1.4, Math.pow(u, 0.8)) + 0.15 * n3.fbm(x / 7, z / 7, 2);
+          const bed = lerp(FALLS.pool.floor - 0.4, -1.4, dmath.pow(u, 0.8)) + 0.15 * n3.fbm(x / 7, z / 7, 2);
           const w = RIVER_W * (0.8 + 0.5 * n2.fbm(r.t / 60, 3, 2));
-          const bank = bed + Math.max(0, (r.d - w) / 8) ** 1.6 * 3.5 + Math.max(0, (r.d - w - 10) / 25) ** 2 * 12;
+          const bank = bed + dmath.pow(Math.max(0, (r.d - w) / 8), 1.6) * 3.5 + dmath.pow(Math.max(0, (r.d - w - 10) / 25), 2) * 12;
           const fade = 1 - smoothstep(45, 60, r.d);
           heights[k] = lerp(heights[k], Math.min(heights[k], bank), fade);
         }
@@ -1147,14 +1148,14 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       let w = 0;
       // the flat pad only, fading over ≤ 16 m: a road through a pad's blend ring (outside the POI) is graded — a
       // 0.6 × blend fade would leave the plantation drop at 55°
-      for (const p of POIS) { if (p.padY === null) continue; w = Math.max(w, 1 - smoothstep(p.pad, p.pad + Math.min(16, p.blend * 0.6), Math.hypot(x - p.x, z - p.z))); }
-      for (const [fx, fz, , fr] of FALLS_RIM) w = Math.max(w, 1 - smoothstep(fr, fr + 12, Math.hypot(x - fx, z - fz))); // poi-jungle timber
+      for (const p of POIS) { if (p.padY === null) continue; w = Math.max(w, 1 - smoothstep(p.pad, p.pad + Math.min(16, p.blend * 0.6), dmath.hypot(x - p.x, z - p.z))); }
+      for (const [fx, fz, , fr] of FALLS_RIM) w = Math.max(w, 1 - smoothstep(fr, fr + 12, dmath.hypot(x - fx, z - fz))); // poi-jungle timber
       return w;
     };
     /** 1 = open world (full regrade), 0 = inside a POI's ground (the worn track) */
     // full regrade from 0.92 r (just past the slope audit's POI boundary; the POI's own ground inside 0.8 r is never
     // touched) — a ramp out to r + 12 leaves 40–55° road wedges where the graded bed meets the worn track at the POI edge
-    const openW = (x: number, z: number) => { let w = 1; for (const p of POIS) w = Math.min(w, smoothstep(p.r * 0.8, p.r * 0.92, Math.hypot(x - p.x, z - p.z))); return w; };
+    const openW = (x: number, z: number) => { let w = 1; for (const p of POIS) w = Math.min(w, smoothstep(p.r * 0.8, p.r * 0.92, dmath.hypot(x - p.x, z - p.z))); return w; };
     const nearRiver = (x: number, z: number) => z > -470 && z < -280 && x > -200 && x < 340 && polyDist(RIVER, x, z).d < RIVER_W + 14;
     // SEQUENTIAL (roads first, then trails): each road profiles the ground as the earlier roads left it, and every
     // profile sample on an earlier road's bed is PINNED to it, so crossings meet at one height (two roads
@@ -1172,7 +1173,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       for (let s = 0; s < nS; s++) sm[s] = Math.max(sm[s], prof[s] - 0.6);
       // the graded bed (outside POIs): wide smoothing, then the grade limiter, then the cut / fill clamp (twice: the clamp
       // can re-open a grade, the second limiter pass closes it again where the clamp allows)
-      const G = Math.tan(((P.w > 2 ? 11 : 14) * Math.PI) / 180) * step;
+      const G = dmath.tan(((P.w > 2 ? 11 : 14) * Math.PI) / 180) * step;
       // anchors: an earlier road's bed (pinned) and the POI's own worn track deep inside it (ow ≈ 0) are FIXED; no
       // fill near the river or in water (a ford: the bed descends to the bank instead of stopping at a 7 m wall, e.g. the
       // market-canopy-lab river crossing). Alternating [cut / fill window → grade limiter], the limiter last, so a conflict
@@ -1189,7 +1190,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       for (let pass = 0; pass < 3; pass++) { const t = Float32Array.from(gb); for (let s = 0; s < nS; s++) { let a = 0, c = 0; for (let o = -10; o <= 10; o++) { const q = s + o; if (q >= 0 && q < nS) { a += t[q]; c++; } } gb[s] = a / c; } }
       // a closed loop (plantation-ring) meets itself: both ends share one height (no 2 m step where it closes)
       const p0 = P.pts[0], pN = P.pts[P.pts.length - 1];
-      if (Math.hypot(p0[0] - pN[0], p0[1] - pN[1]) < 3 && !fixed[0] && !fixed[nS - 1]) { fixed[0] = fixed[nS - 1] = 1; fixY[0] = fixY[nS - 1] = (gb[0] + gb[nS - 1]) / 2; }
+      if (dmath.hypot(p0[0] - pN[0], p0[1] - pN[1]) < 3 && !fixed[0] && !fixed[nS - 1]) { fixed[0] = fixed[nS - 1] = 1; fixY[0] = fixY[nS - 1] = (gb[0] + gb[nS - 1]) / 2; }
       // trails (w ≤ 2) never build embankments: fill ≤ 4 m (an unbounded ridge-trail fill would fill the biome-03 view's valley)
       const CF = P.w > 2 ? ROAD_CF : 4, CFH = P.w > 2 ? ROAD_CF + 3 : 5;
       const win = (s: number) => { gb[s] = fixed[s] ? fixY[s] : clamp(gb[s], prof[s] - ROAD_CUT, noFill[s] ? prof[s] : prof[s] + CF); };
@@ -1201,7 +1202,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       // where even that needs more than ROAD_CUT_MAX (a trail up the volcano: an unbounded cut would take 120 m off the
       // ripe-peak cone) the bed steepens toward ROAD_GMAX (26°, still full walking speed) inside the hard window
       for (let it = 0; it < 8; it++) { for (let s = 0; s < nS; s++) win(s); limit(G); }
-      const GM = Math.tan((ROAD_GMAX * Math.PI) / 180) * step;
+      const GM = dmath.tan((ROAD_GMAX * Math.PI) / 180) * step;
       const hard = (s: number) => { if (!fixed[s]) gb[s] = clamp(gb[s], prof[s] - ROAD_CUT_MAX, noFill[s] ? prof[s] : prof[s] + CFH); };
       for (let it = 0; it < 6; it++) { for (let s = 0; s < nS; s++) hard(s); limit(GM); }
       // no-fill wins (never dam the river): clamp, then lower the neighbours toward it (min-cone at the design grade)
@@ -1238,7 +1239,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
         // reaches the dirt's edge. Never painted on walls steeper than ~35°.
         if (d <= PW + 2.8) {
           let cover = clamp(0.82 - 0.3 * (d - PW), 0, 1);
-          { const jx = clamp(j, 1, res - 2), iz = clamp(i, 1, res - 2), sl = Math.hypot(src[iz * res + jx + 1] - src[iz * res + jx - 1], src[(iz + 1) * res + jx] - src[(iz - 1) * res + jx]) / (2 * WORLD.CELL);
+          { const jx = clamp(j, 1, res - 2), iz = clamp(i, 1, res - 2), sl = dmath.hypot(src[iz * res + jx + 1] - src[iz * res + jx - 1], src[(iz + 1) * res + jx] - src[(iz - 1) * res + jx]) / (2 * WORLD.CELL);
             cover *= 1 - smoothstep(0.62 + 0.4 * o, 0.78 + 0.4 * o, sl); }
           path8[k] = Math.max(path8[k], Math.round(255 * cover));
         }
@@ -1288,10 +1289,10 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
         for (let j = 1; j < res - 1; j++) {
           const k = i * res + j, dd = dist[k];
           if (dd <= 0 || dd > BANK_R || src[k] < 0.6 || sdf[k] < 25 || cliffW[k] > 0.05) continue;
-          const x = X(j); if (POIS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r * 0.8) || padW(x, z) > 0.95 || Math.hypot(x - V.x, z - V.z) < V.base + 40) continue;
+          const x = X(j); if (POIS.some((p) => dmath.hypot(x - p.x, z - p.z) < p.r * 0.8) || padW(x, z) > 0.95 || dmath.hypot(x - V.x, z - V.z) < V.base + 40) continue;
           // only DOWN (never a fill) near the river (never dams it) and in a POI's outer ring (0.8–0.9 r, within
           // 12 m of the bed: the road's own cut bank — otherwise a POI edge can keep a 70° wall beside the regraded road)
-          const ring = POIS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r * 0.9);
+          const ring = POIS.some((p) => dmath.hypot(x - p.x, z - p.z) < p.r * 0.9);
           if (ring && dd > 12) continue;
           ok[k] = nearRiver(x, z) || ring ? 2 : 1;
         }
@@ -1322,7 +1323,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
             const a = heights[k - 1], b = heights[k + 1], c = heights[k - res], d = heights[k + res];
             const mx = Math.max(a, b, c, d), mn = Math.min(a, b, c, d);
             if (heights[k] <= mx + 1.2 && heights[k] >= mn - 1.2) continue;
-            const x = X(j); if (POIS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r * 0.8)) continue;
+            const x = X(j); if (POIS.some((p) => dmath.hypot(x - p.x, z - p.z) < p.r * 0.8)) continue;
             heights[k] = heights[k] > mx + 1.2 ? mx + 1.2 : mn - 1.2;
           }
         }
@@ -1351,7 +1352,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
     const [wx, wz] = groundWarp(n3, x, z);
     let m = -1e9; for (const e of MEADOWS) m = Math.max(m, ellipseD(e, wx, wz));
     // THE PLANTATION: a 10–30 m ragged grass verge round the planted field (the perimeter track runs in it)
-    { const F = PLANTATION_FIELD, d = Math.hypot(wx - F.x, wz - F.z);
+    { const F = PLANTATION_FIELD, d = dmath.hypot(wx - F.x, wz - F.z);
       if (d < 230) m = Math.max(m, 18 - (d - 155)); }
     return m + 20 * n.fbm(x / 60 + 21, z / 60, 3) + 8 * n2.fbm(x / 24, z / 24 + 5, 2);
   };
@@ -1360,7 +1361,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
   const onPoiGround = (x: number, z: number) => {
     const [wx, wz] = groundWarp(n3, x, z);
     for (const p of poiGround) {
-      const dd = Math.hypot(x - p.x, z - p.z);
+      const dd = dmath.hypot(x - p.x, z - p.z);
       if (dd < p.pad * 0.8) return true;   // the flat pad core stays open ground under the buildings
       if (dd < p.pad + p.blend + 45 && padWeight(n2, p.x, p.z, p.pad, p.blend, wx, wz) + 0.3 * n.fbm(x / 40 + 3, z / 40, 2) > 0.5) return true;
     }
@@ -1373,12 +1374,12 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
       const jx = clamp(j, 1, res - 2), iz = clamp(i, 1, res - 2);
       const sx = (heights[iz * res + jx + 1] - heights[iz * res + jx - 1]) / (2 * WORLD.CELL);
       const sz = (heights[(iz + 1) * res + jx] - heights[(iz - 1) * res + jx]) / (2 * WORLD.CELL);
-      const slope = Math.hypot(sx, sz), d = coast8[k];
-      const vr = Math.hypot(x - V.x, z - V.z);
+      const slope = dmath.hypot(sx, sz), d = coast8[k];
+      const vr = dmath.hypot(x - V.x, z - V.z);
       const lagD = lagDist[k] * WORLD.CELL;
-      const lag = inPoly(lagoonPoly, x, z) || lagD < 40 || Math.hypot(x - MURK.x, (z - MURK.z) * 1.1) < MURK.r * 1.2;
+      const lag = inPoly(lagoonPoly, x, z) || lagD < 40 || dmath.hypot(x - MURK.x, (z - MURK.z) * 1.1) < MURK.r * 1.2;
       let b: Biome;
-      const inLagP = lag && inPoly(lagoonPoly, x, z), murkD = Math.hypot(x - MURK.x, (z - MURK.z) * 1.1);
+      const inLagP = lag && inPoly(lagoonPoly, x, z), murkD = dmath.hypot(x - MURK.x, (z - MURK.z) * 1.1);
       if (inLagP && h >= 0 && h < 0.95 && lagD < 5 && murkD > MURK.r * 1.2 && n2.fbm(x / 30 + 4, z / 30, 2) > -0.05) b = Biome.Beach;   // islet sand rims (mangrove shores between)
       else if (lag && h > -4 && h < 1.0 && !(h >= 0 && lagD > 40 && d < 60)) b = Biome.Lagoon;
       else if (inLagP && h >= 1.0) b = Biome.Jungle;   // islet crowns: mangrove / jungle forest (not sand)
@@ -1415,7 +1416,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
     const k = i * res + j;
     if (biome[k] !== Biome.Cinder && biome[k] !== Biome.Rock) continue;
     const x = X(j), z = Z(i);
-    if (kipukaAt(x, z) < 0.5 || Math.hypot(x - V.x, z - V.z) < V.cone + 30) continue;
+    if (kipukaAt(x, z) < 0.5 || dmath.hypot(x - V.x, z - V.z) < V.cone + 30) continue;
     biome[k] = n2.fbm(x / 34 + 3, z / 34, 2) > 0.1 ? Biome.Grass : Biome.Jungle;
   }
   { const near = lavaNearMask(res, lavaLines, 14);
@@ -1427,7 +1428,7 @@ export function generateTerrain(opts: { erosion?: boolean } = {}): TerrainData {
     for (let i = Math.floor((pz - R + WORLD.HALF) / WORLD.CELL); i <= Math.ceil((pz + R + WORLD.HALF) / WORLD.CELL); i++)
       for (let j = Math.floor((px - R + WORLD.HALF) / WORLD.CELL); j <= Math.ceil((px + R + WORLD.HALF) / WORLD.CELL); j++) {
         if (i < 0 || j < 0 || i >= res || j >= res) continue;
-        if (Math.hypot(X(j) - px, Z(i) - pz) < R && heights[i * res + j] > 0.3) biome[i * res + j] = Biome.Paved;
+        if (dmath.hypot(X(j) - px, Z(i) - pz) < R && heights[i * res + j] > 0.3) biome[i * res + j] = Biome.Paved;
       }
   }
   out.hash = terrainHash(out);
@@ -1443,7 +1444,7 @@ function lavaNearMask(res: number, lines: LavaLine[], r: number): Uint8Array {
     const [px, pz] = L.pts[q], R = L.hw[q] + r;
     for (let i = Math.max(0, Math.floor((pz - R + H) / C)); i <= Math.min(res - 1, Math.ceil((pz + R + H) / C)); i++)
       for (let j = Math.max(0, Math.floor((px - R + H) / C)); j <= Math.min(res - 1, Math.ceil((px + R + H) / C)); j++)
-        if (Math.hypot(-H + j * C - px, -H + i * C - pz) < R) m[i * res + j] = 1;
+        if (dmath.hypot(-H + j * C - px, -H + i * C - pz) < R) m[i * res + j] = 1;
   }
   return m;
 }
@@ -1457,7 +1458,7 @@ export function lavaProfile(d: number, hw: number, lev: number, bedK: number): n
   const L = 3.2 + 1.2 * hw, t = (d - bedR) / L;
   if (t >= 1) return 0;
   // levee: steep inner bank, long gentle outer slope (a rounded crest at t ≈ 0.22)
-  const crest = t < 0.22 ? 0.6 + 0.4 * Math.sin((t / 0.22) * Math.PI / 2) : Math.pow(1 - (t - 0.22) / 0.78, 1.6);
+  const crest = t < 0.22 ? 0.6 + 0.4 * dmath.sin((t / 0.22) * Math.PI / 2) : dmath.pow(1 - (t - 0.22) / 0.78, 1.6);
   return (0.5 + 0.35 * hw) * lev * crest;
 }
 /** carve every channel's bed + levees into the heights (land only, never below 0.35 m); the strongest (nearest) channel
@@ -1469,8 +1470,8 @@ function carveLava(h: Float32Array, res: number, lines: LavaLine[]) {
     let acc = 0;
     for (let q = 0; q < L.pts.length; q++) {
       const [px, pz] = L.pts[q], hw = L.hw[q];
-      if (q > 0) acc += Math.hypot(px - L.pts[q - 1][0], pz - L.pts[q - 1][1]);
-      const vr = Math.hypot(px - V.x, pz - V.z);
+      if (q > 0) acc += dmath.hypot(px - L.pts[q - 1][0], pz - L.pts[q - 1][1]);
+      const vr = dmath.hypot(px - V.x, pz - V.z);
       const onCone = 1 - smoothstep(V.cone - 30, V.cone + 20, vr);
       // levee height wanders along the river (0.45–1.25 ×), low on the cone (the gullies are its banks there)
       const lev = (0.75 + 0.5 * NOISE_LEVEE.noise(acc / 38, L.pts.length * 0.01)) * (1 - 0.65 * onCone);
@@ -1478,7 +1479,7 @@ function carveLava(h: Float32Array, res: number, lines: LavaLine[]) {
       const R = hw + 0.6 + 3.2 + 1.2 * hw;
       for (let i = Math.max(1, Math.floor((pz - R + H) / C)); i <= Math.min(res - 2, Math.ceil((pz + R + H) / C)); i++)
         for (let j = Math.max(1, Math.floor((px - R + H) / C)); j <= Math.min(res - 2, Math.ceil((px + R + H) / C)); j++) {
-          const k = i * res + j, d = Math.hypot(-H + j * C - px, -H + i * C - pz);
+          const k = i * res + j, d = dmath.hypot(-H + j * C - px, -H + i * C - pz);
           if (d >= R || src[k] < 0.3) continue;
           // nearest channel point decides (the profile is continuous along a line; where lines join the nearer wins)
           if (d < bestD[k]) { bestD[k] = d; off[k] = lavaProfile(d, hw, lev, bedK); }
@@ -1492,12 +1493,12 @@ const NOISE_KIP = new Simplex2(WORLD.SEED + 917);
  * flows went round — plants, palms and green pockets in the lava field; from the air the black field breaks up
  * into a mottle instead of one flat black plate. Only in the outer field (> ~240 m from the cone). */
 export function kipukaAt(x: number, z: number): number {
-  const V = VOLCANO, vr = Math.hypot(x - V.x, z - V.z);
+  const V = VOLCANO, vr = dmath.hypot(x - V.x, z - V.z);
   if (vr < 225) return 0;
   const f = NOISE_KIP.fbm(x / 95 + 2.1, z / 95 - 4.7, 3) + 0.35 * NOISE_KIP.fbm(x / 33, z / 33 + 9, 2);
   // keep the biome-04 foreground (the camera's first ~70 m) a lava field
   const cam = TERRAIN_CAMS["biome-04-volcanic"];
-  const keep = 1 - smoothstep(60, 110, Math.hypot(x - cam.pos[0] - 45, z - cam.pos[2] - 20));
+  const keep = 1 - smoothstep(60, 110, dmath.hypot(x - cam.pos[0] - 45, z - cam.pos[2] - 20));
   return smoothstep(0.02, 0.2, f) * smoothstep(220, 270, vr) * (1 - keep);
 }
 /** Glowing lava rivers (biome-04): steepest-descent flow lines traced on the (4 m-smoothed) final heightfield — from
@@ -1532,38 +1533,38 @@ export function lavaChannels(t: TerrainData): LavaLine[] {
     // swell them on the cone)
     [CRATER_BREACH - 0.03, V.crater + 7, 1.25], [3.2, 96, 0.9], [3.98, 84, 0.7], [4.34, 112, 1.05], [3.36, 140, 0.75],
   ];
-  for (const [a, r, w] of cone) seeds.push([V.x + Math.cos(a) * r, V.z + Math.sin(a) * r, w * 0.45, w]);
+  for (const [a, r, w] of cone) seeds.push([V.x + dmath.cos(a) * r, V.z + dmath.sin(a) * r, w * 0.45, w]);
   // field seams from the cone's foot + a few crust vents out in the field
   for (const [a, w, dr] of [[3.02, 1.3, 22], [3.38, 0.85, 22], [3.92, 1.5, 22], [4.25, 0.8, 22], [3.62, 0.75, 70], [3.2, 0.7, 95], [3.8, 0.9, 120]] as Array<[number, number, number]>) {
-    seeds.push([V.x + Math.cos(a) * (V.cone + dr), V.z + Math.sin(a) * (V.cone + dr), w * 0.5, w]);
+    seeds.push([V.x + dmath.cos(a) * (V.cone + dr), V.z + dmath.sin(a) * (V.cone + dr), w * 0.5, w]);
   }
   // biome-04 (branching glowing lava fields in the foreground, not one thin ribbon): seams that rise in the
   // field between the camera and the cone and run down past the camera (appended: every older river keeps its path)
   const lensSeeds: Array<[number, number, number, number]> = [];
   {
-    const c = TERRAIN_CAMS["biome-04-volcanic"], fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = Math.hypot(fx, fz), ux = fx / fl, uz = fz / fl;
+    const c = TERRAIN_CAMS["biome-04-volcanic"], fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = dmath.hypot(fx, fz), ux = fx / fl, uz = fz / fl;
     for (const [d, l, w] of [[70, -30, 0.9], [105, 18, 1.1], [150, -8, 0.8], [190, 40, 0.9], [125, -55, 0.7], [85, 45, 0.6]] as Array<[number, number, number]>)
       lensSeeds.push([c.pos[0] + ux * d - uz * l, c.pos[2] + uz * d + ux * l, w * 0.5, w]);
   }
   const trace = (sx: number, sz: number, w0: number, target: number, id: number, fork: boolean) => {
     let x = sx, z = sz, dx = 0, dz = 0, flat = 0, taper = true;
     const pts: Pt[] = [], hw: number[] = [];
-    const ph = rnd() * 100, mAmp = Math.hypot(sx - V.x, sz - V.z) > V.cone ? 0.55 : 0.25;
+    const ph = rnd() * 100, mAmp = dmath.hypot(sx - V.x, sz - V.z) > V.cone ? 0.55 : 0.25;
     let ox = sx, oz = sz;
     for (let st = 0; st < 1400; st++) {
       // pooled: less than 8 m of progress over the last 60 steps (circling in a hollow)
-      if (st % 60 === 59) { if (Math.hypot(x - ox, z - oz) < 8) break; ox = x; oz = z; }
-      const e = 2, gx = (hS(x + e, z) - hS(x - e, z)) / (2 * e), gz = (hS(x, z + e) - hS(x, z - e)) / (2 * e), gl = Math.hypot(gx, gz);
+      if (st % 60 === 59) { if (dmath.hypot(x - ox, z - oz) < 8) break; ox = x; oz = z; }
+      const e = 2, gx = (hS(x + e, z) - hS(x - e, z)) / (2 * e), gz = (hS(x, z + e) - hS(x, z - e)) / (2 * e), gl = dmath.hypot(gx, gz);
       let ndx = dx * 0.55, ndz = dz * 0.55;
       if (gl > 1e-4) { ndx -= gx / gl * 0.45; ndz -= gz / gl * 0.45; }
       // a meander so flats do not give ruler-straight rivers (the field seams wander like cracks, the cone streaks less)
       const wob = mAmp * nW.noise(st / 28 + ph, id * 3.1);
-      const rx = ndx - ndz * wob, rz = ndz + ndx * wob, rl = Math.hypot(rx, rz) || 1;
+      const rx = ndx - ndz * wob, rz = ndz + ndx * wob, rl = dmath.hypot(rx, rz) || 1;
       dx = rx / rl; dz = rz / rl;
       x += dx; z += dz;
       const h = t.heights[clamp(Math.round((z + H) / C), 0, res - 1) * res + clamp(Math.round((x + H) / C), 0, res - 1)];
       if (h < 0.3) { taper = false; break; }                      // reached the sea
-      const vr = Math.hypot(x - V.x, z - V.z);
+      const vr = dmath.hypot(x - V.x, z - V.z);
       // only on the cone and in the lava field: a cone river that would leave the cone anywhere else (into the jungle)
       // ends on the lower flank as a cooling tongue
       if (vr > V.cone - 15 && badlandsW(nB, x, z) < 0.12) break;
@@ -1577,7 +1578,7 @@ export function lavaChannels(t: TerrainData): LavaLine[] {
       const pool = mAmp > 0.3 ? 1 + 0.6 * smoothstep(0.5, 0.85, nW.noise(s / 18 + ph * 2, id + 7.7)) : 1;
       // cone streaks narrow to seams once they leave the cone (the field is threaded with 1–3 m seams, not roads)
       const leave = mAmp > 0.3 ? 1 : 1 - 0.4 * smoothstep(V.cone - 10, V.cone + 40, vr);
-      const w = lerp(w0, target * pool * leave * (0.75 + 0.5 * (0.5 + 0.5 * Math.sin(s / 37 + ph))) * (1 + 0.2 * smoothstep(0.12, 0.03, gl)), smoothstep(0, 70, s));
+      const w = lerp(w0, target * pool * leave * (0.75 + 0.5 * (0.5 + 0.5 * dmath.sin(s / 37 + ph))) * (1 + 0.2 * smoothstep(0.12, 0.03, gl)), smoothstep(0, 70, s));
       pts.push([x, z]); hw.push(w);
       if (o === undefined) occ.set(k, id);
     }
@@ -1589,7 +1590,7 @@ export function lavaChannels(t: TerrainData): LavaLine[] {
       // own gully (it may rejoin the parent lower down — a braided channel)
       if (fork && target > 0.95 && pts.length > 80) {
         const at = Math.floor(pts.length * (0.35 + 0.25 * rnd())), [fx, fz] = pts[at], [gx, gz] = pts[Math.min(pts.length - 1, at + 3)];
-        const tl = Math.hypot(gx - fx, gz - fz) || 1, side = rnd() < 0.5 ? -1 : 1, off = hw[at] + 4 + 3 * rnd();
+        const tl = dmath.hypot(gx - fx, gz - fz) || 1, side = rnd() < 0.5 ? -1 : 1, off = hw[at] + 4 + 3 * rnd();
         trace(fx - (gz - fz) / tl * off * side, fz + (gx - fx) / tl * off * side, hw[at] * 0.35, target * 0.55, 100 + id, false);
       }
     }
@@ -1805,12 +1806,12 @@ export function cliffSkins(t: TerrainData): SkinChain[] {
     const a = s[k] + (s[k + 1] - s[k]) * tx, b = s[k + res] + (s[k + res + 1] - s[k + res]) * tx;
     return a + (b - a) * tz;
   };
-  const cliffy = (x: number, z: number) => { let w = 0; for (const c of CLIFF_ZONES) w = Math.max(w, 1 - smoothstep(c.w * 0.6, c.w * 1.15, Math.hypot(x - c.x, z - c.z))); return w; };
+  const cliffy = (x: number, z: number) => { let w = 0; for (const c of CLIFF_ZONES) w = Math.max(w, 1 - smoothstep(c.w * 0.6, c.w * 1.15, dmath.hypot(x - c.x, z - c.z))); return w; };
   const poly = catmull(COAST, 6, true);
   // arc-length resample (1 m)
   const P: Pt[] = [];
   for (let a = 0; a < poly.length; a++) {
-    const p = poly[a], q = poly[(a + 1) % poly.length], L = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const p = poly[a], q = poly[(a + 1) % poly.length], L = dmath.hypot(q[0] - p[0], q[1] - p[1]);
     for (let s = 0; s < L; s += 1) P.push([p[0] + (q[0] - p[0]) * s / L, p[1] + (q[1] - p[1]) * s / L]);
   }
   const n = P.length;
@@ -1820,10 +1821,10 @@ export function cliffSkins(t: TerrainData): SkinChain[] {
   for (let i = 0; i < n; i++) {
     const [ox, oz] = P[i];
     if (cliffy(ox, oz) < 0.15) continue;
-    const ea = Math.atan2(oz - SKIN_EXCLUDE.z, ox - SKIN_EXCLUDE.x) * 180 / Math.PI, ang = (ea + 360) % 360;
-    if (Math.hypot(ox - SKIN_EXCLUDE.x, oz - SKIN_EXCLUDE.z) < SKIN_EXCLUDE.r && ang > SKIN_EXCLUDE.a0 && ang < SKIN_EXCLUDE.a1) continue;
+    const ea = dmath.atan2(oz - SKIN_EXCLUDE.z, ox - SKIN_EXCLUDE.x) * 180 / Math.PI, ang = (ea + 360) % 360;
+    if (dmath.hypot(ox - SKIN_EXCLUDE.x, oz - SKIN_EXCLUDE.z) < SKIN_EXCLUDE.r && ang > SKIN_EXCLUDE.a0 && ang < SKIN_EXCLUDE.a1) continue;
     const a = P[(i + n - 3) % n], b = P[(i + 3) % n];
-    let tx = b[0] - a[0], tz = b[1] - a[1]; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+    let tx = b[0] - a[0], tz = b[1] - a[1]; const tl = dmath.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
     let nx = -tz, nz = tx;
     if (!inPoly(poly, ox + nx * 6, oz + nz * 6)) { nx = -nx; nz = -nz; }
     for (let k = 0; k < ND; k++) { const d = D0 + k * STEP; prof[k] = hAt(ox + nx * d, oz + nz * d); }
@@ -1865,7 +1866,7 @@ export function cliffSkins(t: TerrainData): SkinChain[] {
       Object.assign(ch.pts[k], { d0: d0 / w, d1: d1 / w, h0: h0 / w, h1: h1 / w });
     }
     const mid = ch.pts[m >> 1], fx = mid.ox + mid.nx * mid.d0, fz = mid.oz + mid.nz * mid.d0;
-    ch.dark = (Math.hypot(fx - BADLANDS.x, fz - BADLANDS.z) < BADLANDS.r * 1.35 && badlandsAt(fx, fz) > 0.15) || Math.hypot(fx + 700, fz + 620) < 210;
+    ch.dark = (dmath.hypot(fx - BADLANDS.x, fz - BADLANDS.z) < BADLANDS.r * 1.35 && badlandsAt(fx, fz) > 0.15) || dmath.hypot(fx + 700, fz + 620) < 210;
   }
   SKIN_CACHE = { hash: t.hash, chains };
   return chains;
@@ -1908,17 +1909,17 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     const a = s[k] + (s[k + 1] - s[k]) * tx, b = s[k + res] + (s[k + res + 1] - s[k + res]) * tx;
     return a + (b - a) * tz;
   };
-  const slopeAt = (x: number, z: number, e = 3) => { const dx = hAt(x + e, z) - hAt(x - e, z), dz = hAt(x, z + e) - hAt(x, z - e); return { s: Math.hypot(dx, dz) / (2 * e), dx, dz }; };
-  const nearPad = (x: number, z: number, f = 0.95) => { for (const p of POIS) { if (p.padY !== null && Math.hypot(x - p.x, z - p.z) < p.pad * f) return true; } return false; };
-  const cliffy = (x: number, z: number) => { let w = 0; for (const c of CLIFF_ZONES) w = Math.max(w, 1 - smoothstep(c.w * 0.6, c.w * 1.15, Math.hypot(x - c.x, z - c.z))); return w; };
-  const mesaW = (x: number, z: number) => { let w = 0; for (const [mx, mz, mr] of MESAS) w = Math.max(w, 1 - smoothstep(mr + 8, mr + 26, Math.hypot(x - mx, z - mz))); return w; };
+  const slopeAt = (x: number, z: number, e = 3) => { const dx = hAt(x + e, z) - hAt(x - e, z), dz = hAt(x, z + e) - hAt(x, z - e); return { s: dmath.hypot(dx, dz) / (2 * e), dx, dz }; };
+  const nearPad = (x: number, z: number, f = 0.95) => { for (const p of POIS) { if (p.padY !== null && dmath.hypot(x - p.x, z - p.z) < p.pad * f) return true; } return false; };
+  const cliffy = (x: number, z: number) => { let w = 0; for (const c of CLIFF_ZONES) w = Math.max(w, 1 - smoothstep(c.w * 0.6, c.w * 1.15, dmath.hypot(x - c.x, z - c.z))); return w; };
+  const mesaW = (x: number, z: number) => { let w = 0; for (const [mx, mz, mr] of MESAS) w = Math.max(w, 1 - smoothstep(mr + 8, mr + 26, dmath.hypot(x - mx, z - mz))); return w; };
   const inApron = (x: number, z: number) => x > 420 && x < 900 && z > 170 && z < 560 && inPoly(HARBOR_APRON, x, z);
   const idx = (x: number, z: number) => clamp(Math.round((z + H) / C), 0, res - 1) * res + clamp(Math.round((x + H) / C), 0, res - 1);
-  const fallsCarve = (x: number, z: number) => Math.hypot(x + 170, z + 405) < 60 || (Math.abs(z + 400) < 40 && x > -180 && x < 300);
+  const fallsCarve = (x: number, z: number) => dmath.hypot(x + 170, z + 405) < 60 || (Math.abs(z + 400) < 40 && x > -180 && x < 300);
   const cams = Object.values(TERRAIN_CAMS).map((c) => {
     const gy = Math.max(0, hAt(c.pos[0], c.pos[2])), ty = Math.max(0, hAt(c.target[0], c.target[2]));
     const p = [c.pos[0], gy + c.pos[1], c.pos[2]], q = [c.target[0], ty + c.target[1], c.target[2]];
-    const d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], L = Math.hypot(d[0], d[1], d[2]);
+    const d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], L = dmath.hypot3(d[0], d[1], d[2]);
     return { p, d: d.map((v) => v / L), gy };
   });
   /** view-camera clearance (small, so foreground rubble stays in frame): nothing within CAM_KEEP_R (3 m) of the camera,
@@ -1926,12 +1927,12 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   const inCamKeep = (r: RockInstance) => {
     const rr = Math.max(r.sx, r.sz) * 0.5, top = r.y + r.sy * 0.5;
     for (const c of cams) {
-      const dxz = Math.hypot(r.x - c.p[0], r.z - c.p[2]) - rr;
+      const dxz = dmath.hypot(r.x - c.p[0], r.z - c.p[2]) - rr;
       if (dxz < CAM_KEEP_R && top > c.p[1] - 3) return true;
       const vx = r.x - c.p[0], vy = r.y - c.p[1], vz = r.z - c.p[2], along = vx * c.d[0] + vy * c.d[1] + vz * c.d[2];
       if (along > 0 && along < 8) {
         const px = c.p[0] + c.d[0] * along, pz = c.p[2] + c.d[2] * along;
-        if (Math.hypot(r.x - px, r.z - pz) < rr + 1.5 && top > c.p[1] - 0.5) return true;
+        if (dmath.hypot(r.x - px, r.z - pz) < rr + 1.5 && top > c.p[1] - 0.5) return true;
       }
     }
     return false;
@@ -1941,11 +1942,11 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   for (const L of lavaChannels(t)) for (let q = 0; q < L.pts.length; q += 2) {
     const [px, pz] = L.pts[q], R = L.hw[q] + 1.2;
     for (let i = Math.floor((pz - R + H) / C); i <= Math.ceil((pz + R + H) / C); i++) for (let j = Math.floor((px - R + H) / C); j <= Math.ceil((px + R + H) / C); j++) {
-      if (Math.hypot(-H + j * C - px, -H + i * C - pz) < R) lavaCells.add(i * res + j);
+      if (dmath.hypot(-H + j * C - px, -H + i * C - pz) < R) lavaCells.add(i * res + j);
     }
   }
   const onLava = (r: RockInstance) => {
-    if (!lavaCells.size || Math.hypot(r.x - V.x, r.z - V.z) > 700) return false;
+    if (!lavaCells.size || dmath.hypot(r.x - V.x, r.z - V.z) > 700) return false;
     const rr = Math.max(r.sx, r.sz) * 0.4;
     for (const [ox, oz] of [[0, 0], [rr, 0], [-rr, 0], [0, rr], [0, -rr]]) if (lavaCells.has(idx(r.x + ox, r.z + oz))) return true;
     return false;
@@ -1953,13 +1954,13 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   // view vistas: no big rock inside the view wedge toward the subject (biome-03: the cove bay + pier, 8–45° right of
   // the camera axis within 150 m)
   const VISTAS: Array<{ id: string; a0: number; a1: number; r1: number }> = [{ id: "biome-03-highlands", a0: 6, a1: 42, r1: 150 }];
-  const vistas = VISTAS.map((v) => { const c = TERRAIN_CAMS[v.id], fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = Math.hypot(fx, fz); return { ...v, x: c.pos[0], z: c.pos[2], fx: fx / fl, fz: fz / fl }; });
+  const vistas = VISTAS.map((v) => { const c = TERRAIN_CAMS[v.id], fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = dmath.hypot(fx, fz); return { ...v, x: c.pos[0], z: c.pos[2], fx: fx / fl, fz: fz / fl }; });
   const inVista = (r: RockInstance) => {
     if (Math.max(r.sx, r.sy, r.sz) < 1.6) return false;
     for (const v of vistas) {
       const dx = r.x - v.x, dz = r.z - v.z, fwd = dx * v.fx + dz * v.fz, right = dx * -v.fz + dz * v.fx;   // three.js right = (−fz, fx)
-      if (fwd <= 4 || Math.hypot(dx, dz) > v.r1) continue;
-      const a = Math.atan2(right, fwd) * 180 / Math.PI;
+      if (fwd <= 4 || dmath.hypot(dx, dz) > v.r1) continue;
+      const a = dmath.atan2(right, fwd) * 180 / Math.PI;
       if (a > v.a0 && a < v.a1) return true;
     }
     return false;
@@ -1979,7 +1980,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
    * where the terrain's is), every tier reaches back to one plane 3 m past the top edge; a tier that steps back more
    * than 1.4 m leaves a turf ledge (cap) on the one below — planted ledges. */
   const column = (kind: RockKind, fx: number, fz: number, ux: number, uz: number, W: number, prof: Array<[number, number]>, yBot: number, yTop: number, seed: number, plinthMax: number) => {
-    const yaw = Math.atan2(-ux, -uz), c = Math.cos(yaw), sn = Math.sin(yaw), g = grpId++;
+    const yaw = dmath.atan2(-ux, -uz), c = dmath.cos(yaw), sn = dmath.sin(yaw), g = grpId++;
     const r = mulberry32(seed);
     const sTop = prof[prof.length - 1][0], back = sTop + 1.5;
     const faceAt = (y: number) => { for (const [sp, hp] of prof) if (hp >= y) return sp; return sTop; };
@@ -2030,7 +2031,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   const faces = new Map<number, Array<[number, number]>>();
   const fKey = (x: number, z: number) => Math.floor(x / 16) * 4096 + Math.floor(z / 16);
   const faceTaken = (x: number, z: number) => {
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [qx, qz] of faces.get(fKey(x + a * 16, z + b * 16)) ?? []) if (Math.hypot(qx - x, qz - z) < G * 0.72) return true;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [qx, qz] of faces.get(fKey(x + a * 16, z + b * 16)) ?? []) if (dmath.hypot(qx - x, qz - z) < G * 0.72) return true;
     return false;
   };
   const takeFace = (x: number, z: number) => { const k = fKey(x, z); (faces.get(k) ?? faces.set(k, []).get(k)!).push([x, z]); };
@@ -2038,7 +2039,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   const inland = new Map<number, Array<[number, number]>>();
   const iKey = (x: number, z: number) => Math.floor(x / 32) * 4096 + Math.floor(z / 32);
   const inlandTaken = (x: number, z: number) => {
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [qx, qz] of inland.get(iKey(x + a * 32, z + b * 32)) ?? []) if (Math.hypot(qx - x, qz - z) < 26) return true;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [qx, qz] of inland.get(iKey(x + a * 32, z + b * 32)) ?? []) if (dmath.hypot(qx - x, qz - z) < 26) return true;
     return false;
   };
   const inlandTake = (x: number, z: number) => { const k = iKey(x, z); (inland.get(k) ?? inland.set(k, []).get(k)!).push([x, z]); };
@@ -2053,7 +2054,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     const cx = gx + (hash2(ci, cj, 11) - 0.5) * G * 0.3, cz = gz + (hash2(ci, cj, 12) - 0.5) * G * 0.3;
     const h0 = hAt(cx, cz);
     if (h0 < -1 || h0 > 150) continue;
-    const vr = Math.hypot(cx - V.x, cz - V.z);
+    const vr = dmath.hypot(cx - V.x, cz - V.z);
     if (vr < V.cone + 25 || fallsCarve(cx, cz) || nearPad(cx, cz, 1.0)) continue;
     const sl = slopeAt(cx, cz, 4);
     if (sl.s < 0.75) continue;
@@ -2065,10 +2066,10 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     const inland = smoothstep(1.0, 1.4, sl.s) * smoothstep(8, 16, h0);
     const zone = Math.max(cw, 0.8 * coastal, mw, 0.85 * inland);
     if (zone < 0.32) continue;
-    const gl = Math.hypot(sl.dx, sl.dz) || 1, ux = sl.dx / gl, uz = sl.dz / gl;       // uphill unit vector
+    const gl = dmath.hypot(sl.dx, sl.dz) || 1, ux = sl.dx / gl, uz = sl.dz / gl;       // uphill unit vector
     // black basalt on the lava coast: the badlands fan + the whole black NW coast around it (no tan sandstone
     // columns right beside the black lava field)
-    const dark = (Math.hypot(cx - BADLANDS.x, cz - BADLANDS.z) < BADLANDS.r * 1.35 && badlandsAt(cx, cz) > 0.15) || Math.hypot(cx + 700, cz + 620) < 210;
+    const dark = (dmath.hypot(cx - BADLANDS.x, cz - BADLANDS.z) < BADLANDS.r * 1.35 && badlandsAt(cx, cz) > 0.15) || dmath.hypot(cx + 700, cz + 620) < 210;
     const tan = !dark && (cw > 0.35 || coastal > 0.5);
     if (dark && (cw < 0.35 || coast > 60)) continue;   // black columns only on the lava sea cliffs; inland the crust stays open
     // the wall's extent along the fall line through the cell: foot and top edge where the slope over an 8 m window
@@ -2100,7 +2101,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
           const sy = s2 * (0.62 + 0.2 * hash2(ci, cj + q, 28));
           // centred on the face, a little proud of it: the uphill half is inside the hill, the downhill face stands out
           push({ kind: "boulder", v: (hash2(ci + q, cj, 29) * 4) | 0, x: bx - ux * s2 * 0.08, y: hAt(bx, bz) + sy * 0.12, z: bz - uz * s2 * 0.08,
-            yaw: Math.atan2(-ux, -uz) + (hash2(ci, cj + q, 30) - 0.5) * 0.8, sx: s2 * (1.05 + 0.25 * hash2(ci + q, cj, 31)), sy, sz: s2 * 0.85, tilt: (hash2(ci, cj + q, 32) - 0.5) * 0.25 });
+            yaw: dmath.atan2(-ux, -uz) + (hash2(ci, cj + q, 30) - 0.5) * 0.8, sx: s2 * (1.05 + 0.25 * hash2(ci + q, cj, 31)), sy, sz: s2 * 0.85, tilt: (hash2(ci, cj + q, 32) - 0.5) * 0.25 });
         }
       } else if (hash2(ci, cj, 21) < 0.2) {
         const s2 = 1.6 + 2.6 * hash2(ci, cj, 22), sy = s2 * 0.7;
@@ -2126,7 +2127,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     column(kind, px, pz, ux, uz, W, profOf(px, pz, ux, uz, Math.max(2, fs + ts - sb)), Math.min(hAt(px, pz), hf + 1) - 2.5, yTop, seed, coast < 30 ? 3 : 1.5);
     // fallen blocks on the talus / in the surf at the foot
     if (hash2(ci, cj, 60) < 0.45) {
-      const a2 = hash2(ci, cj, 61) * 6.283, s2 = 1.4 + 2.2 * hash2(ci, cj, 62), bx = fx - ux * (2 + 4 * hash2(ci, cj, 63)) + Math.cos(a2) * 2, bz = fz - uz * (2 + 4 * hash2(ci, cj, 63)) + Math.sin(a2) * 2;
+      const a2 = hash2(ci, cj, 61) * 6.283, s2 = 1.4 + 2.2 * hash2(ci, cj, 62), bx = fx - ux * (2 + 4 * hash2(ci, cj, 63)) + dmath.cos(a2) * 2, bz = fz - uz * (2 + 4 * hash2(ci, cj, 63)) + dmath.sin(a2) * 2;
       push({ kind, v: (hash2(ci, cj, 64) * 4) | 0, x: bx, y: hAt(bx, bz) + s2 * 0.25, z: bz, yaw: hash2(ci, cj, 65) * 6.283, sx: s2 * 1.3, sy: s2 * 0.8, sz: s2, tilt: (hash2(ci, cj, 66) - 0.5) * 0.3 });
     }
   }
@@ -2136,8 +2137,8 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   //         strata-grooved mass; sections overlap 0.8 m so the mass is continuous), a gentle taper with one stepped-in
   //         shoulder, a turf cap; rounded fallen boulders in the surf at the foot
   for (const [x, z, r, hh] of SEA_STACKS) {
-    const dark = Math.hypot(x - BADLANDS.x, z - BADLANDS.z) < 320;
-    const yaw0 = rnd() * Math.PI, ca = Math.cos(yaw0), sa = Math.sin(yaw0);
+    const dark = dmath.hypot(x - BADLANDS.x, z - BADLANDS.z) < 320;
+    const yaw0 = rnd() * Math.PI, ca = dmath.cos(yaw0), sa = dmath.sin(yaw0);
     const base = Math.min(hAt(x, z), -2) - 1.5;
     const nM = r > 7 ? 2 : 1;
     for (let mi = 0; mi < nM; mi++) {
@@ -2151,7 +2152,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     }
     for (let b2 = 0; b2 < 5; b2++) {
       const a = rnd() * 6.283, dd = r * 1.1 + 2 + rnd() * 7, s2 = 1.6 + rnd() * 3.2;
-      const bx = x + Math.cos(a) * dd, bz = z + Math.sin(a) * dd, sy = s2 * 0.72;
+      const bx = x + dmath.cos(a) * dd, bz = z + dmath.sin(a) * dd, sy = s2 * 0.72;
       out.push({ kind: dark ? "crag" : "boulder", v: (rnd() * 4) | 0, x: bx, y: Math.max(hAt(bx, bz) + sy * 0.3, -sy * 0.15), z: bz, yaw: rnd() * 6.283, sx: s2 * 1.25, sy, sz: s2, tilt: (rnd() - 0.5) * 0.25 });
     }
   }
@@ -2175,13 +2176,13 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     if (pathW > 0.05 || nearPad(jx, jz) || fallsCarve(jx, jz)) continue;
     const cw = cliffy(jx, jz);
     const cl = n.fbm(jx / 90, jz / 90, 3); // clustering
-    const vr = Math.hypot(jx - V.x, jz - V.z), bd = Math.hypot(jx - BADLANDS.x, jz - BADLANDS.z);
-    const lagoon = t.biome[k] === Biome.Lagoon || Math.hypot(jx - 430, jz + 350) < 230;
+    const vr = dmath.hypot(jx - V.x, jz - V.z), bd = dmath.hypot(jx - BADLANDS.x, jz - BADLANDS.z);
+    const lagoon = t.biome[k] === Biome.Lagoon || dmath.hypot(jx - 430, jz + 350) < 230;
     // 3. shore boulders in groups (in the shallows & on the beach line) — dense on cliffy / headland coasts
     if (coast > -50 && coast < 12 && h > -6 && !lagoon) {
       const headland = smoothstep(-0.05, 0.35, n.fbm(jx / 140 + 20, jz / 140, 3));
       // the SW lighthouse headland + W coast: dozens of big rounded grey boulders in the shallows
-      const sw = Math.max(1 - smoothstep(170, 280, Math.hypot(jx + 640, jz - 590)),
+      const sw = Math.max(1 - smoothstep(170, 280, dmath.hypot(jx + 640, jz - 590)),
         jx < -740 && Math.abs(jz - 90) > 120 && jz < 330 && jz > -420 ? 1 : 0) * smoothstep(12, -4, coast);
       const p = (0.012 + 0.2 * cw + 0.08 * headland + 0.16 * sw) * (0.5 + 0.5 * cl);
       if (rnd() < p) {
@@ -2208,7 +2209,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
         group("crag", jx, jz, big ? 2 + ((rnd() * 3) | 0) : 3 + ((rnd() * 6) | 0), big ? 1.6 : 0.6, big ? 5 + rnd() * 4 : 1.8 + rnd() * 2.2, big ? 9 : 5.5, 0.38);
         if (rnd() < 0.5) {
           const a = rnd() * 6.283, dd = 2 + rnd() * 3, s = 0.6 + rnd() * 1.1;
-          push({ kind: "shard", v: (rnd() * 4) | 0, x: jx + Math.cos(a) * dd, y: hAt(jx + Math.cos(a) * dd, jz + Math.sin(a) * dd) + s * 0.25, z: jz + Math.sin(a) * dd, yaw: rnd() * 6.283, sx: s, sy: s * 1.4, sz: s * 0.8, tilt: (rnd() - 0.5) * 0.5 });
+          push({ kind: "shard", v: (rnd() * 4) | 0, x: jx + dmath.cos(a) * dd, y: hAt(jx + dmath.cos(a) * dd, jz + dmath.sin(a) * dd) + s * 0.25, z: jz + dmath.sin(a) * dd, yaw: rnd() * 6.283, sx: s, sy: s * 1.4, sz: s * 0.8, tilt: (rnd() - 0.5) * 0.5 });
         }
       }
       // loose RUBBLE (so the midground is no empty plain) — 0.3–1.1 m angular basalt blocks scattered
@@ -2262,21 +2263,21 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
         const big = c === 0, mid = c > 0 && c < 4;
         const s = big ? lead : mid ? 1.2 + 1.2 * rnd() : 0.5 + 0.6 * rnd();
         const a = rnd() * 6.283, dd = big ? 0 : (0.45 + 0.55 * Math.sqrt(rnd())) * (lead * 0.9 + 1.6);
-        const bx = hx + Math.cos(a) * dd, bz = hz + Math.sin(a) * dd, sy = s * (0.6 + 0.25 * rnd());
+        const bx = hx + dmath.cos(a) * dd, bz = hz + dmath.sin(a) * dd, sy = s * (0.6 + 0.25 * rnd());
         push({ kind: "crag", v: (rnd() * 4) | 0, x: bx, y: hAt(bx, bz) + sy * (0.5 - (big ? 0.34 : 0.3 + 0.12 * rnd())), z: bz, yaw: rnd() * 6.283, sx: s * (0.9 + 0.35 * rnd()), sy, sz: s * (0.8 + 0.3 * rnd()), tilt: (rnd() - 0.5) * 0.4 });
       }
     };
     for (const L of lavaChannels(t)) {
       const P = L.pts; if (P.length < 20) continue;
       const [sx, sz] = P[0];
-      if (Math.hypot(sx - V.x, sz - V.z) > V.cone + 30 && badlandsAt(sx, sz) > 0.3) heap(sx + (rnd() - 0.5) * 4, sz + (rnd() - 0.5) * 4, 10 + ((rnd() * 6) | 0), 3.2 + rnd());
+      if (dmath.hypot(sx - V.x, sz - V.z) > V.cone + 30 && badlandsAt(sx, sz) > 0.3) heap(sx + (rnd() - 0.5) * 4, sz + (rnd() - 0.5) * 4, 10 + ((rnd() * 6) | 0), 3.2 + rnd());
       let next = 12 + rnd() * 20, side = rnd() < 0.5 ? -1 : 1, acc = 0;
       for (let q = 1; q < P.length - 2; q++) {
-        acc += Math.hypot(P[q][0] - P[q - 1][0], P[q][1] - P[q - 1][1]);
+        acc += dmath.hypot(P[q][0] - P[q - 1][0], P[q][1] - P[q - 1][1]);
         if (acc < next) continue;
         next = acc + 25 + 20 * rnd();
-        const [px, pz] = P[q], [qx, qz] = P[Math.min(P.length - 1, q + 3)], tl = Math.hypot(qx - px, qz - pz) || 1;
-        if (Math.hypot(px - V.x, pz - V.z) < V.cone + 25 || badlandsAt(px, pz) < 0.35 || rnd() < 0.3) continue;
+        const [px, pz] = P[q], [qx, qz] = P[Math.min(P.length - 1, q + 3)], tl = dmath.hypot(qx - px, qz - pz) || 1;
+        if (dmath.hypot(px - V.x, pz - V.z) < V.cone + 25 || badlandsAt(px, pz) < 0.35 || rnd() < 0.3) continue;
         side = rnd() < 0.7 ? -side : side;
         const off = L.hw[q] + 4.2 + 1.2 * L.hw[q] + 2.5 * rnd();
         heap(px - (qz - pz) / tl * off * side, pz + (qx - px) / tl * off * side, 5 + ((rnd() * 9) | 0), 2.3 + 1.6 * rnd());
@@ -2291,7 +2292,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
       const [px, pz] = polyAt(pts, d);
       for (const side of [-1, 1]) {
         if (rnd() < 0.45) continue;
-        const [qx, qz] = polyAt(pts, d + 4), tx = qx - px, tz = qz - pz, tl = Math.hypot(tx, tz) || 1;
+        const [qx, qz] = polyAt(pts, d + 4), tx = qx - px, tz = qz - pz, tl = dmath.hypot(tx, tz) || 1;
         const off = side * (12 + rnd() * 55), bx = px - (tz / tl) * off, bz = pz + (tx / tl) * off;
         const k = idx(bx, bz);
         if (t.path[k] > 20 || t.biome[k] !== Biome.Grass || hAt(bx, bz) < 8 || nearPad(bx, bz)) continue;
@@ -2311,7 +2312,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
       const nC = 2 + ((rnd() * 4) | 0);
       for (let q = 0; q < nC; q++) {
         // (the lead crag of every cluster is a 9–16 m jagged peak — a broken, toothed summit skyline)
-        const aa = a + (rnd() - 0.5) * 0.22, rr = V.crater + 1 + rnd() * 9, x = V.x + Math.cos(aa) * rr, z = V.z + Math.sin(aa) * rr;
+        const aa = a + (rnd() - 0.5) * 0.22, rr = V.crater + 1 + rnd() * 9, x = V.x + dmath.cos(aa) * rr, z = V.z + dmath.sin(aa) * rr;
         const s2 = (q === 0 ? 10 + 6 * rnd() : 3.5 + rnd() * rnd() * 7), sy = s2 * (1.0 + 0.5 * rnd()), bury = q === 0 ? 0.3 + 0.1 * rnd() : 0.35 + 0.2 * rnd();
         push({ kind: "tor", v: (rnd() * 4) | 0, x, y: hAt(x, z) + sy * (0.5 - bury), z, yaw: aa + Math.PI / 2 + (rnd() - 0.5) * 0.7, sx: s2 * (0.75 + 0.4 * rnd()), sy, sz: s2 * (0.7 + 0.35 * rnd()), tilt: (rnd() - 0.5) * 0.35 });
       }
@@ -2324,7 +2325,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     if (sh < 11) continue;
     for (let q = 0; q < 3; q++) {
       const rr = lerp(r0 + 40, r1 - 45, q === 0 ? 0.45 + 0.2 * rnd() : rnd()), aa = sa + (q === 0 ? 0 : (rnd() - 0.5) * 0.12);
-      const x = V.x + Math.cos(aa) * rr, z = V.z + Math.sin(aa) * rr;
+      const x = V.x + dmath.cos(aa) * rr, z = V.z + dmath.sin(aa) * rr;
       // (tall, slim jagged crags, 35 % buried — sculptPeak is a pointed pyramid with arêtes)
       const s2 = q === 0 ? 18 + 8 * rnd() : 8 + 5 * rnd(), sy = s2 * (1.05 + 0.35 * rnd());
       push({ kind: "tor", v: (rnd() * 4) | 0, x, y: hAt(x, z) + sy * (0.5 - 0.35), z, yaw: aa + Math.PI / 2 + (rnd() - 0.5) * 0.5, sx: s2 * (0.8 + 0.3 * rnd()), sy, sz: s2 * (0.65 + 0.25 * rnd()), tilt: (rnd() - 0.5) * 0.2 });
@@ -2333,7 +2334,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   // 9. jagged crag faces ringing the volcano's foot (rock pinnacles around the cone) — FEW and
   //    BIG (14–24 m jointed crag masses, 1–2 per cluster, well apart), not a ring of scattered grey dice
   for (let a = 0; a < 6.283; a += 0.38 + rnd() * 0.3) {
-    const rr = V.cone + 10 + rnd() * 45, x = V.x + Math.cos(a) * rr, z = V.z + Math.sin(a) * rr;
+    const rr = V.cone + 10 + rnd() * 45, x = V.x + dmath.cos(a) * rr, z = V.z + dmath.sin(a) * rr;
     if (fallsCarve(x, z) || nearPad(x, z) || badlandsAt(x, z) > 0.3 || rnd() < 0.35) continue;
     if (t.path[idx(x, z)] > 20) continue;
     const nC = 1 + (rnd() < 0.4 ? 1 : 0);
@@ -2346,7 +2347,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   //     crest trail (left) and a few down the grass flank (right, below the line of sight to the bay)
   const dress = (id: string, list: Array<[number, number, number, number]>, kind: RockKind = "boulder", cluster = 0) => {
     const c = TERRAIN_CAMS[id]; if (!c) return;
-    const fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = Math.hypot(fx, fz), ux = fx / fl, uz = fz / fl;
+    const fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = dmath.hypot(fx, fz), ux = fx / fl, uz = fz / fl;
     for (const [fwd, right, sz, bury] of list) {
       const x = c.pos[0] + ux * fwd - uz * right, z = c.pos[2] + uz * fwd + ux * right;
       if (t.path[idx(x, z)] > 20) continue;
@@ -2387,15 +2388,15 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     let coverY = 0;
     const coverNear = (x: number, z: number, r: number) => {
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const q of grid.get(gk(x + a * cell, z + b * cell)) ?? [])
-        if (Math.hypot(q.x - x, q.z - z) < r + Math.max(q.sx, q.sz) * 0.4 && q.y + q.sy * 0.43 >= coverY + 1.6 && q.y - q.sy * 0.43 <= coverY + 1.0) return true;
+        if (dmath.hypot(q.x - x, q.z - z) < r + Math.max(q.sx, q.sz) * 0.4 && q.y + q.sy * 0.43 >= coverY + 1.6 && q.y - q.sy * 0.43 <= coverY + 1.0) return true;
       return false;
     };
-    const inPoiR = (x: number, z: number) => POIS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r * 0.9);
+    const inPoiR = (x: number, z: number) => POIS.some((p) => dmath.hypot(x - p.x, z - p.z) < p.r * 0.9);
     const inKeepXZ = (x: number, z: number, m: number) => {
       for (const c of t.keep ?? []) {
         const dx = x - c.x, dz = z - c.z;
-        if (c.r > 0) { if (dx * dx + dz * dz < (c.r + m) ** 2) return true; continue; }
-        const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), lx = dx * cy + dz * sy, lz = -dx * sy + dz * cy;
+        if (c.r > 0) { if (dx * dx + dz * dz < dmath.pow(c.r + m, 2)) return true; continue; }
+        const cy = dmath.cos(c.yaw), sy = dmath.sin(c.yaw), lx = dx * cy + dz * sy, lz = -dx * sy + dz * cy;
         if (Math.abs(lx) < c.hx + m && Math.abs(lz) < c.hz + m) return true;
       }
       return false;
@@ -2403,13 +2404,13 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     for (const P of [...pathLines(), ...ROT_COVER.map((pts) => ({ id: "cover", pts, w: 0 }))]) {
       const L = polyLen(P.pts); let side = cr() < 0.5 ? -1 : 1;
       for (let d = 8 + cr() * 8; d < L - 6; d += (P.w ? 15 : 13) + cr() * 5) {   // a piece every 13–20 m
-        const [px, pz] = polyAt(P.pts, d), [qx, qz] = polyAt(P.pts, Math.min(L, d + 3)), tl = Math.hypot(qx - px, qz - pz) || 1;
+        const [px, pz] = polyAt(P.pts, d), [qx, qz] = polyAt(P.pts, Math.min(L, d + 3)), tl = dmath.hypot(qx - px, qz - pz) || 1;
         side = cr() < 0.75 ? -side : side;
         const o0 = P.w + 5.5 + cr() * 4, gP = hAt(px, pz); coverY = gP;
         // the rock's size decides how far off every painted ribbon it must stand: the road filter below drops a
         // loose rock within 0.45 × size + 1.2 m of a ribbon — a 3–5 m cover boulder placed closer would be silently removed
         const sz0 = 3.2 + cr() * 1.5, rrN = sz0 * 1.3 * 0.45 + 1.3;
-        const nearRibbon = (x: number, z: number) => { if (t.path[idx(x, z)] >= 60) return true; for (let a = 0; a < 8; a++) if (t.path[idx(x + Math.cos(a * Math.PI / 4) * rrN, z + Math.sin(a * Math.PI / 4) * rrN)] >= 60) return true; return false; };
+        const nearRibbon = (x: number, z: number) => { if (t.path[idx(x, z)] >= 60) return true; for (let a = 0; a < 8; a++) if (t.path[idx(x + dmath.cos(a * Math.PI / 4) * rrN, z + dmath.sin(a * Math.PI / 4) * rrN)] >= 60) return true; return false; };
         // the preferred side, else the other one (a POI clearing / the lagoon / a slope on one side of the trail);
         // on the SAME level as the trail (±1 m): a boulder 4 m down the bank hides nobody standing on the trail — try
         // the offset, then closer / further on both sides
@@ -2422,11 +2423,11 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
         let found = false;
         for (const o of [o0, o0 + 3, P.w + rrN + 1.5, o0 + 6]) { for (const sd of [side, -side]) if (tryAt(sd, o)) { found = true; break; } if (found) break; }
         if (why) continue;
-        const volc = Math.hypot(bx - V.x, bz - V.z) < V.base + 60 || badlandsAt(bx, bz) > 0.3;
+        const volc = dmath.hypot(bx - V.x, bz - V.z) < V.base + 60 || badlandsAt(bx, bz) > 0.3;
         const k0 = out.length;
         if (!volc && cr() < 0.18) {
           // a low ruined wall: 2–3 granite blocks in a line along the trail, the middle one tallest, slightly skewed
-          const n = 2 + ((cr() * 2) | 0), ux = (qx - px) / tl, uz = (qz - pz) / tl, yaw = Math.atan2(ux, uz) + (cr() - 0.5) * 0.3;
+          const n = 2 + ((cr() * 2) | 0), ux = (qx - px) / tl, uz = (qz - pz) / tl, yaw = dmath.atan2(ux, uz) + (cr() - 0.5) * 0.3;
           for (let b = 0; b < n; b++) {
             const along = (b - (n - 1) / 2) * 2.3, wx = bx + ux * along, wz = bz + uz * along;
             const sy = b === ((n - 1) >> 1) ? 2.3 + cr() * 0.5 : 1.95 + cr() * 0.4;   // tops 1.65–2.5 m: a kong hides
@@ -2436,7 +2437,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
           const kind: RockKind = volc ? "crag" : "boulder", s = sz0, sy = s * 0.72;   // 3.2–4.7 m
           push({ kind, v: (cr() * 4) | 0, x: bx, y: h + sy * (0.5 - 0.22), z: bz, yaw: cr() * 6.283, sx: s * (1.0 + 0.3 * cr()), sy, sz: s * (0.85 + 0.25 * cr()), tilt: (cr() - 0.5) * 0.2 });
           for (let c = 0, m = 1 + ((cr() * 2) | 0); c < m; c++) {
-            const a = cr() * 6.283, r0 = s * 0.55 + 0.6 + cr() * 1.2, sx2 = bx + Math.cos(a) * r0, sz2 = bz + Math.sin(a) * r0, s2 = 0.9 + cr() * 0.8, sy2 = s2 * 0.72;
+            const a = cr() * 6.283, r0 = s * 0.55 + 0.6 + cr() * 1.2, sx2 = bx + dmath.cos(a) * r0, sz2 = bz + dmath.sin(a) * r0, s2 = 0.9 + cr() * 0.8, sy2 = s2 * 0.72;
             push({ kind, v: (cr() * 4) | 0, x: sx2, y: hAt(sx2, sz2) + sy2 * (0.5 - 0.3), z: sz2, yaw: cr() * 6.283, sx: s2 * (0.9 + 0.3 * cr()), sy: sy2, sz: s2 * (0.85 + 0.3 * cr()), tilt: (cr() - 0.5) * 0.3 });
           }
         }
@@ -2456,7 +2457,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
       for (const q of out) if (q.sy >= 1.5 && Math.min(q.sx, q.sz) >= 0.9) fadd(q);
       const covered = (x: number, z: number, gy: number) => {
         for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (const q of fillGrid.get(gk(x + a * cell, z + b * cell)) ?? [])
-          if (Math.hypot(q.x - x, q.z - z) < 13 && hides(q, gy)) return true;
+          if (dmath.hypot(q.x - x, q.z - z) < 13 && hides(q, gy)) return true;
         return false;
       };
       const fr = mulberry32(WORLD.SEED + 9127);
@@ -2465,16 +2466,16 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
         for (let d = 0; d <= L; d += 5) {
           const [px, pz] = polyAt(line, d), gy = hAt(px, pz);
           if (gy < -0.6 || inPoiR(px, pz) || covered(px, pz, gy)) continue;
-          const [qx, qz] = polyAt(line, Math.min(L, d + 2)), [ux, uz] = [qx - px, qz - pz], ul = Math.hypot(ux, uz) || 1;
-          const s0 = 3.2 + fr() * 1.3, rr = s0 * 1.3 * 0.45 + 1.3, a0 = Math.atan2(uz / ul, ux / ul) + (fr() < 0.5 ? 1 : -1) * Math.PI / 2;
+          const [qx, qz] = polyAt(line, Math.min(L, d + 2)), [ux, uz] = [qx - px, qz - pz], ul = dmath.hypot(ux, uz) || 1;
+          const s0 = 3.2 + fr() * 1.3, rr = s0 * 1.3 * 0.45 + 1.3, a0 = dmath.atan2(uz / ul, ux / ul) + (fr() < 0.5 ? 1 : -1) * Math.PI / 2;
           let ok = false, bx = 0, bz = 0, h = 0;
           search: for (const rad of [7, 10, 5.5, 12, 14]) for (let k = 0; k < 24; k++) {
             const a = a0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 12);
-            bx = px + Math.cos(a) * rad; bz = pz + Math.sin(a) * rad; h = hAt(bx, bz);
+            bx = px + dmath.cos(a) * rad; bz = pz + dmath.sin(a) * rad; h = hAt(bx, bz);
             const why = h < -0.6 ? "water" : h - gy > 1.4 || h - gy < -0.9 ? "level" : inPoiR(bx, bz) ? "poi" : nearPad(bx, bz, 1.05) ? "pad" : inApron(bx, bz) ? "apron" : fallsCarve(bx, bz) ? "falls" : slopeAt(bx, bz).s > 0.6 ? "slope" : inKeepXZ(bx, bz, s0 * 0.5 + 1) ? "keep" : "";
             if (why) continue;
             if (t.path[idx(bx, bz)] >= 20) continue;
-            let rib = false; for (let m = 0; m < 8; m++) if (t.path[idx(bx + Math.cos(m * Math.PI / 4) * rr, bz + Math.sin(m * Math.PI / 4) * rr)] >= 60) { rib = true; break; }
+            let rib = false; for (let m = 0; m < 8; m++) if (t.path[idx(bx + dmath.cos(m * Math.PI / 4) * rr, bz + dmath.sin(m * Math.PI / 4) * rr)] >= 60) { rib = true; break; }
             if (rib) continue;
             // push() silently refuses lava, camera keep-outs and view corridors: probe with the main rock's footprint
             const n0 = out.length;
@@ -2484,10 +2485,10 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
             ok = true; break search;
           }
           if (!ok) continue;
-          const volc = Math.hypot(bx - V.x, bz - V.z) < V.base + 60 || badlandsAt(bx, bz) > 0.3;
+          const volc = dmath.hypot(bx - V.x, bz - V.z) < V.base + 60 || badlandsAt(bx, bz) > 0.3;
           const k0 = out.length;
           if (!volc && fr() < 0.2) {
-            const yaw = Math.atan2(ux, uz) + (fr() - 0.5) * 0.4, dx = ux / ul, dz = uz / ul;
+            const yaw = dmath.atan2(ux, uz) + (fr() - 0.5) * 0.4, dx = ux / ul, dz = uz / ul;
             for (let b = 0; b < 3; b++) {
               const along = (b - 1) * 2.2, wx = bx + dx * along, wz = bz + dz * along, sy = Math.max(b === 1 ? 2.4 + fr() * 0.4 : 2.0 + fr() * 0.4, gy + 2.05 - hAt(wx, wz));
               push({ kind: "slab", v: (fr() * 4) | 0, x: wx, y: hAt(wx, wz) + sy * 0.5 - 0.3, z: wz, yaw: yaw + (fr() - 0.5) * 0.12, sx: 2.2 + fr() * 0.4, sy, sz: 1.0 + fr() * 0.3, tilt: 0 });
@@ -2496,7 +2497,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
             // tall enough to hide a kong standing at the SAMPLE's level (collider top = foot + 0.71 sy ≥ gy + 1.75)
             const kind: RockKind = volc ? "crag" : "boulder", sy = Math.max(s0 * 0.72, (gy + 1.75 - h) / 0.71);
             push({ kind, v: (fr() * 4) | 0, x: bx, y: h + sy * (0.5 - 0.22), z: bz, yaw: fr() * 6.283, sx: s0 * (1.0 + 0.3 * fr()), sy, sz: s0 * (0.85 + 0.25 * fr()), tilt: (fr() - 0.5) * 0.2 });
-            const a = fr() * 6.283, r0 = s0 * 0.55 + 0.7, sx2 = bx + Math.cos(a) * r0, sz2 = bz + Math.sin(a) * r0, s2 = 0.9 + fr() * 0.7;
+            const a = fr() * 6.283, r0 = s0 * 0.55 + 0.7, sx2 = bx + dmath.cos(a) * r0, sz2 = bz + dmath.sin(a) * r0, s2 = 0.9 + fr() * 0.7;
             push({ kind, v: (fr() * 4) | 0, x: sx2, y: hAt(sx2, sz2) + s2 * 0.72 * 0.2, z: sz2, yaw: fr() * 6.283, sx: s2, sy: s2 * 0.72, sz: s2 * 0.9, tilt: (fr() - 0.5) * 0.3 });
           }
           for (let q = k0; q < out.length; q++) fadd(out[q]);
@@ -2510,12 +2511,12 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
   //     Own RNG, appended (every earlier rock keeps its place); the usual filters (camera, lava, roads, keep-outs) apply.
   {
     const hr = mulberry32(WORLD.SEED + 9311);
-    const lens = (id: string) => { const c = TERRAIN_CAMS[id], fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = Math.hypot(fx, fz); return { x: c.pos[0], z: c.pos[2], ux: fx / fl, uz: fz / fl }; };
+    const lens = (id: string) => { const c = TERRAIN_CAMS[id], fx = c.target[0] - c.pos[0], fz = c.target[2] - c.pos[2], fl = dmath.hypot(fx, fz); return { x: c.pos[0], z: c.pos[2], ux: fx / fl, uz: fz / fl }; };
     const at = (L: { x: number; z: number; ux: number; uz: number }, d: number, l: number): [number, number] => [L.x + L.ux * d - L.uz * l, L.z + L.uz * d + L.ux * l];
     const cluster = (kind: RockKind, cx: number, cz: number, s0: number, n: number, sink: number) => {
       push({ kind, v: (hr() * 4) | 0, x: cx, y: hAt(cx, cz) + s0 * 0.72 * (0.5 - sink), z: cz, yaw: hr() * 6.283, sx: s0 * (1 + 0.3 * hr()), sy: s0 * 0.72, sz: s0 * (0.85 + 0.25 * hr()), tilt: (hr() - 0.5) * 0.25 });
       for (let k = 0; k < n; k++) {
-        const a = hr() * 6.283, r0 = s0 * 0.6 + 0.4 + hr() * 1.6, x = cx + Math.cos(a) * r0, z = cz + Math.sin(a) * r0, s2 = s0 * (0.3 + 0.35 * hr());
+        const a = hr() * 6.283, r0 = s0 * 0.6 + 0.4 + hr() * 1.6, x = cx + dmath.cos(a) * r0, z = cz + dmath.sin(a) * r0, s2 = s0 * (0.3 + 0.35 * hr());
         push({ kind, v: (hr() * 4) | 0, x, y: hAt(x, z) + s2 * 0.72 * (0.5 - sink), z, yaw: hr() * 6.283, sx: s2 * (1 + 0.3 * hr()), sy: s2 * 0.72, sz: s2 * (0.8 + 0.3 * hr()), tilt: (hr() - 0.5) * 0.4 });
       }
     };
@@ -2539,7 +2540,7 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
     const onRoad = (q: RockInstance) => {
       const rr = Math.max(q.sx, q.sz) * 0.45 + 1.2;
       if (t.path[idx(q.x, q.z)] >= 60) return true;
-      for (let a = 0; a < 8; a++) { const x = q.x + Math.cos(a * Math.PI / 4) * rr, z = q.z + Math.sin(a * Math.PI / 4) * rr; if (t.path[idx(x, z)] >= 60) return true; }
+      for (let a = 0; a < 8; a++) { const x = q.x + dmath.cos(a * Math.PI / 4) * rr, z = q.z + dmath.sin(a * Math.PI / 4) * rr; if (t.path[idx(x, z)] >= 60) return true; }
       return false;
     };
     // POI clearings (file v5 `keep`, snapshot of every shared/pois clearing by the bake): no loose rock inside the ground a
@@ -2552,9 +2553,9 @@ function terrainRocksBuild(t: TerrainData): RockInstance[] {
       const m = Math.max(q.sx, q.sz) * 0.35;
       for (const c of K) {
         const dx = q.x - c.x, dz = q.z - c.z;
-        if (c.r > 0) { if (dx * dx + dz * dz < (c.r + m) ** 2) return true; continue; }
+        if (c.r > 0) { if (dx * dx + dz * dz < dmath.pow(c.r + m, 2)) return true; continue; }
         if (Math.abs(dx) > c.hx + c.hz + m || Math.abs(dz) > c.hx + c.hz + m) continue;
-        const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), lx = dx * cy + dz * sy, lz = -dx * sy + dz * cy;
+        const cy = dmath.cos(c.yaw), sy = dmath.sin(c.yaw), lx = dx * cy + dz * sy, lz = -dx * sy + dz * cy;
         if (Math.abs(lx) < c.hx + m && Math.abs(lz) < c.hz + m) return true;
       }
       return false;
@@ -2591,7 +2592,7 @@ export function terrainRockColliders(rocks: RockInstance[]): Box[] {
   // an eroded face (a union box per column would stand metres in front of the stepped-back upper tiers)
   for (const r of rocks) {
     if (r.grp === undefined) continue;
-    const c = Math.cos(r.yaw), s = Math.sin(r.yaw);
+    const c = dmath.cos(r.yaw), s = dmath.sin(r.yaw);
     // the box faces sit at the carved surface's MEAN depth (carveMean), so the rock you see is within a few dm of what
     // you collide with and what stops a bullet
     const cm = Math.min(1.0, carveMean(r.kind));

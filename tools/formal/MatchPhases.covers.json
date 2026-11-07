@@ -1,0 +1,126 @@
+{
+  "skill": ".agents/skills/verify-match-phases/SKILL.md",
+  "regions": [
+    "shared/sim/match.ts#Match.step",
+    "shared/sim/match.ts#Match.startNow",
+    "shared/sim/match.ts#Match.warmupHeld",
+    "shared/sim/match.ts#Match.enterWarmup",
+    "shared/sim/match.ts#Match.enterPlane",
+    "shared/sim/match.ts#Match.stepPlane",
+    "shared/sim/match.ts#Match.enterPlay",
+    "shared/sim/match.ts#Match.enterResults",
+    "shared/sim/match.ts#Match.checkEnd",
+    "shared/sim/match.ts#Match.squadsLeft",
+    "shared/sim/match.ts#Match.kill",
+    "shared/sim/match.ts#Match.eliminate",
+    "shared/sim/match.ts#Match.stepRespawns",
+    "shared/sim/match.ts#Match.econHost",
+    "shared/sim/player.ts#resetForMatch",
+    "shared/sim/storm.ts#PHASE_REF",
+    "shared/sim/storm.ts#stormAt",
+    "shared/net/host.ts#MatchHost.holdForStream",
+    "server/index.ts#onJSON/case \"start\"",
+    "server/index.ts#onJSON/case \"stream\"",
+    "server/index.ts#Lobby.start",
+    "server/index.ts#Lobby.pump",
+    "server/index.ts#Lobby.endMatch"
+  ],
+  "writes": [
+    {
+      "what": "the phase, the end of a match, START NOW, the warm-up hold, redeploys",
+      "pattern": "\\.(phase|over|skipWarmup|resurgenceOn|warmWall|phaseT)\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)\\s*[^\\s;]+|\\.holdWarmup\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)\\s*[^\\s;]+|\\.(phaseT|warmWall)\\s*(?:\\+\\+|--)|(?:\\+\\+|--)\\s*[\\w.]+\\.(phaseT|warmWall)\\b",
+      "files": [
+        "shared/sim/",
+        "shared/net/",
+        "server/"
+      ]
+    },
+    {
+      "what": "a squad's elimination",
+      "pattern": "\\.eliminated\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)\\s*[^\\s;]+",
+      "files": [
+        "shared/sim/",
+        "server/"
+      ]
+    }
+  ],
+  "allow": [
+    {
+      "at": "shared/sim/match.ts#Match.setupRange",
+      "writes": [
+        ".eliminated = true"
+      ],
+      "why": "the firing range never ends and is not modelled"
+    },
+    {
+      "at": "shared/net/replay.ts#replayMatch",
+      "writes": [
+        ".holdWarmup = ()"
+      ],
+      "why": "a replay plays back the holds a recorded match saw"
+    },
+    {
+      "at": "shared/net/host.hot.ts#writeSnapshotFor",
+      "writes": [
+        ".phase = m.phase"
+      ],
+      "why": "copies the match's phase into a snapshot header sent to clients; it writes the header, not the match"
+    },
+    {
+      "at": "shared/net/host.ts#writeCastSnapshot",
+      "writes": [
+        ".phase = m.phase"
+      ],
+      "why": "copies the match's phase into the caster's snapshot header; it writes the header, not the match"
+    },
+    {
+      "at": "shared/net/proto.ts#readSnapHeader",
+      "writes": [
+        ".phase = r.u8()"
+      ],
+      "why": "reads a snapshot header on the client into its own header object; the server's match is what the model checks"
+    },
+    {
+      "at": "shared/net/proto.ts#readCastHeader",
+      "writes": [
+        ".phase = r.u8()"
+      ],
+      "why": "reads the caster's snapshot header into its own header object; the server's match is what the model checks"
+    },
+    {
+      "at": "shared/sim/match.ts#Match.stepRange",
+      "writes": [
+        ".phaseT += DT"
+      ],
+      "why": "the firing range's step: Match.step hands a range match to it before any phase logic, and a range never changes phase, so its phaseT is only the range's own clock"
+    }
+  ],
+  "verified": {
+    "model": "c3fcd5c2789efa67",
+    "regions": {
+      "shared/sim/match.ts#Match.step": "7dca769aad2c92c6",
+      "shared/sim/match.ts#Match.startNow": "b779ef6260e29677",
+      "shared/sim/match.ts#Match.warmupHeld": "7a326d0c62acd4d9",
+      "shared/sim/match.ts#Match.enterWarmup": "7618bee68a8f4a70",
+      "shared/sim/match.ts#Match.enterPlane": "531ea3b536fe627d",
+      "shared/sim/match.ts#Match.stepPlane": "d777e44ffd0e3119",
+      "shared/sim/match.ts#Match.enterPlay": "54b19b3b8d41e962",
+      "shared/sim/match.ts#Match.enterResults": "adeaad451dcf9f21",
+      "shared/sim/match.ts#Match.checkEnd": "89160c7e3710c80d",
+      "shared/sim/match.ts#Match.squadsLeft": "bd2e00243de0893f",
+      "shared/sim/match.ts#Match.kill": "acb855d8aeec42e9",
+      "shared/sim/match.ts#Match.eliminate": "41a4964069225946",
+      "shared/sim/match.ts#Match.stepRespawns": "e952cbe4f8040ffe",
+      "shared/sim/match.ts#Match.econHost": "6a3def1a6f8a4eeb",
+      "shared/sim/player.ts#resetForMatch": "6066e6d9b3148c1f",
+      "shared/sim/storm.ts#PHASE_REF": "e0a75d3d1b14fd57",
+      "shared/sim/storm.ts#stormAt": "5d1b4498bd9062af",
+      "shared/net/host.ts#MatchHost.holdForStream": "a48e271bba913cc6",
+      "server/index.ts#onJSON/case \"start\"": "03394197bfaf965c",
+      "server/index.ts#onJSON/case \"stream\"": "2d53e376bbcf7c50",
+      "server/index.ts#Lobby.start": "0c8616be28917b85",
+      "server/index.ts#Lobby.pump": "9a5546ca3ad69289",
+      "server/index.ts#Lobby.endMatch": "d65ba7025ff9eed3"
+    }
+  }
+}

@@ -22,6 +22,7 @@ export type { Piece } from "./harbor-kit";
 // the furnished rooms + LOOT_SPOTS come from an offline bake (stale → computed live + a warning)
 import BAKE from "./peel-harbor-baked.json";
 import ROCKS_BAKED from "./harbor-rocks-baked.json";
+import * as dmath from "../sim/dmath";
 
 // ---------------------------------------------------------------- frame
 /** local → world: world.x = x − lz, world.z = z + lx (three.js: group.position (x,0,z), group.rotation.y = yaw) */
@@ -267,9 +268,9 @@ type MB = [number, number, number, number, number, number, number?, number?];
 /** an upright round member (drum, pole, tyre stack) as a regular OCTAGON whose corners lie on the drawn circle (radius r):
  *  the union of four slabs a × a·tan 22.5° (two crosses 45° apart, inradius a = r·cos 22.5°) — within 8 % of r of the
  *  curve all round (one square's corners stood 0.12 m proud of a drum) */
-const OCT_T = Math.tan(Math.PI / 8);
+const OCT_T = dmath.tan(Math.PI / 8);
 const oct = (cx: number, cy: number, cz: number, r: number, hy: number, fl = 0): MB[] => {
-  const a = r * Math.cos(Math.PI / 8), t = a * OCT_T;
+  const a = r * dmath.cos(Math.PI / 8), t = a * OCT_T;
   return [[cx, cy, cz, a, hy, t, fl, 0], [cx, cy, cz, t, hy, a, fl, 0], [cx, cy, cz, a, hy, t, fl, Math.PI / 4], [cx, cy, cz, t, hy, a, fl, Math.PI / 4]];
 };
 /** a pallet prop's loads (the client's protoKey reads the same): [lower, upper] for a stack, [load] for one pallet */
@@ -298,8 +299,8 @@ function propMembers(p: PropSpec): MB[] | undefined {
   if (p.kind === "chassis") {
     // a LOADED chassis: the box overhangs the frame by 0.6 m a side over a 1.36 m gap — a crouch-only strip nobody can
     // reach (scanner: unreachable) → a no-shoot fill under the box, its width + length
-    const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
-    const q = CONTAINERS.find((k) => k.y > APRON_Y + 1 && k.y < APRON_Y + 2 && Math.hypot(k.x - p.x, k.z - p.z) < 6.5 && Math.abs(-(k.x - p.x) * sn - (k.z - p.z) * c) < 0.5);
+    const c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw);
+    const q = CONTAINERS.find((k) => k.y > APRON_Y + 1 && k.y < APRON_Y + 2 && dmath.hypot(k.x - p.x, k.z - p.z) < 6.5 && Math.abs(-(k.x - p.x) * sn - (k.z - p.z) * c) < 0.5);
     if (q) {
       const u = (q.x - p.x) * c - (q.z - p.z) * sn, L2 = (q.size ?? 40) === 40 ? 6.08 : 3.02;
       return [...PROP_MEMBERS.chassis!, [u, 0.525, 0, L2, 0.525, 1.22, 1]];
@@ -389,7 +390,7 @@ export function onApron(x: number, z: number, margin = 0): boolean {
   for (let i = 0, j = APRON.length - 1; i < APRON.length; j = i++) {
     const [ax, az] = APRON[j], [bx, bz] = APRON[i];
     const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-    if (Math.hypot(x - (ax + dx * t), z - (az + dz * t)) < margin) return false;
+    if (dmath.hypot(x - (ax + dx * t), z - (az + dz * t)) < margin) return false;
   }
   return true;
 }
@@ -402,7 +403,7 @@ export function footOnApron(x: number, z: number, hx: number, hz: number, m = 0.
 
 /** local-frame footprint of a warehouse incl. its forecourt (for keep-outs) */
 function whRect(w: WarehouseSpec, padL: number, padW: number): [number, number, number, number] {
-  const alongX = Math.abs(Math.cos(w.yaw)) > 0.5;
+  const alongX = Math.abs(dmath.cos(w.yaw)) > 0.5;
   const hl = w.length / 2 + padL, hw = w.width / 2 + padW;
   return alongX ? [w.x - hl, w.x + hl, w.z - hw, w.z + hw] : [w.x - hw, w.x + hw, w.z - hl, w.z + hl];
 }
@@ -560,8 +561,8 @@ export const JUNGLE_PATCHES: JunglePatch[] = [
 export function jungleAt(x: number, z: number): number {
   let best = 0;
   for (const p of JUNGLE_PATCHES) {
-    const c = Math.cos(p.rot), s = Math.sin(p.rot), dx = x - p.x, dz = z - p.z;
-    const u = (dx * c + dz * s) / p.rx, v = (-dx * s + dz * c) / p.rz, d = Math.hypot(u, v);
+    const c = dmath.cos(p.rot), s = dmath.sin(p.rot), dx = x - p.x, dz = z - p.z;
+    const u = (dx * c + dz * s) / p.rx, v = (-dx * s + dz * c) / p.rz, d = dmath.hypot(u, v);
     best = Math.max(best, Math.min(1, Math.max(0, (1 - d) * 3)));
   }
   return best;
@@ -855,13 +856,13 @@ function blocked(x: number, z: number, hx: number, hz: number): boolean {
   }
   // ---- jungle trees in the overgrown patches: dense (a tree per ~55 m², min spacing 4 m), palms toward the rim
   for (const [pi, p] of JUNGLE_PATCHES.entries()) {
-    const n = Math.max(p.trees, Math.round((Math.PI * p.rx * p.rz) / 70)), c = Math.cos(p.rot), sn = Math.sin(p.rot);
+    const n = Math.max(p.trees, Math.round((Math.PI * p.rx * p.rz) / 70)), c = dmath.cos(p.rot), sn = dmath.sin(p.rot);
     const placed: Array<[number, number]> = [];
     for (let k = 0, tries = 0; k < n && tries < n * 6; tries++) {
       const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.88;
-      const u = Math.cos(a) * d * p.rx, v = Math.sin(a) * d * p.rz;
+      const u = dmath.cos(a) * d * p.rx, v = dmath.sin(a) * d * p.rz;
       const x = p.x + u * c - v * sn, z = p.z + u * sn + v * c;
-      if (!onApron(x, z, 1.5) || blocked(x, z, 2, 2) || placed.some(([px, pz]) => (px - x) ** 2 + (pz - z) ** 2 < 16)) continue;
+      if (!onApron(x, z, 1.5) || blocked(x, z, 2, 2) || placed.some(([px, pz]) => dmath.pow(px - x, 2) + dmath.pow(pz - z, 2) < 16)) continue;
       if (CONTAINERS.some((q) => Math.abs(q.x - x) < 7 && Math.abs(q.z - z) < 7)) continue;
       placed.push([x, z]); k++;
       // 2 of every 5 trees are planted — the yard's land side
@@ -877,7 +878,7 @@ function blocked(x: number, z: number, hx: number, hz: number): boolean {
   for (let x = 590; x < 765; x += 16) PROPS.push({ kind: "bollard", x, z: 41.1, yaw: 0 });
   for (let z = 270; z < 440; z += 44) PROPS.push({ kind: "lamp", x: 862, z, yaw: 0 });
   for (const w of WAREHOUSES) {
-    const alongZ = Math.abs(Math.sin(w.yaw)) > 0.5;
+    const alongZ = Math.abs(dmath.sin(w.yaw)) > 0.5;
     for (const d of [-14, 14]) {
       const p = alongZ ? { x: w.x + w.width / 2 + 7, z: w.z + d } : { x: w.x + d, z: w.z - w.width / 2 - 7 };
       if (onApron(p.x, p.z, 2) && !blocked(p.x, p.z, 0.3, 0.3)) PROPS.push({ kind: "lamp", x: p.x, z: p.z, yaw: 0 });
@@ -939,7 +940,7 @@ function blocked(x: number, z: number, hx: number, hz: number): boolean {
  */
 export type ClusterKind = "pallet-block" | "crate-block" | "drums" | "forklift-work" | "chassis20" | "genset" | "tyres" | "banana-row";
 export function clusterAt(x: number, z: number, yaw: number, kind: ClusterKind, r: () => number, out: PropSpec[] = PROPS, boxes: ContainerPlacement[] = CONTAINERS): void {
-  const c = Math.cos(yaw), sn = Math.sin(yaw);
+  const c = dmath.cos(yaw), sn = dmath.sin(yaw);
   // (u along the cluster, v across) → local x, z (three yaw: +u = (cos, −sin))
   const at = (u: number, v: number): [number, number] => [x + u * c + v * sn, z - u * sn + v * c];
   const put = (kind2: PropKind, u: number, v: number, dy = 0, extra: Partial<PropSpec> = {}) => { const [px, pz] = at(u, v); out.push({ kind: kind2, x: px, z: pz, yaw: yaw + dy, ...extra }); };
@@ -997,7 +998,7 @@ function coverPass(extra: Array<[number, number, number, number]>) {
   const solid: Array<[number, number]> = [];
   const addSolid = (x: number, z: number) => solid.push([x, z]);
   // only HARD cover counts (≥ 1.2 m: a crouching kong disappears behind it) — hard cover every 12–15 m
-  for (const p of CONTAINERS) { const c = Math.cos(p.yaw), sn = Math.sin(p.yaw), L = (p.size ?? 40) === 40 ? 5 : 2; for (const u of [-L, 0, L]) addSolid(p.x + u * c, p.z - u * sn); }
+  for (const p of CONTAINERS) { const c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw), L = (p.size ?? 40) === 40 ? 5 : 2; for (const u of [-L, 0, L]) addSolid(p.x + u * c, p.z - u * sn); }
   for (const p of PROPS) if (PROP_FOOT[p.kind].hy * (p.s ?? 1) >= 0.58 && p.kind !== "lamp" && p.kind !== "light-tower") addSolid(p.x, p.z);
   for (const t of JUNGLE_TREES) addSolid(t.x, t.z);
   for (const w of WAREHOUSES) { const [x0, x1, z0, z1] = whRect(w, 0, 0); for (let x = x0; x <= x1; x += 6) for (let z = z0; z <= z1; z += 6) addSolid(x, z); }
@@ -1008,13 +1009,13 @@ function coverPass(extra: Array<[number, number, number, number]>) {
   for (const [x, z] of solid) put(x, z);
   const near = (x: number, z: number, d: number) => {
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [px, pz] of grid.get(`${cx + i}:${cz + j}`) ?? []) if ((px - x) ** 2 + (pz - z) ** 2 < d * d) return true;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [px, pz] of grid.get(`${cx + i}:${cz + j}`) ?? []) if (dmath.pow(px - x, 2) + dmath.pow(pz - z, 2) < d * d) return true;
     return false;
   };
   const quay = (x: number, z: number) => x > 858 && z > 262;
   // masts + light towers are not cover, but nothing may be staged on top of their foundations
   const masts = PROPS.filter((p) => p.kind === "lamp" || p.kind === "light-tower").map((p) => [p.x, p.z] as [number, number]);
-  const onMast = (x: number, z: number, d: number) => masts.some(([mx, mz]) => (mx - x) ** 2 + (mz - z) ** 2 < d * d);
+  const onMast = (x: number, z: number, d: number) => masts.some(([mx, mz]) => dmath.pow(mx - x, 2) + dmath.pow(mz - z, 2) < d * d);
   const R = 7.5;
   for (let z = 44; z < 470; z += 4) for (let x = 530; x < 896; x += 4) {
     if (!onApron(x, z, 3.5) || near(x, z, R) || blocked(x, z, 1.6, 1.6) && !(quay(x, z) && x < 892)) continue;
@@ -1038,15 +1039,15 @@ function coverPass(extra: Array<[number, number, number, number]>) {
     else if (u < 0.46) clusterAt(jx, jz, yaw, "crate-block", r);
     else if (u < 0.56) clusterAt(jx, jz, yaw, "genset", r);
     else if (u < 0.66) clusterAt(jx, jz, yaw, "drums", r);
-    else if (u < 0.72) PROPS.push({ kind: "lashing-cage", x: jx, z: jz, yaw }, { kind: "lashing-cage", x: jx + 2.5 * Math.cos(yaw), z: jz - 2.5 * Math.sin(yaw), yaw });
+    else if (u < 0.72) PROPS.push({ kind: "lashing-cage", x: jx, z: jz, yaw }, { kind: "lashing-cage", x: jx + 2.5 * dmath.cos(yaw), z: jz - 2.5 * dmath.sin(yaw), yaw });
     else if (u < 0.79) PROPS.push({ kind: "hatch-cover", x: jx, z: jz, yaw });
-    else if (u < 0.85) { PROPS.push({ kind: "timber-stack", x: jx, z: jz, yaw }); clusterAt(jx + 1.8 * Math.sin(yaw), jz + 1.8 * Math.cos(yaw), yaw, "crate-block", r); }
-    else if (u < 0.92 && !blocked(jx, jz, 6.5, 6.5) && !near(jx + 6.3 * Math.cos(yaw), jz - 6.3 * Math.sin(yaw), 3.2) && !near(jx - 6.3 * Math.cos(yaw), jz + 6.3 * Math.sin(yaw), 3.2) && onApron(jx + 6.3 * Math.cos(yaw), jz - 6.3 * Math.sin(yaw), 2) && onApron(jx - 6.3 * Math.cos(yaw), jz + 6.3 * Math.sin(yaw), 2)) clusterAt(jx, jz, yaw, "chassis20", r);
+    else if (u < 0.85) { PROPS.push({ kind: "timber-stack", x: jx, z: jz, yaw }); clusterAt(jx + 1.8 * dmath.sin(yaw), jz + 1.8 * dmath.cos(yaw), yaw, "crate-block", r); }
+    else if (u < 0.92 && !blocked(jx, jz, 6.5, 6.5) && !near(jx + 6.3 * dmath.cos(yaw), jz - 6.3 * dmath.sin(yaw), 3.2) && !near(jx - 6.3 * dmath.cos(yaw), jz + 6.3 * dmath.sin(yaw), 3.2) && onApron(jx + 6.3 * dmath.cos(yaw), jz - 6.3 * dmath.sin(yaw), 2) && onApron(jx - 6.3 * dmath.cos(yaw), jz + 6.3 * dmath.sin(yaw), 2)) clusterAt(jx, jz, yaw, "chassis20", r);
     else {
       const cyaw = yaw + (r() < 0.5 ? Math.PI : 0), q: ContainerPlacement = { x: jx, y: APRON_Y, z: jz, yaw: cyaw, size: 20, color: r() < 0.55 ? "yellow" : r() < 0.5 ? "red" : "green", decal: undefined };
       // every other lone 20 ft box is ENTERABLE (quarter-turn yaw, doors flat open) with a crate at its closed end —
       // a mantle onto its roof. The doors need 2.5 m of open slab in front.
-      const qy = Math.round(cyaw / (Math.PI / 2)) * (Math.PI / 2), ux = Math.cos(qy), uz = -Math.sin(qy);
+      const qy = Math.round(cyaw / (Math.PI / 2)) * (Math.PI / 2), ux = dmath.cos(qy), uz = -dmath.sin(qy);
       if (r2c() < 0.5 && onApron(jx + ux * 5.6, jz + uz * 5.6, 1) && !near(jx + ux * 5.2, jz + uz * 5.2, 1.6) && onApron(jx - ux * 4, jz - uz * 4, 1)) {
         q.yaw = qy; q.enter = true;
         PROPS.push({ kind: "crate", x: jx - ux * 3.65, z: jz - uz * 3.65, yaw: qy + 0.08 });
@@ -1063,7 +1064,7 @@ function coverPass(extra: Array<[number, number, number, number]>) {
     if (x > 880 && x < 894 && z > 436 && z < 470) continue;
     if (x > 892) continue;   // the berth's capping strip + bollards stay clear (the gangway and the mooring lines)
     const u = r(), yaw = (r() < 0.5 ? 0 : Math.PI / 2) + (r() - 0.5) * 0.3, kind: PropKind = u < 0.45 ? "crate-stack" : u < 0.8 ? "pallet-stack" : "generator";
-    const f = PROP_FOOT[kind], c = Math.abs(Math.cos(yaw)), sn = Math.abs(Math.sin(yaw));
+    const f = PROP_FOOT[kind], c = Math.abs(dmath.cos(yaw)), sn = Math.abs(dmath.sin(yaw));
     if (!footOnApron(x, z, f.hx * c + f.hz * sn, f.hx * sn + f.hz * c, 0.6)) continue;
     PROPS.push({ kind, x, z, yaw });
     put(x, z);
@@ -1118,7 +1119,7 @@ for (const z of [322, 340, 358, 375, 423]) PROPS.push({ kind: "winch", x: QUAY.e
 // on that open spot, clear of every prop, box, keep-out, mast, crane rail and the gangway
 {
   const sol: Array<[number, number, number]> = [];
-  for (const p of CONTAINERS) { const c = Math.cos(p.yaw), sn = Math.sin(p.yaw), L = (p.size ?? 40) === 40 ? 12.19 : 6.06; for (let u = -L / 2 + 1.2; u <= L / 2 - 1.2; u += 2.4) sol.push([p.x + u * c, p.z - u * sn, 1.2]); }
+  for (const p of CONTAINERS) { const c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw), L = (p.size ?? 40) === 40 ? 12.19 : 6.06; for (let u = -L / 2 + 1.2; u <= L / 2 - 1.2; u += 2.4) sol.push([p.x + u * c, p.z - u * sn, 1.2]); }
   for (const p of PROPS) { const f = PROP_FOOT[p.kind], sc = p.s ?? 1; if (f.hy * 2 * sc >= 1.15 && p.kind !== "lamp" && p.kind !== "light-tower") sol.push([p.x, p.z, Math.max(f.hx, f.hz) * sc]); }
   for (const w of WAREHOUSES) { const [x0, x1, z0, z1] = whRect(w, 0, 0); for (let x = x0; x <= x1; x += 4) for (let z = z0; z <= z1; z += 4) sol.push([x, z, 2]); }
   for (const t of TANKS) sol.push([t.x, t.z, t.r]);
@@ -1134,10 +1135,10 @@ for (const z of [322, 340, 358, 375, 423]) PROPS.push({ kind: "winch", x: QUAY.e
   for (const q of sol) addSol(q);
   const gap = (x: number, z: number) => {
     let b = 99; const ci = Math.floor(x / GC), cj = Math.floor(z / GC);
-    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) for (const [sx, sz, r] of grid.get(gk(ci + i, cj + j)) ?? []) { const d = Math.hypot(sx - x, sz - z); b = Math.min(b, Math.max(0, d - r * 0.5)); }
+    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) for (const [sx, sz, r] of grid.get(gk(ci + i, cj + j)) ?? []) { const d = dmath.hypot(sx - x, sz - z); b = Math.min(b, Math.max(0, d - r * 0.5)); }
     return b;
   };
-  const any = (x: number, z: number, rr: number) => PROPS.some((p) => Math.abs(p.x - x) < rr + 7 && Math.abs(p.z - z) < rr + 7 && Math.hypot(p.x - x, p.z - z) < rr + Math.max(PROP_FOOT[p.kind].hx, PROP_FOOT[p.kind].hz) * (p.s ?? 1)) || CONTAINERS.some((p) => Math.abs(p.x - x) < rr + 6.3 && Math.abs(p.z - z) < rr + 6.3 && Math.hypot(p.x - x, p.z - z) < rr + 6.3);
+  const any = (x: number, z: number, rr: number) => PROPS.some((p) => Math.abs(p.x - x) < rr + 7 && Math.abs(p.z - z) < rr + 7 && dmath.hypot(p.x - x, p.z - z) < rr + Math.max(PROP_FOOT[p.kind].hx, PROP_FOOT[p.kind].hz) * (p.s ?? 1)) || CONTAINERS.some((p) => Math.abs(p.x - x) < rr + 6.3 && Math.abs(p.z - z) < rr + 6.3 && dmath.hypot(p.x - x, p.z - z) < rr + 6.3);
   const masts = PROPS.filter((p) => p.kind === "lamp" || p.kind === "light-tower");
   const r = mulberry32(YARD_SEED + 4242);
   for (let z = 42; z < 470; z += 4) for (let x = 528; x < 896; x += 4) {
@@ -1148,7 +1149,7 @@ for (const z of [322, 340, 358, 375, 423]) PROPS.push({ kind: "winch", x: QUAY.e
       if (berth && (pz > GANGWAY_Z - 20 && pz < GANGWAY_Z + 4 || pz > GANGWAY2_Z - 20 && pz < GANGWAY2_Z + 4 || CRANE.zs.some((cz) => Math.abs(pz - cz) < CRANE.legHalfZ + 4.5))) continue;
       const kind: PropKind = berth ? "winch" : r() < 0.55 ? "crate-stack" : "pallet-stack", yaw = berth ? Math.PI / 2 : (r() < 0.5 ? 0 : Math.PI / 2) + (r() - 0.5) * 0.3;
       const qx = berth ? QUAY.eastX - 3.6 : px, f = PROP_FOOT[kind];
-      if (!footOnApron(qx, pz, Math.max(f.hx, f.hz), Math.max(f.hx, f.hz), 0.6) || blocked(qx, pz, 1.0, 1.0) || any(qx, pz, 1.4) || masts.some((m) => Math.hypot(m.x - qx, m.z - pz) < 3)) continue;
+      if (!footOnApron(qx, pz, Math.max(f.hx, f.hz), Math.max(f.hx, f.hz), 0.6) || blocked(qx, pz, 1.0, 1.0) || any(qx, pz, 1.4) || masts.some((m) => dmath.hypot(m.x - qx, m.z - pz) < 3)) continue;
       if (!berth && (Math.abs(qx - CRANE.railLand) < 2 || Math.abs(qx - CRANE.railSea) < 2)) continue;
       PROPS.push({ kind, x: qx, z: pz, yaw });
       addSol([qx, pz, Math.max(f.hx, f.hz)]);
@@ -1167,10 +1168,10 @@ for (const z of [322, 340, 358, 375, 423]) PROPS.push({ kind: "winch", x: QUAY.e
  *  vanish at the deck line) */
 export function shipDeckHalf(z: number): number {
   const S = SHIP, HALF = S.beam / 2, zs = S.z - S.length / 2;
-  const zb = S.z + S.length / 2 - (1 - (S.deckY - S.keelY) / (S.forecastle.top - S.keelY)) ** 1.3 * 9;
+  const zb = S.z + S.length / 2 - dmath.pow(1 - (S.deckY - S.keelY) / (S.forecastle.top - S.keelY), 1.3) * 9;
   if (z < zs || z > zb) return 0;
   const tb = Math.min(1, (zb - z) / 34), ts = Math.min(1, (z - zs) / 16);
-  const fb = 1 - (1 - tb) ** 2.1, fs = 0.8 + 0.2 * (1 - (1 - ts) ** 2), ef = (1 - Math.min(1, (zb - z) / 44)) ** 1.2;
+  const fb = 1 - dmath.pow(1 - tb, 2.1), fs = 0.8 + 0.2 * (1 - dmath.pow(1 - ts, 2)), ef = dmath.pow(1 - Math.min(1, (zb - z) / 44), 1.2);
   return HALF * Math.min(fb, fs) * (1 + 0.26 * ef);
 }
 /** hatch covers: 0.5 m (a step, ≤ STEP_H) — the containers stand on them */
@@ -1226,8 +1227,8 @@ export const SHIP_ENTER: ContainerPlacement[] = [];
 function forecastleBreakwater(): Box[] {
   const S = SHIP, z0 = FC_FRONT - 4;
   return [-1, 1].map((sd) => {
-    const ax = S.x + sd * 7, az = z0 + 7, cx = S.x, cz = z0 + 10, L = Math.hypot(cx - ax, cz - az);
-    return yawBoxWorld((ax + cx) / 2, FC_DECK, (az + cz) / 2, L / 2, 0.8, 0.13, Math.atan2(-(cz - az), cx - ax), "metal");
+    const ax = S.x + sd * 7, az = z0 + 7, cx = S.x, cz = z0 + 10, L = dmath.hypot(cx - ax, cz - az);
+    return yawBoxWorld((ax + cx) / 2, FC_DECK, (az + cz) / 2, L / 2, 0.8, 0.13, dmath.atan2(-(cz - az), cx - ax), "metal");
   });
 }
 /** ship access + safety colliders (harbor-local boxes): hatch covers, deck-edge rails (noShoot), the forecastle deck at its
@@ -1347,12 +1348,12 @@ function apronEdgeBoxes(): Box[] {
   for (let i = 0; i < APRON.length; i++) {
     const [ax, az] = APRON[i], [bx, bz] = APRON[(i + 1) % APRON.length];
     if (Math.abs(ax - bx) < 0.01 || Math.abs(az - bz) < 0.01) continue;
-    const len = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
+    const len = dmath.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
     let nx = -uz, nz = ux;
     const mx = (ax + bx) / 2, mz = (az + bz) / 2;
     if (!onApron(mx + nx, mz + nz)) { nx = -nx; nz = -nz; }
     const [wx, wz] = toWorld(mx + nx * D / 2, mz + nz * D / 2), [w0x, w0z] = toWorld(ax, az), [w1x, w1z] = toWorld(bx, bz);
-    out.push({ c: [wx, cy, wz], h: [len / 2, hy, D / 2], yaw: Math.atan2(w1z - w0z, w1x - w0x), surf: "concrete" });
+    out.push({ c: [wx, cy, wz], h: [len / 2, hy, D / 2], yaw: dmath.atan2(w1z - w0z, w1x - w0x), surf: "concrete" });
   }
   return out;
 }
@@ -1363,11 +1364,11 @@ function apronEdgeBoxes(): Box[] {
 function cappingBoxes(): Box[] {
   const out: Box[] = [];
   for (let i = 0; i < APRON.length; i++) {
-    const [ax, az] = APRON[i], [bx, bz] = APRON[(i + 1) % APRON.length], len = Math.hypot(bx - ax, bz - az);
+    const [ax, az] = APRON[i], [bx, bz] = APRON[(i + 1) % APRON.length], len = dmath.hypot(bx - ax, bz - az);
     const dx = (bx - ax) / len, dz = (bz - az) / len;
     let nx = dz, nz = -dx;
     if (onApron((ax + bx) / 2 + nx, (az + bz) / 2 + nz)) { nx = -nx; nz = -nz; }
-    const rot = Math.atan2(-dz, dx), mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    const rot = dmath.atan2(-dz, dx), mx = (ax + bx) / 2, mz = (az + bz) / 2;
     const [w, h, L] = BERTH_EDGES.includes(i) ? [0.9, 0.45, len - 0.2] : WATER_EDGES.includes(i) ? [0.8, 0.3, len] : [0.4, 0.24, len];
     // (outer face 4 cm inside the drawn edge: probe rays exactly on the slab's edge line found no drawn surface)
     out.push(yawBoxWorld(mx - nx * (w / 2 + 0.01), APRON_Y - 0.03, mz - nz * (w / 2 + 0.01), L / 2, (h + 0.03) / 2 - 0.01, w / 2 - 0.03, rot, "concrete"));
@@ -1376,7 +1377,7 @@ function cappingBoxes(): Box[] {
 }
 /** warehouse-local (length x, width z) → harbor-local */
 export function whToWorld(w: WarehouseSpec, lx: number, lz: number): [number, number] {
-  const c = Math.cos(w.yaw), s = Math.sin(w.yaw);
+  const c = dmath.cos(w.yaw), s = dmath.sin(w.yaw);
   return [w.x + lx * c + lz * s, w.z - lx * s + lz * c];
 }
 export function archY(w: WarehouseSpec, lz: number): number {
@@ -1391,7 +1392,7 @@ export function doorCentres(w: WarehouseSpec): number[] {
 /** an axis-aligned harbor-local box from warehouse-local centre + half extents (warehouse yaws are multiples of π/2) */
 function whBox(w: WarehouseSpec, lx: number, lz: number, hx: number, hy: number, hz: number, y0: number, surf: Box["surf"]): Box {
   const [x, z] = whToWorld(w, lx, lz);
-  const swap = Math.abs(Math.sin(w.yaw)) > 0.5;
+  const swap = Math.abs(dmath.sin(w.yaw)) > 0.5;
   return { c: [x, y0 + hy, z], h: swap ? [hz, hy, hx] : [hx, hy, hz], surf };
 }
 /** the arched roof's collider steps (warehouse-local z bands from the ridge out past the eave): each band's rise ≤ 0.3 m,
@@ -1583,7 +1584,7 @@ function pumpSetBoxes(): Box[] {
 function pipeRackBoxes(): Box[] {
   const out: Box[] = [], pts = PIPE_RACK.pts, top = APRON_Y + PIPE_RACK.y;
   for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, az] = pts[i], [cx, cz] = pts[i + 1], len = Math.hypot(cx - ax, cz - az), n = Math.max(1, Math.round(len / 6));
+    const [ax, az] = pts[i], [cx, cz] = pts[i + 1], len = dmath.hypot(cx - ax, cz - az), n = Math.max(1, Math.round(len / 6));
     const ux = (cx - ax) / len, uz = (cz - az) / len, px = -uz, pz = ux;
     for (let k = 0; k <= n; k++) {
       const fx = ax + (cx - ax) * (k / n), fz = az + (cz - az) * (k / n);
@@ -1701,7 +1702,7 @@ export function tankEntries(i: number): number[] {
   if (i === TANKS.length - 1) return [0];
   // the middle tank also opens toward the stair's top landing (north-west of it)
   const t = TANKS[i], n = Math.ceil((t.h + TANK_TIERS(TANKS[0])[0][1]) / 0.25 - 1e-6), xt = TANKS[0].x - 1 - n * 0.3;
-  return [0, Math.PI, Math.atan2(TANK_BUND.z1 - 2.2 - 1.9 - t.z, xt - 1.3 - t.x)];
+  return [0, Math.PI, dmath.atan2(TANK_BUND.z1 - 2.2 - 1.9 - t.z, xt - 1.3 - t.x)];
 }
 /** the stair behind the tanks (inside the bund, north side) up to the east tank's roof, the bridges between the roofs */
 export function tankStairPieces(): Piece[] {
@@ -1727,8 +1728,8 @@ function tankBoxes(): Box[] {
     // round an inscribed strip core — plain z-strips' corners stand up to 0.8 m proud of the curve for grazing rays
     const y0 = APRON_Y, y1 = APRON_Y + t.h + TANK_TIERS(t)[0][1], N = 48, rr = t.r + 0.05;
     for (let k = 0; k < N; k++) {
-      const a = ((k + 0.5) / N) * Math.PI * 2, cx = t.x + Math.cos(a) * (rr - 0.5), cz = t.z + Math.sin(a) * (rr - 0.5);
-      out.push(yawBoxWorld(cx, y0, cz, 0.5, (y1 - y0) / 2, rr * Math.sin(Math.PI / N) + 0.01, -a, "metal"));
+      const a = ((k + 0.5) / N) * Math.PI * 2, cx = t.x + dmath.cos(a) * (rr - 0.5), cz = t.z + dmath.sin(a) * (rr - 0.5);
+      out.push(yawBoxWorld(cx, y0, cz, 0.5, (y1 - y0) / 2, rr * dmath.sin(Math.PI / N) + 0.01, -a, "metal"));
     }
     out.push(...discStrips(t.x, t.z, rr - 0.85, y0, y1, "metal").map(boxToWorld));
     for (const [rho, top] of TANK_TIERS(t).slice(1)) out.push(...discStrips(t.x, t.z, rho, APRON_Y + t.h, APRON_Y + t.h + top, "metal").map(boxToWorld));
@@ -1743,9 +1744,9 @@ function tankRailBoxes(): Box[] {
     const rr = t.r - 0.15, y = APRON_Y + t.h + TANK_TIERS(t)[0][1], ent = tankEntries(i), N = 24;
     for (let k = 0; k < N; k++) {
       const a0 = (k / N) * Math.PI * 2, a1 = ((k + 1) / N) * Math.PI * 2, am = (a0 + a1) / 2;
-      if (ent.some((e) => Math.abs(Math.atan2(Math.sin(am - e), Math.cos(am - e))) < 0.3)) continue;
-      const x0 = t.x + Math.cos(a0) * rr, z0 = t.z + Math.sin(a0) * rr, x1 = t.x + Math.cos(a1) * rr, z1 = t.z + Math.sin(a1) * rr;
-      const b = yawBoxWorld((x0 + x1) / 2, y, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2, 0.525, 0.05, -Math.atan2(z1 - z0, x1 - x0), "metal", true);
+      if (ent.some((e) => Math.abs(dmath.atan2(dmath.sin(am - e), dmath.cos(am - e))) < 0.3)) continue;
+      const x0 = t.x + dmath.cos(a0) * rr, z0 = t.z + dmath.sin(a0) * rr, x1 = t.x + dmath.cos(a1) * rr, z1 = t.z + dmath.sin(a1) * rr;
+      const b = yawBoxWorld((x0 + x1) / 2, y, (z0 + z1) / 2, dmath.hypot(x1 - x0, z1 - z0) / 2, 0.525, 0.05, -dmath.atan2(z1 - z0, x1 - x0), "metal", true);
       out.push(b);
     }
   });
@@ -1896,8 +1897,8 @@ export function craneStair(cz: number): { flights: StairFlight[]; landings: Arra
   const flights: StairFlight[] = [], landings: Array<{ x: number; z: number; y: number; hx: number; hz: number }> = [];
   for (let i = 0; i < n; i++) {
     const a = i % 2 === 0, y0 = APRON_Y + i * fr, y1 = y0 + fr;
-    const pitch = Math.atan2(fr, run) * (a ? 1 : -1);
-    flights.push({ x: a ? xA : xB, z: zc, y0, y1, len: Math.hypot(run, fr), run, w, pitch, dir: a ? -1 : 1 });
+    const pitch = dmath.atan2(fr, run) * (a ? 1 : -1);
+    flights.push({ x: a ? xA : xB, z: zc, y0, y1, len: dmath.hypot(run, fr), run, w, pitch, dir: a ? -1 : 1 });
     landings.push({ x: (xA + xB) / 2, z: a ? zc - run / 2 - 0.75 : zc + run / 2 + 0.75, y: y1, hx: w + 0.05, hz: 0.75 });
   }
   const last = landings[landings.length - 1];
@@ -2025,7 +2026,7 @@ function propBoxes(p: PropSpec): Box[] {
   if (mem) {
     // member boxes: rotate the prop-local centre by the prop's (three.js) yaw, then the frame
     // (the light tower is drawn unrotated: lightTowerInto ignores the spec's yaw)
-    const yaw = p.kind === "light-tower" ? 0 : p.yaw, c = Math.cos(yaw), sn = Math.sin(yaw), sc = p.kind === "light-tower" ? 1 : s;
+    const yaw = p.kind === "light-tower" ? 0 : p.yaw, c = dmath.cos(yaw), sn = dmath.sin(yaw), sc = p.kind === "light-tower" ? 1 : s;
     return mem.map(([cx, cy, cz, hx, hy, hz, fl, my]) => { const b = yawBoxWorld(p.x + (cx * c + cz * sn) * sc, y + (cy - hy) * sc, p.z + (-cx * sn + cz * c) * sc, hx * sc, hy * sc, hz * sc, yaw + (my ?? 0), f.surf, fl === 1); if (fl === 2) b.noWalk = true; return b; });
   }
   if (p.kind === "lamp") return [yawBoxWorld(p.x, y, p.z, f.hx, f.hy, f.hz, p.yaw, "metal")];
@@ -2103,7 +2104,7 @@ function fenceBoxes(): Box[] {
   for (const f of FENCES) {
     let acc = 0;
     for (let i = 0; i < f.pts.length - 1; i++) {
-      const [ax, az] = f.pts[i], [bx, bz] = f.pts[i + 1], L = Math.hypot(bx - ax, bz - az);
+      const [ax, az] = f.pts[i], [bx, bz] = f.pts[i + 1], L = dmath.hypot(bx - ax, bz - az);
       const segs: Array<[number, number]> = [[0, L]];
       for (const [g0, g1] of f.gaps ?? []) {
         const s0 = g0 - acc, s1 = g1 - acc;
@@ -2111,7 +2112,7 @@ function fenceBoxes(): Box[] {
       }
       for (const [a, b] of segs) {
         const m = (a + b) / 2, x = ax + ((bx - ax) * m) / L, z = az + ((bz - az) * m) / L;
-        const yaw = Math.atan2(-(bz - az), bx - ax);
+        const yaw = dmath.atan2(-(bz - az), bx - ax);
         // (5 cm thick like the drawn mesh + posts)
         out.push({ ...yawBoxWorld(x, APRON_Y, z, (b - a) / 2, 1.2, 0.025, yaw, "metal", true), noDrive: true });   // (a tuk-tuk drives through)
       }
@@ -2183,7 +2184,7 @@ export function rockSets(height: (lx: number, lz: number) => number): Record<str
     // granite outcrop over the canopy — the soft boulder family stretched tall reads as a placeholder egg)
     hills.push({ x: k.x, y: g - 0.1 * k.h, z: k.z, sx: k.r * 1.2, sy: k.h * 0.95, sz: k.r * 1.05, ry: k.yaw, rx: (hash01(i, 21) - 0.5) * 0.12, rz: (hash01(i, 22) - 0.5) * 0.12, proto: i % 4 });
     for (let j = 0; j < 3; j++) {
-      const a = k.yaw + j * 2.1 + hash01(i, j, 23), d = k.r * (0.75 + hash01(i, j, 24) * 0.3), x = k.x + Math.cos(a) * d, z = k.z + Math.sin(a) * d, sc = k.r * (0.22 + hash01(i, j, 25) * 0.2);
+      const a = k.yaw + j * 2.1 + hash01(i, j, 23), d = k.r * (0.75 + hash01(i, j, 24) * 0.3), x = k.x + dmath.cos(a) * d, z = k.z + dmath.sin(a) * d, sc = k.r * (0.22 + hash01(i, j, 25) * 0.2);
       hills.push({ x, y: height(x, z) - 0.1 * sc, z, sx: sc, sy: sc * 0.85, sz: sc * 0.9, ry: a, rx: (hash01(i, j, 26) - 0.5) * 0.3, rz: (hash01(i, j, 27) - 0.5) * 0.3, proto: (i + j + 1) % 4 });
     }
   });
@@ -2261,7 +2262,7 @@ export function pickSeed(r: InteriorRoom, bake = false): InteriorRoom {
   for (let t = 0; t < 16; t++) {
     const q = { ...r, seed: r.seed + t * 101, density: t < 8 ? r.density : Math.min(r.density ?? 1, 0.5) }, its = furnishRoom(q).items.filter((i) => i.col && i.y + i.h > 0.55 && i.y + i.h < 2.4);
     const par = its.map((_, i) => i), f = (i: number): number => (par[i] === i ? i : (par[i] = f(par[i])));
-    const ext = (i: typeof its[number]) => { const c = Math.abs(Math.cos(i.yaw)), s = Math.abs(Math.sin(i.yaw)); return [i.w * c + i.d * s, i.w * s + i.d * c]; };
+    const ext = (i: typeof its[number]) => { const c = Math.abs(dmath.cos(i.yaw)), s = Math.abs(dmath.sin(i.yaw)); return [i.w * c + i.d * s, i.w * s + i.d * c]; };
     for (let a = 0; a < its.length; a++) for (let b = a + 1; b < its.length; b++) { const [wa, da] = ext(its[a]), [wb, db] = ext(its[b]); if (Math.abs(its[a].x - its[b].x) < (wa + wb) / 2 + 0.9 && Math.abs(its[a].z - its[b].z) < (da + db) / 2 + 0.9) par[f(a)] = f(b); }
     const area = new Map<number, number>(); its.forEach((it, i) => area.set(f(i), (area.get(f(i)) ?? 0) + it.w * it.d));
     if (Math.max(0, ...area.values()) < 1.8) return q;
@@ -2278,7 +2279,7 @@ export const INTERIOR_ROOMS: InteriorRoom[] = (() => {
   const bare = { wall: null, glass: false, frames: false } as const;
   /** a room authored in a quarter-turn building frame (bx, bz, byaw: harbor-local) → world */
   const room = (bx: number, bz: number, byaw: number, lx: number, lz: number, r: Omit<InteriorRoom, "x" | "z" | "yaw">): InteriorRoom => {
-    const c = Math.round(Math.cos(byaw)), sn = Math.round(Math.sin(byaw)), [x, z] = toWorld(bx + lx * c + lz * sn, bz - lx * sn + lz * c);
+    const c = Math.round(dmath.cos(byaw)), sn = Math.round(dmath.sin(byaw)), [x, z] = toWorld(bx + lx * c + lz * sn, bz - lx * sn + lz * c);
     return { ...r, x, z, yaw: byaw + FRAME.yaw };
   };
   WAREHOUSES.forEach((w, i) => {
@@ -2385,7 +2386,7 @@ export const colliders: Box[] = [
   // jungle trees growing out of the cracked slab: trunks
   // (a regular OCTAGON — four slabs, two crosses 45° apart, corners on the bark — round the round trunk (palm r 0.26, broadleaf
   // 0.42): one yawed square's corners stood 0.14–0.22 m proud of the bark, grazing shots hit air)
-  ...JUNGLE_TREES.flatMap((t) => { const a = (t.kind === "palm" ? TRUNK_R.palm : TRUNK_R.tree) * Math.cos(Math.PI / 8), w = a * Math.tan(Math.PI / 8); return [0, Math.PI / 4].flatMap((y) => [yawBoxWorld(t.x, APRON_Y, t.z, a, 4, w, y, "wood"), yawBoxWorld(t.x, APRON_Y, t.z, w, 4, a, y, "wood")]); }),
+  ...JUNGLE_TREES.flatMap((t) => { const a = (t.kind === "palm" ? TRUNK_R.palm : TRUNK_R.tree) * dmath.cos(Math.PI / 8), w = a * dmath.tan(Math.PI / 8); return [0, Math.PI / 4].flatMap((y) => [yawBoxWorld(t.x, APRON_Y, t.z, a, 4, w, y, "wood"), yawBoxWorld(t.x, APRON_Y, t.z, w, 4, a, y, "wood")]); }),
 ];
 
 /** vegetation keep-out (WORLD, axis-aligned): the apron, the berth + ship, the pier foot */
@@ -2476,14 +2477,14 @@ export function lootSpotsLive(): { chests: Array<[number, number, number, number
   chest(SHIP.x + 3.0, SHIP.deckY + SHIP_HATCH_H + 0.2, SHIP_BAYS[4] + 1.0, SHIP.x, SHIP_BAYS[4] + 1.0);
   // the deck's enterable boxes: a chest against the cargo wall at the back of every one, floor loot inside the doors
   for (const p of SHIP_ENTER) {
-    const L2 = containerDims(p).L / 2, c = Math.cos(p.yaw), sn = Math.sin(p.yaw), P = (u: number): [number, number] => [p.x + u * c, p.z - u * sn];
+    const L2 = containerDims(p).L / 2, c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw), P = (u: number): [number, number] => [p.x + u * c, p.z - u * sn];
     { const [x, z] = P(-L2 + 2.35), [fx, fz] = P(L2); chest(x, p.y + 0.22, z, fx, fz); }
     { const [x, z] = P(L2 * 0.35); item(x, p.y + 0.22, z); }
   }
   chests.unshift(...chests.splice(c0));
   // the enterable containers: a chest at the closed end of every third one, floor loot mid-box in the others
   CONTAINERS.filter((p) => p.enter).forEach((p, i) => {
-    const L2 = containerDims(p).L / 2, c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+    const L2 = containerDims(p).L / 2, c = dmath.cos(p.yaw), s = dmath.sin(p.yaw);
     const P = (u: number): [number, number] => [p.x + u * c, p.z - u * s];
     // (in front of the carton stacks at the closed end — containers-geo / containerBoxes)
     if (i % 3 === 0) { const [x, z] = P(-L2 + 2.35), [fx, fz] = P(L2); chest(x, p.y + 0.22, z, fx, fz); }

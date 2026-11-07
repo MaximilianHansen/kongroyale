@@ -3,6 +3,7 @@
 // the ground contact plane; door end at +X. World transform = translate(x,y,z) · Ry(yaw) · Rz(pitch) · Rx(roll).
 import type { Box } from "../world/colliders";
 import { furnishRoom, interiorColliders, interiorLoot, type InteriorLayout, type InteriorRoom, type LootSlots } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 export type ContainerColor = "yellow" | "green" | "red" | "blue" | "teal" | "white";
 export type ContainerSize = 40 | 20;
@@ -79,7 +80,7 @@ const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
  *  The along extent also covers ev's lean along u (eu and ev lie in the surface for plates, so that padding is
  *  tangential: sheared neighbours overlap instead of gapping). */
 export function fitBox(c: V3, eu: V3, ev: V3, ew: V3, surf: Box["surf"]): Box {
-  const yaw = Math.atan2(eu[2], eu[0]), cu = Math.cos(yaw), su = Math.sin(yaw);
+  const yaw = dmath.atan2(eu[2], eu[0]), cu = dmath.cos(yaw), su = dmath.sin(yaw);
   let hy = 0, hw = 0;
   for (const e of [ev, ew]) {
     const ew2 = Math.abs(-e[0] * su + e[2] * cu), ey = Math.abs(e[1]);
@@ -91,7 +92,7 @@ export function fitBox(c: V3, eu: V3, ev: V3, ew: V3, surf: Box["surf"]): Box {
 /** the fit's error at a piece edge from its (world) half-vector e, given the piece's along vector eu: the component
  *  that fitBox drops and that is NOT tangential (vertical-dominant e → its horizontal part across eu; else its y) */
 export function fitError(e: V3, eu: V3): number {
-  const yaw = Math.atan2(eu[2], eu[0]), across = Math.abs(-e[0] * Math.sin(yaw) + e[2] * Math.cos(yaw)), y = Math.abs(e[1]);
+  const yaw = dmath.atan2(eu[2], eu[0]), across = Math.abs(-e[0] * dmath.sin(yaw) + e[2] * dmath.cos(yaw)), y = Math.abs(e[1]);
   return y >= across ? across : y;
 }
 
@@ -103,7 +104,7 @@ export function fitError(e: V3, eu: V3): number {
  */
 export function patchBox(A: V3, B: V3, C: V3, D: V3, inward: V3, t: number, surf: Box["surf"]): Box {
   const eu: V3 = [B[0] + C[0] - A[0] - D[0], 0, B[2] + C[2] - A[2] - D[2]];
-  const yaw = Math.atan2(eu[2], eu[0]), cu = Math.cos(yaw), su = Math.sin(yaw);
+  const yaw = dmath.atan2(eu[2], eu[0]), cu = dmath.cos(yaw), su = dmath.sin(yaw);
   const o: V3 = [(A[0] + B[0] + C[0] + D[0]) / 4, (A[1] + B[1] + C[1] + D[1]) / 4, (A[2] + B[2] + C[2] + D[2]) / 4];
   let u0 = Infinity, u1 = -Infinity, w0 = Infinity, w1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const p of [A, B, C, D]) {
@@ -128,8 +129,8 @@ export function patchBox(A: V3, B: V3, C: V3, D: V3, inward: V3, t: number, surf
 export function solidColumns(c: V3, A: [V3, V3, V3], h: V3, tol: number, surf: Box["surf"], maxCell = 6): Box[] {
   // yaw: the axis with the longest horizontal extent
   let bi = 0, best = -1;
-  for (let i = 0; i < 3; i++) { const l = h[i] * Math.hypot(A[i][0], A[i][2]); if (l > best) { best = l; bi = i; } }
-  const yaw = Math.atan2(A[bi][2], A[bi][0]), cu = Math.cos(yaw), su = Math.sin(yaw);
+  for (let i = 0; i < 3; i++) { const l = h[i] * dmath.hypot(A[i][0], A[i][2]); if (l > best) { best = l; bi = i; } }
+  const yaw = dmath.atan2(A[bi][2], A[bi][0]), cu = dmath.cos(yaw), su = dmath.sin(yaw);
   const U: V3 = [cu, 0, su], W: V3 = [-su, 0, cu];
   // footprint bounds (relative to c)
   let u0 = Infinity, u1 = -Infinity, w0 = Infinity, w1 = -Infinity;
@@ -167,7 +168,7 @@ export function solidColumns(c: V3, A: [V3, V3, V3], h: V3, tol: number, surf: B
         for (let k = k0; k <= kk; k++) { const v = vals[k]; if (!v) { miss++; continue; } hit++; lo0 = Math.min(lo0, v[0]); lo1 = Math.max(lo1, v[0]); hi0 = Math.min(hi0, v[1]); hi1 = Math.max(hi1, v[1]); }
         if (hit && miss) return width <= 2 * tol; // the silhouette: keep the cell narrow
         if (!hit) return true;
-        const err = (r: number) => (r / 2) / Math.sqrt(1 + (r / Math.max(width, 1e-3)) ** 2);
+        const err = (r: number) => (r / 2) / Math.sqrt(1 + dmath.pow(r / Math.max(width, 1e-3), 2));
         return err(lo1 - lo0) <= tol && err(hi1 - hi0) <= tol;
       };
       while (k1 < n && ok(k1 + 1)) k1++;
@@ -197,9 +198,9 @@ export function solidColumns(c: V3, A: [V3, V3, V3], h: V3, tol: number, surf: B
 /** a placement's rotation as world unit axes (three.js Ry(yaw)·Rz(pitch)·Rx(roll)) */
 export function placementAxes(yaw: number, pitch: number, roll: number): [V3, V3, V3] {
   const r = (x: number, y: number, z: number): V3 => {
-    const y1 = y * Math.cos(roll) - z * Math.sin(roll), z1 = y * Math.sin(roll) + z * Math.cos(roll);
-    const x2 = x * Math.cos(pitch) - y1 * Math.sin(pitch), y2 = x * Math.sin(pitch) + y1 * Math.cos(pitch);
-    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const y1 = y * dmath.cos(roll) - z * dmath.sin(roll), z1 = y * dmath.sin(roll) + z * dmath.cos(roll);
+    const x2 = x * dmath.cos(pitch) - y1 * dmath.sin(pitch), y2 = x * dmath.sin(pitch) + y1 * dmath.cos(pitch);
+    const c = dmath.cos(yaw), s = dmath.sin(yaw);
     return [x2 * c + z1 * s, y2, -x2 * s + z1 * c];
   };
   return [r(1, 0, 0), r(0, 1, 0), r(0, 0, 1)];
@@ -232,7 +233,7 @@ export function containerBoxes(p: ContainerPlacement): Box[] {
     const swap = Math.abs(k) % 2 === 1;
     if (p.enter) {
       // hollow: floor (0.16 m), roof (0.12), side walls + the closed front end (0.1 m); local +X = the open door end
-      const c = Math.round(Math.cos(p.yaw)), s = Math.round(Math.sin(p.yaw)), out: Box[] = [];
+      const c = Math.round(dmath.cos(p.yaw)), s = Math.round(dmath.sin(p.yaw)), out: Box[] = [];
       const L2 = d.L / 2, W2 = d.W / 2, T = 0.1;
       const P = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) => {
         const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, hx = (x1 - x0) / 2, hz = (z1 - z0) / 2;
@@ -252,7 +253,7 @@ export function containerBoxes(p: ContainerPlacement): Box[] {
       return out;
     }
     // (+ the corner-post frames at both ends at the full width: the posts stand proud of the corrugated walls)
-    const ex = Math.round(Math.cos(p.yaw)), ez = -Math.round(Math.sin(p.yaw)), e = d.L / 2 - 0.09;
+    const ex = Math.round(dmath.cos(p.yaw)), ez = -Math.round(dmath.sin(p.yaw)), e = d.L / 2 - 0.09;
     return [{ c: [p.x, p.y + d.H / 2, p.z], h: swap ? [d.W / 2 - SIDE_SOLID, d.H / 2, d.L / 2] : [d.L / 2, d.H / 2, d.W / 2 - SIDE_SOLID], surf: "metal" },
       ...[-1, 1].map((sg): Box => ({ c: [p.x + ex * e * sg, p.y + d.H / 2, p.z + ez * e * sg], h: swap ? [d.W / 2, d.H / 2, 0.09] : [0.09, d.H / 2, d.W / 2], surf: "metal" }))];
   }
@@ -290,15 +291,15 @@ export interface Piece {
 /** a quarter-turn frame: building-local (x, y, z) → parent (x·c − z·s … three.js Ry(yaw) convention) + translation */
 export interface QFrame { x: number; y: number; z: number; /** multiple of π/2 */ yaw: number }
 export function qPoint(f: QFrame, x: number, y: number, z: number): V3 {
-  const c = Math.round(Math.cos(f.yaw)), s = Math.round(Math.sin(f.yaw));
+  const c = Math.round(dmath.cos(f.yaw)), s = Math.round(dmath.sin(f.yaw));
   return [f.x + x * c + z * s, f.y + y, f.z - x * s + z * c];
 }
 /** a piece in frame f → a piece in the parent frame (half extents swap on odd quarter turns) */
 export function qPiece(f: QFrame, p: Piece): Piece {
-  const odd = Math.abs(Math.round(Math.sin(f.yaw))) === 1;
+  const odd = Math.abs(Math.round(dmath.sin(f.yaw))) === 1;
   const q: Piece = { ...p, c: qPoint(f, p.c[0], p.c[1], p.c[2]), h: odd ? [p.h[2], p.h[1], p.h[0]] : [p.h[0], p.h[1], p.h[2]] };
   if (p.base !== undefined) q.base = p.base + f.y;
-  if (p.up) { const c = Math.round(Math.cos(f.yaw)), sn = Math.round(Math.sin(f.yaw)); q.up = [p.up[0] * c + p.up[1] * sn, -p.up[0] * sn + p.up[1] * c]; }
+  if (p.up) { const c = Math.round(dmath.cos(f.yaw)), sn = Math.round(dmath.sin(f.yaw)); q.up = [p.up[0] * c + p.up[1] * sn, -p.up[0] * sn + p.up[1] * c]; }
   return q;
 }
 export const pieceBox = (p: Piece): Box => {
@@ -441,18 +442,18 @@ export function floorUnder(boxes: Box[], x: number, yHint: number, z: number, m 
     const top = b.c[1] + b.h[1];
     if (top > yHint + 0.6 || top <= best || b.noShoot) continue;
     let dx = x - b.c[0], dz = z - b.c[2];
-    if (b.yaw) { const c = Math.cos(b.yaw), s = Math.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
+    if (b.yaw) { const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
     if (Math.abs(dx) <= b.h[0] - m && Math.abs(dz) <= b.h[2] - m) best = top;
   }
   return best > yHint - 3 ? best : yHint;
 }
 /** three.js yaw that turns a chest's +z front toward (tx, tz) from (x, z) (world) */
-export const faceYaw = (x: number, z: number, tx: number, tz: number) => Math.atan2(tx - x, tz - z);
+export const faceYaw = (x: number, z: number, tx: number, tz: number) => dmath.atan2(tx - x, tz - z);
 /** a spatial index for floorUnder over many boxes (cell 8 m) */
 export function boxGrid(boxes: Box[], cell = 8): (x: number, z: number, pad?: number) => Box[] {
   const g = new Map<string, Box[]>();
   for (const b of boxes) {
-    const r = Math.hypot(b.h[0], b.h[2]);
+    const r = dmath.hypot(b.h[0], b.h[2]);
     for (let i = Math.floor((b.c[0] - r) / cell); i <= Math.floor((b.c[0] + r) / cell); i++)
       for (let k = Math.floor((b.c[2] - r) / cell); k <= Math.floor((b.c[2] + r) / cell); k++) { const key = i + "," + k; let a = g.get(key); if (!a) g.set(key, (a = [])); a.push(b); }
   }
@@ -470,7 +471,7 @@ export function capsuleClear(boxes: Box[], x: number, y: number, z: number, r = 
   for (const b of boxes) {
     if (b.c[1] + b.h[1] < y + step || b.c[1] - b.h[1] > y + 1.9) continue;
     let dx = x - b.c[0], dz = z - b.c[2];
-    if (b.yaw) { const c = Math.cos(b.yaw), s = Math.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
+    if (b.yaw) { const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
     const qx = Math.max(0, Math.abs(dx) - b.h[0]), qz = Math.max(0, Math.abs(dz) - b.h[2]);
     if (qx * qx + qz * qz < r * r) return false;
   }
@@ -481,7 +482,7 @@ export function clearSpot(near: (x: number, z: number, pad?: number) => Box[], x
   for (let r = 0; r <= max + 1e-6; r += step) {
     const n = r === 0 ? 1 : Math.max(6, Math.round((2 * Math.PI * r) / step));
     for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2, px = x + r * Math.cos(a), pz = z + r * Math.sin(a), bs = near(px, pz), y = floorUnder(bs, px, yHint, pz);
+      const a = (i / n) * Math.PI * 2, px = x + r * dmath.cos(a), pz = z + r * dmath.sin(a), bs = near(px, pz), y = floorUnder(bs, px, yHint, pz);
       if (Math.abs(y - yHint) < 1.2 && capsuleClear(bs, px, y, pz)) return [px, y, pz];
     }
   }
@@ -493,7 +494,7 @@ export function noLowStep(boxes: Box[], x: number, y: number, z: number, r = 0.8
     const top = b.c[1] + b.h[1];
     if (top <= y + lo || top > y + hi || b.c[1] - b.h[1] > y + hi) continue;
     let dx = x - b.c[0], dz = z - b.c[2];
-    if (b.yaw) { const c = Math.cos(b.yaw), s = Math.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
+    if (b.yaw) { const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw); const u = dx * c + dz * s, v = -dx * s + dz * c; dx = u; dz = v; }
     const qx = Math.max(0, Math.abs(dx) - b.h[0]), qz = Math.max(0, Math.abs(dz) - b.h[2]);
     if (qx * qx + qz * qz < r * r) return false;
   }

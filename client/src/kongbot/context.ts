@@ -52,14 +52,15 @@ function pathOf(o: THREE.Object3D) {
   return parts.join("<");
 }
 
-/** the DRAWN world under the crosshair: visible meshes only (Raycaster alone also tests hidden objects) */
+/** the DRAWN world under the crosshair: visible meshes only (Raycaster alone also tests hidden objects), and only those
+ *  that still hold their vertex arrays (?geofree drops them after upload; a raycast would read null) */
 function visualAim(engine: Engine) {
   const t0 = performance.now();
   const cam = engine.camera, rc = new THREE.Raycaster();
   rc.setFromCamera(new THREE.Vector2(0, 0), cam);
   rc.far = 600;
   const list: THREE.Object3D[] = [];
-  engine.scene.traverseVisible((o) => { if ((o as THREE.Mesh).isMesh && !(o as THREE.Points).isPoints) list.push(o); });
+  engine.scene.traverseVisible((o) => { if ((o as THREE.Mesh).isMesh && !(o as THREE.Points).isPoints && (o as THREE.Mesh).geometry.attributes.position?.array) list.push(o); });
   const hits = rc.intersectObjects(list, false).slice(0, 4);
   const ms = Math.round(performance.now() - t0);
   return {
