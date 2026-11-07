@@ -8,6 +8,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { Climb } from "../../../shared/sim/climb";
 import { LADDERS, LANDINGS, type Landing } from "../../../shared/pois/ladders";
 import { perchFor, type PerchDef } from "../../../shared/pois/climb-trees";
+import { releaseGeometryAfterUpload } from "../engine/geometry-release";
 
 const C = (hex: string) => new THREE.Color(hex);
 const BAMBOO = C("#c9a95a"), BAMBOO_D = C("#8d7536"), RUNG = C("#b89648"), LASH = C("#6a5232"), ROPE = C("#bfa070"), TREAD = C("#7b4b27"), TREAD_D = C("#5a361b"), PLANK = C("#a8834e"), PLANK_D = C("#7d5d38"), BARK_CUT = C("#4a3020");
@@ -134,23 +135,26 @@ export class ClimbViews {
   constructor(scene: THREE.Scene, private readonly climbs: Climb[]) {
     const style = new Map<string, string>();
     for (const l of LADDERS) style.set(`${l.c.x.toFixed(2)},${l.c.z.toFixed(2)},${l.c.y1.toFixed(2)}`, l.style);
-    const cells = new Map<string, THREE.BufferGeometry[]>();
-    for (const c of climbs) {
-      const key = `${Math.floor(c.x / 200)},${Math.floor(c.z / 200)}`;
-      let parts = cells.get(key); if (!parts) cells.set(key, parts = []);
-      if (c.kind === 1) { treeLadder(c, perchFor(c), parts); continue; }
-      if (style.get(`${c.x.toFixed(2)},${c.z.toFixed(2)},${c.y1.toFixed(2)}`) === "pilot") pilotLadder(c, parts); else bambooLadder(c, parts);
-    }
-    for (const l of LANDINGS) {
-      const key = `${Math.floor(l.x / 200)},${Math.floor(l.z / 200)}`;
-      let parts = cells.get(key); if (!parts) cells.set(key, parts = []);
-      landingDeck(l, parts);
-    }
-    for (const parts of cells.values()) {
-      if (parts.length === 0) continue;
+    const cells = new Map<string, { climbs: Climb[]; landings: Landing[] }>();
+    const cell = (x: number, z: number) => { const key = `${Math.floor(x / 200)},${Math.floor(z / 200)}`; let c = cells.get(key); if (!c) cells.set(key, c = { climbs: [], landings: [] }); return c; };
+    for (const c of climbs) cell(c.x, c.z).climbs.push(c);
+    for (const l of LANDINGS) cell(l.x, l.z).landings.push(l);
+    // a cell's parts are built again when a context restore refills its released arrays (geofree)
+    const merged = (cl: { climbs: Climb[]; landings: Landing[] }) => {
+      const parts: THREE.BufferGeometry[] = [];
+      for (const c of cl.climbs) {
+        if (c.kind === 1) treeLadder(c, perchFor(c), parts);
+        else if (style.get(`${c.x.toFixed(2)},${c.z.toFixed(2)},${c.y1.toFixed(2)}`) === "pilot") pilotLadder(c, parts); else bambooLadder(c, parts);
+      }
+      for (const l of cl.landings) landingDeck(l, parts);
       const g = mergeGeometries(parts, false)!;
       for (const p of parts) p.dispose();
+      return g;
+    };
+    for (const cl of cells.values()) {
+      const g = merged(cl);
       g.computeBoundingSphere(); g.computeBoundingBox();
+      releaseGeometryAfterUpload(g, () => { const fresh = merged(cl), out: Record<string, THREE.TypedArray> = {}; for (const [k, a] of Object.entries(fresh.attributes)) out[k] = (a as THREE.BufferAttribute).array; if (fresh.index) out.index = fresh.index.array; return out; });
       const m = new THREE.Mesh(g, this.mat);
       m.name = "climbs"; m.castShadow = true; m.receiveShadow = true;
       scene.add(m); this.meshes.push(m);

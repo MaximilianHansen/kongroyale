@@ -23,6 +23,7 @@ import { gradeLUT, LUT_GAMMA, LUT_N } from "./grade";
 import { toHalf } from "./sky";
 import { ATMOS_PARS, type AtmosUniforms } from "./glsl";
 import { flag } from "../../flags";
+import { onRestore } from "../../engine/res/restore";
 
 const PIXCAP = flag("pixcap");
 const MAX_PIXELS: Record<Quality, number> = { ultra: 2560 * 1440, high: 1920 * 1080, medium: 1920 * 1080, low: 1600 * 900 };
@@ -1484,7 +1485,8 @@ class AtmosFinalPass extends Pass {
     this.lut.needsUpdate = true;
   }
 
-  dispose() { for (const t of this.hist) t.dispose(); this.hist.length = 0; super.dispose(); }
+  private unrestore = onRestore("bake", () => { this.reset = true; });
+  dispose() { this.unrestore(); for (const t of this.hist) t.dispose(); this.hist.length = 0; super.dispose(); }
   constructor(private cam: THREE.PerspectiveCamera, private ao: AtmosAOPass | null, readonly taa: boolean, bloom: boolean, sharpen: number, private au: AtmosUniforms, readonly shafts = false, fxaa = false) {
     super("AtmosFinalPass");
     this.needsSwap = true;

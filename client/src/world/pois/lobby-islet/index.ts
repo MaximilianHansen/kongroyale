@@ -5,6 +5,7 @@
 //   palms + banana plants + beach dressing (through the veg area's VegApi), the parked BANANA CO. plane
 //   (actors/plane.ts), and the screenshot crowd of kongs (crowd.ts, stage "lobby-crowd").
 // Static meshes are merged per material by a Batch (≈8 draw calls) using two procedurally painted 2K atlases (atlas.ts).
+// Under ?geofree the merges drop their CPU arrays after upload, and a context restore replays the seeded build to refill them.
 import * as THREE from "three";
 import type { WorldModule } from "../../module";
 import type { WorldCtx } from "../../../engine/engine";
@@ -24,6 +25,10 @@ import { buildRunway } from "./runway";
 import { buildRock } from "./rock";
 import { stageCrowd } from "./crowd";
 import { createPlane } from "../../../actors/plane";
+import { releaseGeometryAfterUpload } from "../../../engine/geometry-release";
+import { onRestore } from "../../../engine/res/restore";
+
+const LAYOUT_SEED = 20260923;
 
 // ------------------------------------------------------------------------------------------------ views
 const fp = (lx: number, d: number, y: number): [number, number, number] => { const [x, z] = toWorld(lx, d); return [+x.toFixed(2), y, +z.toFixed(2)]; };
@@ -52,50 +57,40 @@ const mod: WorldModule = {
     ctx.scene.add(group);
     const aniso = Math.min(ctx.renderer.capabilities.getMaxAnisotropy(), ctx.quality === "low" ? 4 : 8);
     // the baked atlases stream + transcode off the main thread while the parked plane is built on it
-    const atP = loadAtlases(ctx.renderer, aniso);
+    const atP = loadAtlases(ctx.assets, aniso);
     const pl = LOBBY.find((i) => i.kind === "plane");
     const tPlane = performance.now();
     const planeP = pl ? createPlane(ctx, { crew: false }).catch((e) => { console.warn("[lobby-islet] plane failed", e); return null; }) : Promise.resolve(null);
     const planeMs = Math.round(performance.now() - tPlane);
     const at = await atP;
     const mats = makeMaterials(at);
-    const k: LK = { b: new Batch(), at, ground: (x, z) => ctx.terrain.height(x, z), r: rng(20260923) };
+    const k: LK = { b: new Batch(), at, ground: (x, z) => ctx.terrain.height(x, z), r: rng(LAYOUT_SEED) };
     const water = ctx.shared.get("water") as WaterApi | undefined;
 
-    buildDock(k, water);
-    await ctx.yield();
-    let rockCrowns: THREE.Vector3[] = [];
-    // yield between items so the build is time-sliced (no main-thread task > 50 ms)
-    for (const it of LOBBY) {
-      await ctx.yield();
-      switch (it.kind) {
-        case "tiki": buildTiki(k, it); break;
-        case "stool": buildStool(k, it); break;
-        case "tramp": buildTramp(k, it); break;
-        case "gallows": buildGallows(k, it); break;
-        case "dummy": buildDummy(k, it); break;
-        case "net": buildNet(k, it); break;
-        case "crate": buildCrate(k, it); break;
-        case "barrel": buildBarrel(k, it); break;
-        case "banana-barrel": buildBarrel(k, it, true); break;
-        case "pallet": buildPallet(k, it); break;
-        case "chair": buildChair(k, it); break;
-        case "windsock": buildWindsock(k, it); break;
-        case "runway": buildRunway(k, it); break;
-        case "rock": rockCrowns = buildRock(k, it); break;
-      }
-    }
-    // a banana bunch hanging from the gallows arm's back end + one in the palm by the chair
-    const bag = LOBBY.find((i) => i.id === "bag")!;
-    const [bx, bz] = toWorld(...itemLocal(bag, -0.34, 0));
-    bananaBunch(k, M(bx, groundY(bag) + DIM.gallows.postH - 0.3, bz, 0, 1.2, 0), 4, 0.9);
-
+    const fill = fillBatch(k, water);
+    let step = fill.next();
+    while (!step.done) { await ctx.yield(); step = fill.next(); }
+    const rockCrowns = step.value;
     await ctx.yield();
     plantVeg(ctx, k, rockCrowns);
     await ctx.yield();
 
     const meshes = await k.b.meshesAsync(mats, "lobby", () => ctx.yield());
     for (const m of meshes) group.add(m);
+    // ?geofree: the merges drop their CPU arrays after upload; a context restore refills them from one replay of the
+    // seeded build (no water: the dock's foam is registered once), shared by every merge in that restore
+    let fresh: Map<string, THREE.BufferGeometry> | null = null;
+    const remake = (name: string) => {
+      if (!fresh) {
+        const again: LK = { ...k, b: new Batch(), r: rng(LAYOUT_SEED) };
+        const replay = fillBatch(again, undefined);
+        while (!replay.next().done);
+        fresh = new Map(again.b.meshes(mats).map((m) => [m.name, m.geometry]));
+      }
+      return fresh.get(name)!;
+    };
+    onRestore("bake", () => { if (fresh) for (const g of fresh.values()) g.dispose(); fresh = null; });
+    for (const m of meshes) releaseGeometryAfterUpload(m.geometry, () => arraysOf(remake(m.name)));
     const tris = meshes.reduce((s, m) => s + (m.geometry.index ? m.geometry.index.count / 3 : 0), 0);
 
     // ---- the parked BANANA CO. plane (nose along the item's -X, gear down, rear ramp lowered, props stopped)
@@ -122,6 +117,45 @@ const mod: WorldModule = {
 };
 let staged = false;
 export default mod;
+
+/** the islet's static props into `k.b`, yielding between items so the build is time-sliced (no main-thread task > 50 ms);
+ * returns the rock's crowns for the jungle on top */
+function* fillBatch(k: LK, water: WaterApi | undefined): Generator<void, THREE.Vector3[]> {
+  buildDock(k, water);
+  yield;
+  let rockCrowns: THREE.Vector3[] = [];
+  for (const it of LOBBY) {
+    yield;
+    switch (it.kind) {
+      case "tiki": buildTiki(k, it); break;
+      case "stool": buildStool(k, it); break;
+      case "tramp": buildTramp(k, it); break;
+      case "gallows": buildGallows(k, it); break;
+      case "dummy": buildDummy(k, it); break;
+      case "net": buildNet(k, it); break;
+      case "crate": buildCrate(k, it); break;
+      case "barrel": buildBarrel(k, it); break;
+      case "banana-barrel": buildBarrel(k, it, true); break;
+      case "pallet": buildPallet(k, it); break;
+      case "chair": buildChair(k, it); break;
+      case "windsock": buildWindsock(k, it); break;
+      case "runway": buildRunway(k, it); break;
+      case "rock": rockCrowns = buildRock(k, it); break;
+    }
+  }
+  // a banana bunch hanging from the gallows arm's back end + one in the palm by the chair
+  const bag = LOBBY.find((i) => i.id === "bag")!;
+  const [bx, bz] = toWorld(...itemLocal(bag, -0.34, 0));
+  bananaBunch(k, M(bx, groundY(bag) + DIM.gallows.postH - 0.3, bz, 0, 1.2, 0), 4, 0.9);
+  return rockCrowns;
+}
+
+function arraysOf(g: THREE.BufferGeometry): Record<string, THREE.TypedArray> {
+  const out: Record<string, THREE.TypedArray> = {};
+  for (const [name, a] of Object.entries(g.attributes)) out[name] = (a as THREE.BufferAttribute).array;
+  if (g.index) out.index = g.index.array;
+  return out;
+}
 
 // ------------------------------------------------------------------------------------------------ vegetation
 /** palms / banana plants from the layout + hand-placed beach dressing (grass tufts, bushes, ferns, flowers, jungle on the rock) */

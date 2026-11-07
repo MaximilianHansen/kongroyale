@@ -23,6 +23,7 @@ import { Simplex2, mulberry32, smoothstep } from "./noise";
 import { allColliders } from "../pois/index";
 import { toWorld as harborToWorld } from "../pois/peel-harbor";
 import { canopyKeepAt, crownOverAuthoredLane, deepJungleAt, OPEN_FLOOR_KEEP } from './veg-landscape';
+import * as dmath from "../sim/dmath";
 
 export type VegKind =
   | "palm" | "palm-leaning" | "jungle-tree" | "bush" | "fern" | "monstera" | "banana-plant" | "flowers" | "grass"
@@ -98,10 +99,10 @@ export function palmShape(variant: number, leaning: boolean): PalmShape {
       // (a0 + 9°), then the crown end curling back past upright (a1)
       const ang = warm
         ? (t < 0.35 ? lerpN(a0 * 0.55, a0 + 9 * D2R, smoothstep(0, 0.35, t)) : lerpN(a0 + 9 * D2R, a1 - 3 * D2R, smoothstep(0.35, 1, t)))
-        : a1 + (a0 - a1) * Math.pow(1 - t, leaning ? (sCurve ? 1.2 : 1.8) : 1.3);
-      px += Math.sin(ang) * (h / N); py += Math.cos(ang) * (h / N);
+        : a1 + (a0 - a1) * dmath.pow(1 - t, leaning ? (sCurve ? 1.2 : 1.8) : 1.3);
+      px += dmath.sin(ang) * (h / N); py += dmath.cos(ang) * (h / N);
     }
-    pts.push([px, py, Math.sin(t * Math.PI * 1.6) * wob]);
+    pts.push([px, py, dmath.sin(t * Math.PI * 1.6) * wob]);
   }
   return { leaning, warm, h, r0, pts };
 }
@@ -112,7 +113,7 @@ export function palmRadius(s: PalmShape, d: number, a: number): number {
   let r = s.r0 * (1 - 0.3 * t);
   const f = Math.max(0, 1 - Math.max(0, d) / 0.75);
   r += s.r0 * 0.7 * f * f;                                                                     // base flare
-  r += s.r0 * 0.35 * Math.pow(Math.max(0, 1 - Math.max(0, d) / 0.35), 2) * Math.pow(Math.max(0, Math.cos(a * 5 + 0.3)), 3); // root knuckles
+  r += s.r0 * 0.35 * dmath.pow(Math.max(0, 1 - Math.max(0, d) / 0.35), 2) * dmath.pow(Math.max(0, dmath.cos(a * 5 + 0.3)), 3); // root knuckles
   r *= 1 + 0.1 * smoothstep(0.9, 1.0, t);                                                     // swelling under the crown
   return r;
 }
@@ -142,7 +143,7 @@ export function jungleTreeShape(variant: number): TreeShape {
   // trail: trees at a forest edge reach for the light, so the canopy closes over the paths); understory a little
   const lean = (rnd() - 0.5) * 0.12 + (v === 1 || v === 3 ? 0.24 : v === 0 ? 0.12 : 0), lean2 = (rnd() - 0.5) * 0.12;
   const pts: Array<[number, number, number]> = [[0, -0.8, 0]];
-  for (let i = 1; i <= 6; i++) { const t = i / 6; pts.push([lean * trunkH * t * t + Math.sin(t * 5 + v) * 0.08, trunkH * t, lean2 * trunkH * t * t + Math.cos(t * 4 + v) * 0.06]); }
+  for (let i = 1; i <= 6; i++) { const t = i / 6; pts.push([lean * trunkH * t * t + dmath.sin(t * 5 + v) * 0.08, trunkH * t, lean2 * trunkH * t * t + dmath.cos(t * 4 + v) * 0.06]); }
   const n = 4 + Math.floor(rnd() * 3), ph = rnd() * Math.PI * 2;
   const flanges: TreeShape["flanges"] = [];
   // (the emergent's roots are massive mossy fins: tall thin PLANKS with deep gaps — longer and taller than the other
@@ -250,7 +251,7 @@ export function nearestRoad(t: Terrain, x: number, z: number): { dx: number; dz:
 }
 
 /** trunk radius of a jungle tree at height y (m above ground), including the root flare, without the buttress blades */
-export const treeRadius = (s: TreeShape, y: number) => s.r0 * (1 - 0.36 * Math.max(0, y) / s.trunkH) * (1 + 0.28 * Math.pow(Math.max(0, 1 - Math.max(0, y) / 1.4), 2));
+export const treeRadius = (s: TreeShape, y: number) => s.r0 * (1 - 0.36 * Math.max(0, y) / s.trunkH) * (1 + 0.28 * dmath.pow(Math.max(0, 1 - Math.max(0, y) / 1.4), 2));
 
 /**
  * Buttress ridge at height y (not a flat triangular fin glued on with a stair-step): each
@@ -261,7 +262,7 @@ export const treeRadius = (s: TreeShape, y: number) => s.r0 * (1 - 0.36 * Math.m
  */
 export function ridgeAt(fl: TreeShape["flanges"][number], y: number): { a: number; reach: number } {
   const t = Math.min(1, Math.max(0, y / fl.h));
-  return { a: fl.a + fl.sweep * 0.35 * (1 - t) * (1 - t), reach: fl.len * Math.pow(1 - t, 1.6) * (1 + 0.07 * Math.sin(t * 7 + fl.a * 3)) };
+  return { a: fl.a + fl.sweep * 0.35 * (1 - t) * (1 - t), reach: fl.len * dmath.pow(1 - t, 1.6) * (1 + 0.07 * dmath.sin(t * 7 + fl.a * 3)) };
 }
 
 /** angular half-width (rad) of a ridge's Gaussian at height y: ~th thick at mid-reach, widening into a fillet near the top */
@@ -277,7 +278,7 @@ export function trunkRadiusAt(s: TreeShape, y: number, th: number): number {
   for (const fl of s.flanges) {
     if (y >= fl.h) continue;
     const q = ridgeAt(fl, y), w = ridgeWidth(s, fl, y, q.reach), d = wrapA(th - q.a) / w;
-    r += q.reach * Math.exp(-d * d);
+    r += q.reach * dmath.exp(-d * d);
   }
   return r;
 }
@@ -317,7 +318,7 @@ export function treeCrevice(s: TreeShape, y: number, a: number): number {
 /** the drawn tube radius at height y, angle a (without the LOD0 bark knobs, ±3.5 %) */
 export function drawnTrunkRadius(s: TreeShape, y: number, a: number): number {
   const HF = s.flanges.reduce((m, f) => Math.max(m, f.h), 0);
-  return treeRadius(s, y) * (1 - 0.3 * treeCrevice(s, y, a) * Math.pow(Math.max(0, 1 - Math.max(0, y) / Math.max(2.6, 0.85 * HF)), 1.3));
+  return treeRadius(s, y) * (1 - 0.3 * treeCrevice(s, y, a) * dmath.pow(Math.max(0, 1 - Math.max(0, y) / Math.max(2.6, 0.85 * HF)), 1.3));
 }
 export interface RootStation { x: number; z: number; y: number; hwB: number; hwT: number; f: number }
 /** a buttress root's stations from the trunk (k = 0) to its tip (k = K): crest centre, crest height, half widths at the
@@ -329,12 +330,12 @@ export function rootStations(s: TreeShape, fl: TreeShape["flanges"][number], K: 
   if (inner) for (const k of [-2, -1]) {
     const g = -k / 2, q = flangeAt(s, fl, 0), y = fl.h + 0.55 * g * Math.min(1.6, fl.h * 0.4);
     const [tx, tz] = treeCentreAt(s, y), rr = treeRadius(s, y) * (1 - 0.28 * g) - 0.05;
-    st.push({ x: tx + Math.cos(q.a) * rr, z: tz - Math.sin(q.a) * rr, y, hwB: fl.th * 0.62 * (1 - 0.35 * g), hwT: fl.th * 0.24 * (1 - 0.4 * g), f: -g * 0.1 });
+    st.push({ x: tx + dmath.cos(q.a) * rr, z: tz - dmath.sin(q.a) * rr, y, hwB: fl.th * 0.62 * (1 - 0.35 * g), hwT: fl.th * 0.24 * (1 - 0.4 * g), f: -g * 0.1 });
   }
   for (let k = 0; k <= K; k++) {
-    const f = Math.pow(k / K, 0.85), q = flangeAt(s, fl, f), taper = 1 - 0.55 * f;
+    const f = dmath.pow(k / K, 0.85), q = flangeAt(s, fl, f), taper = 1 - 0.55 * f;
     const yC = k === K ? 0.02 : Math.max(q.h, 0.34 * (1 - f) + 0.16);
-    st.push({ x: cx + Math.cos(q.a) * q.reach, z: cz - Math.sin(q.a) * q.reach, y: yC, hwB: fl.th * 0.56 * taper + 0.04, hwT: Math.min(fl.th * 0.22 * taper + 0.025, yC * 0.8), f });
+    st.push({ x: cx + dmath.cos(q.a) * q.reach, z: cz - dmath.sin(q.a) * q.reach, y: yC, hwB: fl.th * 0.56 * taper + 0.04, hwT: Math.min(fl.th * 0.22 * taper + 0.025, yC * 0.8), f });
   }
   return st;
 }
@@ -367,15 +368,15 @@ export function jungleTreeBoxes(s: TreeShape): Array<{ c: [number, number, numbe
       // a union of k thin boxes turned by 180°/k, corner angle φ = 180°/(4k), approximates a disk within [cos φ, 1]·r:
       // round bands 3 boxes (±1.7 %), above roundTop 2 (±4 %), the crevice zone 6 boxes following the pulled-in radius
       const crev = rmax - rmin >= B.crevice, spokes = crev && B.crevK > 0;
-      const k = spokes ? B.crevK : ym > B.roundTop ? 2 : crev ? B.crevRound : B.coreRound, phi = Math.PI / (4 * k), sc = 2 / (1 + Math.cos(phi));
+      const k = spokes ? B.crevK : ym > B.roundTop ? 2 : crev ? B.crevRound : B.coreRound, phi = Math.PI / (4 * k), sc = 2 / (1 + dmath.cos(phi));
       // (crevice zone without spokes: a round core at a low quantile of the pulled-in radius — the root boxes reach into
       // the tube where it bulges round each root)
       const rc = crev ? R.slice().sort((a, b) => a - b)[Math.floor(B.crevQ * (NA - 1))] : rmean;
       for (let q = 0; q < k; q++) {
         const th = q * Math.PI / k, kk = Math.round((th / (Math.PI * 2)) * NA) % NA;
         const rp = (spokes ? R[kk] : rc) * sc, rn = (spokes ? R[(kk + NA / 2) % NA] : rc) * sc;
-        const ux = Math.cos(th), uz = -Math.sin(th), off = (rp - rn) / 2 * Math.cos(phi);
-        out.push({ c: [cx + ux * off, ym, cz + uz * off], h: [(rp + rn) / 2 * Math.cos(phi), hy, Math.min(rp, rn) * Math.sin(phi)], ux, uz, tag: spokes ? "spoke" : crev ? "crev" : "core" });
+        const ux = dmath.cos(th), uz = -dmath.sin(th), off = (rp - rn) / 2 * dmath.cos(phi);
+        out.push({ c: [cx + ux * off, ym, cz + uz * off], h: [(rp + rn) / 2 * dmath.cos(phi), hy, Math.min(rp, rn) * dmath.sin(phi)], ux, uz, tag: spokes ? "spoke" : crev ? "crev" : "core" });
       }
     }
   }
@@ -393,7 +394,7 @@ export function jungleTreeBoxes(s: TreeShape): Array<{ c: [number, number, numbe
     const errArea = (a: number, b: number) => {
       let lo = Infinity, hi = -Infinity; for (let k = a; k <= b; k++) { lo = Math.min(lo, pts[k].y); hi = Math.max(hi, pts[k].y); }
       const top = lo + (hi - lo) * B.topQ; let e = 0;
-      for (let k = a; k < b; k++) e += (Math.abs(pts[k].y - top) + Math.abs(pts[k + 1].y - top)) / 2 * Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z);
+      for (let k = a; k < b; k++) e += (Math.abs(pts[k].y - top) + Math.abs(pts[k + 1].y - top)) / 2 * dmath.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z);
       return e;
     };
     let i0 = 0;
@@ -406,10 +407,10 @@ export function jungleTreeBoxes(s: TreeShape): Array<{ c: [number, number, numbe
       for (let k = i0; k <= i1; k++) {
         const p = pts[k], rT = Math.max(0.02, p.hwT), yArc = Math.max(0.01, p.y - rT), ym = p.y * B.hwAt;
         cmin = Math.min(cmin, p.y); cmax = Math.max(cmax, p.y);
-        hw += p.hwB + (rT - p.hwB) * Math.pow(Math.min(1, ym / yArc), 0.7); cnt++;
+        hw += p.hwB + (rT - p.hwB) * dmath.pow(Math.min(1, ym / yArc), 0.7); cnt++;
       }
       const top = cmin + (cmax - cmin) * B.topQ; hw /= cnt;
-      let dx = Z.x - A.x, dz = Z.z - A.z; const L = Math.hypot(dx, dz) || 1e-3; dx /= L; dz /= L;
+      let dx = Z.x - A.x, dz = Z.z - A.z; const L = dmath.hypot(dx, dz) || 1e-3; dx /= L; dz /= L;
       // the first box reaches back into the trunk (the root grows out of the tube)
       const back = i0 === 0 ? B.rootIn : 0, x0 = A.x - dx * back, z0 = A.z - dz * back;
       const len = L + back, y0 = -0.35;
@@ -453,7 +454,7 @@ export function mangroveShape(variant: number): MangroveShape {
   for (let i = 0; i < nRoots; i++) {
     // ARCHING prop roots: they leave the trunk, bow up and out, and dive into the mud (a cage of arches)
     const a = (i / nRoots) * Math.PI * 2 + rr() * 0.5, spread = (v === 1 ? 1.2 : 1.6) + rr() * 1.3, y0 = 1.0 + rr() * 1.3;
-    const c = Math.cos(a), sn = Math.sin(a);
+    const c = dmath.cos(a), sn = dmath.sin(a);
     roots.push([[c * 0.12, y0, sn * 0.12], [c * spread * 0.35, y0 + 0.28, sn * spread * 0.35], [c * spread * 0.72, y0 * 0.62, sn * spread * 0.72], [c * spread, 0.1, sn * spread], [c * spread * 1.05, -1.2, sn * spread * 1.05]]);
   }
   return { H, trunk, roots, nRoots, rnd: used };
@@ -476,30 +477,30 @@ export function tubeBoxes(out: Array<{ c: V3n; h: V3n; ux: number; uz: number; r
   for (let i = 0; i < segs; i++) {
     const a = P[i], b = P[i + 1], ra = rad(i / segs), rb = rad((i + 1) / segs);
     // (roots: the inscribed box of a slanted piece loses ∝ ℓ·sin 2θ — split until that is ≤ 4·maxDy·r)
-    const segL = Math.hypot(b[0] - a[0], b[2] - a[2]), segY = Math.abs(b[1] - a[1]), s2 = 2 * segL * segY / Math.max(1e-6, segL * segL + segY * segY);
-    const m = root ? Math.max(1, Math.ceil(Math.hypot(segL, segY) * s2 / (4 * maxDy * Math.max(ra, rb)))) : Math.max(1, Math.ceil(segY / 0.4));
+    const segL = dmath.hypot(b[0] - a[0], b[2] - a[2]), segY = Math.abs(b[1] - a[1]), s2 = 2 * segL * segY / Math.max(1e-6, segL * segL + segY * segY);
+    const m = root ? Math.max(1, Math.ceil(dmath.hypot(segL, segY) * s2 / (4 * maxDy * Math.max(ra, rb)))) : Math.max(1, Math.ceil(segY / 0.4));
     for (let j = 0; j < m; j++) {
       const u0 = j / m, u1 = (j + 1) / m;
       const q0: V3n = [a[0] + (b[0] - a[0]) * u0, a[1] + (b[1] - a[1]) * u0, a[2] + (b[2] - a[2]) * u0];
       const q1: V3n = [a[0] + (b[0] - a[0]) * u1, a[1] + (b[1] - a[1]) * u1, a[2] + (b[2] - a[2]) * u1];
       const r = ra + (rb - ra) * (u0 + u1) / 2;
       if (Math.max(q0[1], q1[1]) + r < 0.05) continue;                    // under the mud / water
-      let dx = q1[0] - q0[0], dz = q1[2] - q0[2]; const L = Math.hypot(dx, dz);
+      let dx = q1[0] - q0[0], dz = q1[2] - q0[2]; const L = dmath.hypot(dx, dz);
       if (L > 1e-4) { dx /= L; dz /= L; } else { dx = 1; dz = 0; }
       const c: V3n = [(q0[0] + q1[0]) / 2, (q0[1] + q1[1]) / 2, (q0[2] + q1[2]) / 2], dy = Math.abs(q1[1] - q0[1]);
       // roots are thin (15 cm): a box INSCRIBED in the drawn 10-sided tube (inradius 0.95 r) — every root crossing is
       // near-grazing, so an overhang would read "clear but blocked"
       // an axis-aligned rectangle (along, up) inscribed in the slanted tube band (half-thickness w·r about the axis):
       // corners satisfy a·sinθ + b·cosθ ≤ w·r; flat pieces keep their length (a = L/2), steep ones their height
-      const th = Math.atan2(dy, L), sn = Math.sin(th), cs = Math.cos(th), wr = w * r;
+      const th = dmath.atan2(dy, L), sn = dmath.sin(th), cs = dmath.cos(th), wr = w * r;
       let ha: number, hb: number;
       if (th < Math.PI / 4) { ha = L / 2 + MANGROVE_BOX.end * r; hb = Math.max(0.3 * r, (wr - (L / 2) * sn * MANGROVE_BOX.fit) / cs); }
       else { hb = dy / 2 + MANGROVE_BOX.end * r; ha = Math.max(0.3 * r, (wr - (dy / 2) * cs * MANGROVE_BOX.fit) / sn); }
       if (root) out.push({ c, h: [Math.max(0.3 * r, ha), hb, wr], ux: dx, uz: dz, root });
       else {
         // the trunk: a 3-box disk union per ≤ 0.4 m piece (outline within ±1.7 % of the tube)
-        const phi = Math.PI / 12, sc = 2 / (1 + Math.cos(phi));
-        for (let q = 0; q < 3; q++) { const a3 = q * Math.PI / 3; out.push({ c, h: [r * sc * Math.cos(phi), dy / 2, r * sc * Math.sin(phi)], ux: Math.cos(a3), uz: -Math.sin(a3), root }); }
+        const phi = Math.PI / 12, sc = 2 / (1 + dmath.cos(phi));
+        for (let q = 0; q < 3; q++) { const a3 = q * Math.PI / 3; out.push({ c, h: [r * sc * dmath.cos(phi), dy / 2, r * sc * dmath.sin(phi)], ux: dmath.cos(a3), uz: -dmath.sin(a3), root }); }
       }
     }
   }
@@ -522,9 +523,9 @@ export function bambooCanes(variant: number): BambooCane[] {
   const n = 8 + Math.floor(rnd() * 4), canes: BambooCane[] = [];
   for (let i = 0; i < n; i++) {
     const a = rnd() * 6.283, r = Math.sqrt(rnd()) * BAMBOO.r * 0.9, h = BAMBOO.h * (0.68 + rnd() * 0.32);
-    const lean = (rnd() - 0.5) * 0.22 + Math.cos(a) * r * 0.14, lean2 = (rnd() - 0.5) * 0.22 + Math.sin(a) * r * 0.14;
-    const pts: V3n[] = [[Math.cos(a) * r, -0.2, Math.sin(a) * r]];
-    for (let k = 1; k <= 4; k++) { const t = k / 4; pts.push([Math.cos(a) * r + lean * h * t * t, h * t, Math.sin(a) * r + lean2 * h * t * t]); }
+    const lean = (rnd() - 0.5) * 0.22 + dmath.cos(a) * r * 0.14, lean2 = (rnd() - 0.5) * 0.22 + dmath.sin(a) * r * 0.14;
+    const pts: V3n[] = [[dmath.cos(a) * r, -0.2, dmath.sin(a) * r]];
+    for (let k = 1; k <= 4; k++) { const t = k / 4; pts.push([dmath.cos(a) * r + lean * h * t * t, h * t, dmath.sin(a) * r + lean2 * h * t * t]); }
     canes.push({ pts, h, r: 0.055 + rnd() * 0.025 });
   }
   return canes;
@@ -542,12 +543,12 @@ export function bambooBoxes(variant: number): Array<{ c: V3n; h: V3n; ux: number
 function diskBoxes(out: Box[], c: [number, number, number], r: number, hy: number, k: number, surf: Box["surf"], fit = 0.5) {
   // (fit 0: inscribed [cos φ, 1]·r, 1: circumscribed; 0.5 = centred on r)
   // (a disk is a trunk — round: a tuk-tuk glancing off it slides by)
-  const phi = Math.PI / (4 * k), sc = 1 / (1 - fit * (1 - Math.cos(phi)));
-  for (let q = 0; q < k; q++) out.push({ c, h: [r * sc * Math.cos(phi), hy, r * sc * Math.sin(phi)], yaw: q * Math.PI / k, surf, round: [c[0], c[2]] });
+  const phi = Math.PI / (4 * k), sc = 1 / (1 - fit * (1 - dmath.cos(phi)));
+  for (let q = 0; q < k; q++) out.push({ c, h: [r * sc * dmath.cos(phi), hy, r * sc * dmath.sin(phi)], yaw: q * Math.PI / k, surf, round: [c[0], c[2]] });
 }
 
 /** buttress ridge profile: crest height at fraction f of its reach (0 = at the trunk, 1 = the tip on the ground) */
-export const flangeHeight = (fl: TreeShape["flanges"][number], f: number) => fl.h * (1 - Math.pow(Math.max(0, Math.min(1, f)), 1 / 1.6));
+export const flangeHeight = (fl: TreeShape["flanges"][number], f: number) => fl.h * (1 - dmath.pow(Math.max(0, Math.min(1, f)), 1 / 1.6));
 
 /** the ridge crest at fraction f of its reach: distance from the trunk axis, angle, sideways offset (0), crest height */
 export function flangeAt(s: TreeShape, fl: TreeShape["flanges"][number], f: number) {
@@ -727,7 +728,7 @@ function clearGrid(cl: Clearing[]): Map<number, Clearing[]> {
   if (g) return g;
   g = new Map();
   for (const c of cl) {
-    const r = "r" in c ? c.r : Math.hypot(c.hx, c.hz);
+    const r = "r" in c ? c.r : dmath.hypot(c.hx, c.hz);
     for (let gx = Math.floor((c.x - r) / 16); gx <= Math.floor((c.x + r) / 16); gx++)
       for (let gz = Math.floor((c.z - r) / 16); gz <= Math.floor((c.z + r) / 16); gz++) {
         const k = (gx + 4096) * 8192 + gz + 4096;
@@ -741,9 +742,9 @@ export function inClearing(x: number, z: number, all: Clearing[]): boolean {
   const cl = clearGrid(all).get((Math.floor(x / 16) + 4096) * 8192 + Math.floor(z / 16) + 4096);
   if (!cl) return false;
   for (const c of cl) {
-    if ("r" in c) { if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return true; }
+    if ("r" in c) { if (dmath.pow(x - c.x, 2) + dmath.pow(z - c.z, 2) < c.r * c.r) return true; }
     else {
-      const cy = Math.cos(c.yaw ?? 0), sy = Math.sin(c.yaw ?? 0);
+      const cy = dmath.cos(c.yaw ?? 0), sy = dmath.sin(c.yaw ?? 0);
       const lx = (x - c.x) * cy + (z - c.z) * sy, lz = -(x - c.x) * sy + (z - c.z) * cy;
       if (Math.abs(lx) < c.hx && Math.abs(lz) < c.hz) return true;
     }
@@ -753,11 +754,11 @@ export function inClearing(x: number, z: number, all: Clearing[]): boolean {
 
 const PADS: Poi[] = POIS.filter((p) => p.padY !== null);
 function nearPad(x: number, z: number, margin: number): boolean {
-  for (const p of PADS) if (Math.hypot(x - p.x, z - p.z) < p.pad + margin) return true;
+  for (const p of PADS) if (dmath.hypot(x - p.x, z - p.z) < p.pad + margin) return true;
   return false;
 }
 
-const RING8: Array<[number, number]> = Array.from({ length: 8 }, (_, i) => [Math.cos((i / 8) * Math.PI * 2), Math.sin((i / 8) * Math.PI * 2)]);
+const RING8: Array<[number, number]> = Array.from({ length: 8 }, (_, i) => [dmath.cos((i / 8) * Math.PI * 2), dmath.sin((i / 8) * Math.PI * 2)]);
 
 const isBlockedBiome = (b: Biome) => b === Biome.Path || b === Biome.Paved || b === Biome.DeepOcean || b === Biome.Reef;
 /** true when (x,z) or any of 8 samples on the ring of radius m (and m/2) is a path / paved / water biome */
@@ -788,7 +789,7 @@ class GapGrid {
     for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
       const a = this.cells.get(this.key(x + i * this.cell, z + j * this.cell));
       if (!a) continue;
-      for (let k = 0; k < a.length; k += 2) if ((a[k] - x) ** 2 + (a[k + 1] - z) ** 2 < g2) return true;
+      for (let k = 0; k < a.length; k += 2) if (dmath.pow(a[k] - x, 2) + dmath.pow(a[k + 1] - z, 2) < g2) return true;
     }
     return false;
   }
@@ -817,7 +818,7 @@ export class RockIndex {
         const a = this.cells.get((gx + 4096) * 8192 + gz + 4096); if (!a) continue;
         for (const k of a) {
           if (y !== undefined && (y > k.y + k.sy * (k.kind === "stack" ? 1 : 0.55) || y < k.y - k.sy * 0.5 - 1)) continue;
-          const d = Math.hypot(x - k.x, z - k.z) - Math.max(k.sx, k.sz) * 0.42;
+          const d = dmath.hypot(x - k.x, z - k.z) - Math.max(k.sx, k.sz) * 0.42;
           if (d < best) best = d;
         }
       }
@@ -842,9 +843,9 @@ export class BoxIndex {
     this.hx = new Float32Array(n); this.hy = new Float32Array(n); this.hz = new Float32Array(n);
     this.co = new Float32Array(n); this.si = new Float32Array(n);
     boxes.forEach((b, i) => {
-      const yaw = b.yaw ?? 0, c = Math.cos(yaw), s = Math.sin(yaw);
+      const yaw = b.yaw ?? 0, c = dmath.cos(yaw), s = dmath.sin(yaw);
       this.cx[i] = b.c[0]; this.cy[i] = b.c[1]; this.cz[i] = b.c[2];
-      this.hx[i] = b.h[0]; this.hy[i] = b.h[1] + (b.pitch ? Math.abs(Math.sin(b.pitch)) * b.h[2] : 0); this.hz[i] = b.h[2];
+      this.hx[i] = b.h[0]; this.hy[i] = b.h[1] + (b.pitch ? Math.abs(dmath.sin(b.pitch)) * b.h[2] : 0); this.hz[i] = b.h[2];
       this.co[i] = c; this.si[i] = s;
       const ex = Math.abs(c) * b.h[0] + Math.abs(s) * b.h[2], ez = Math.abs(s) * b.h[0] + Math.abs(c) * b.h[2];
       for (let gx = Math.floor((b.c[0] - ex) / this.C); gx <= Math.floor((b.c[0] + ex) / this.C); gx++)
@@ -901,7 +902,7 @@ function inPoiVolume(kind: VegKind, variant: number, x: number, y: number, z: nu
   if (detail) return P.hits(x, y + 0.1, y + 0.3, z, -0.05);
   if (!COLLIDABLE.has(kind)) return P.hits(x, y + 0.15, y + 1.0, z, 0.05);
   if (kind === "palm" || kind === "palm-leaning") {
-    const s = palmShape(variant % 3, kind === "palm-leaning"), c = Math.cos(yaw), sn = Math.sin(yaw);
+    const s = palmShape(variant % 3, kind === "palm-leaning"), c = dmath.cos(yaw), sn = dmath.sin(yaw);
     for (const [mx, my, mz] of s.pts) {
       if (my < 0 || my > 6) continue;
       const wx = x + (mx * c + mz * sn) * scale, wz = z + (-mx * sn + mz * c) * scale, wy = y + my * scale;
@@ -936,9 +937,9 @@ function steepUnder(t: Terrain, kind: VegKind, x: number, z: number, r: number):
   const ms = MAX_SLOPE[kind]; if (ms === undefined) return false;
   if (slopeAt(t, x, z) > ms) return true;
   if (!BIG_SLOPE.has(kind)) return false;
-  const e = 2, n = (px: number, pz: number) => Math.hypot(t.height(px + e, pz) - t.height(px - e, pz), t.height(px, pz + e) - t.height(px, pz - e)) / (2 * e);
+  const e = 2, n = (px: number, pz: number) => dmath.hypot(t.height(px + e, pz) - t.height(px - e, pz), t.height(px, pz + e) - t.height(px, pz - e)) / (2 * e);
   if (n(x, z) > ms) return true;
-  for (let k = 0; k < 4; k++) { const a = k * 1.5707963 + 0.39; if (n(x + Math.cos(a) * r, z + Math.sin(a) * r) > ms + 0.08) return true; }
+  for (let k = 0; k < 4; k++) { const a = k * 1.5707963 + 0.39; if (n(x + dmath.cos(a) * r, z + dmath.sin(a) * r) > ms + 0.08) return true; }
   return false;
 }
 /** footprint radius and base sink allowance of a plant (seatPlant) */
@@ -963,7 +964,7 @@ export function seatPlant(t: Terrain, kind: VegKind, variant: number, x: number,
   let y = t.height(x, z);
   const footprint = crownFootprint(kind,variant);
   if (footprint) {
-    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const c = dmath.cos(yaw), s = dmath.sin(yaw);
     const cx = x + (footprint.x*c+footprint.z*s)*scale, cz = z + (-footprint.x*s+footprint.z*c)*scale;
     const radius = footprint.r*scale;
     if (roofIndex().footprintHits(cx,cz,radius+1.5) || crownOverAuthoredLane(cx,cz,radius)) return null;
@@ -971,7 +972,7 @@ export function seatPlant(t: Terrain, kind: VegKind, variant: number, x: number,
   if (!f) return y;
   const r = f[0] * (f[2] ? scale : 1);
   let lo = y, hi = y;
-  for (let k = 0; k < 8; k++) { const a = k * 0.7853981633974483, h = t.height(x + Math.cos(a) * r, z + Math.sin(a) * r); if (h < lo) lo = h; if (h > hi) hi = h; }
+  for (let k = 0; k < 8; k++) { const a = k * 0.7853981633974483, h = t.height(x + dmath.cos(a) * r, z + dmath.sin(a) * r); if (h < lo) lo = h; if (h > hi) hi = h; }
   if (y - lo > f[1]) y = lo + f[1];
   if (kind === "jungle-tree") y = Math.min(y, rootSeatY(t, variant, x, z, yaw, scale));   // no root in the air
   const col = COLLIDABLE.has(kind);
@@ -982,7 +983,7 @@ export function seatPlant(t: Terrain, kind: VegKind, variant: number, x: number,
   const P = poiIndex(), R = rockBoxes(ri);
   if (col) {
     for (const b of vegTrunkColliders([{ kind, variant, x, y, z, yaw, scale }])) {
-      const rr = Math.hypot(b.h[0], b.h[2]) * 0.8, y0 = b.c[1] - b.h[1] + 0.1, y1 = b.c[1] + b.h[1];
+      const rr = dmath.hypot(b.h[0], b.h[2]) * 0.8, y0 = b.c[1] - b.h[1] + 0.1, y1 = b.c[1] + b.h[1];
       if (P.hits(b.c[0], y0, y1, b.c[2], rr)) return null;
       if (R && R.hits(b.c[0], y0 + 0.15, y1, b.c[2], rr * 0.75)) return null;
     }
@@ -1004,11 +1005,11 @@ export function crownCheck(t: Terrain, kind: VegKind, variant: number, x: number
   const fp = crownFootprint(kind, variant), band = crownBand(kind, variant);
   if (!fp || !band) return null;
   const P = poiIndex(), R = rockBoxes(ri);
-  const c = Math.cos(yaw), sn = Math.sin(yaw);
+  const c = dmath.cos(yaw), sn = dmath.sin(yaw);
   const cx = x + (fp.x * c + fp.z * sn) * scale, cz = z + (-fp.x * sn + fp.z * c) * scale, cr = fp.r * scale * 0.8;
   const bottom = y + band[0] * scale, top = y + band[1] * scale;
   let gmax = t.height(cx, cz);
-  for (const k of [0.25, 0.55, 0.85]) for (let q = 0; q < 8; q++) { const a = q * 0.7853981633974483 + k; gmax = Math.max(gmax, t.height(cx + Math.cos(a) * cr * k, cz + Math.sin(a) * cr * k)); }
+  for (const k of [0.25, 0.55, 0.85]) for (let q = 0; q < 8; q++) { const a = q * 0.7853981633974483 + k; gmax = Math.max(gmax, t.height(cx + dmath.cos(a) * cr * k, cz + dmath.sin(a) * cr * k)); }
   const mid = (bottom + top) / 2, hh = (top - bottom) / 2;
   return {
     clear: bottom - gmax,
@@ -1123,7 +1124,7 @@ export function maskRejects(t: Terrain, kind: VegKind, x: number, y: number, z: 
 const slopeAt = (t: Terrain, x: number, z: number) => {
   const e = 1.5;
   const dx = t.height(x + e, z) - t.height(x - e, z), dz = t.height(x, z + e) - t.height(x, z - e);
-  return Math.hypot(dx, dz) / (2 * e);
+  return dmath.hypot(dx, dz) / (2 * e);
 };
 
 /** direction (yaw) toward the nearest water, sampled on a ring — for leaning beach palms */
@@ -1131,7 +1132,7 @@ function seawardYaw(t: Terrain, x: number, z: number): number {
   let best = 0, bestH = 1e9;
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
-    const h = t.height(x + Math.cos(a) * 18, z + Math.sin(a) * 18) + 0.3 * t.height(x + Math.cos(a) * 36, z + Math.sin(a) * 36);
+    const h = t.height(x + dmath.cos(a) * 18, z + dmath.sin(a) * 18) + 0.3 * t.height(x + dmath.cos(a) * 36, z + dmath.sin(a) * 36);
     if (h < bestH) { bestH = h; best = a; }
   }
   // lean direction is +X of the model; three.js yaw rotates +X to (cos yaw, −sin yaw) → yaw = −a
@@ -1142,7 +1143,7 @@ function seawardYaw(t: Terrain, x: number, z: number): number {
 function trailDir(t: Terrain, x: number, z: number, r: number): number | null {
   for (let d = 2; d <= r; d += 1.5) for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2;
-    if (t.biomeAt(x + Math.cos(a) * d, z + Math.sin(a) * d) === Biome.Path) return a;
+    if (t.biomeAt(x + dmath.cos(a) * d, z + dmath.sin(a) * d) === Biome.Path) return a;
   }
   return null;
 }
@@ -1177,16 +1178,16 @@ function pathAt(env: ScatterEnv, x: number, z: number): number {
 /** composed vistas that must stay open (terrain's highlands crest: open grass, ≤ 2 trees in frame): a 300 m view
  * wedge (±42°) in front of the camera + 25 m around it */
 const VISTAS = ["biome-03-highlands"].map((id) => TERRAIN_CAMS[id]).filter(Boolean).map((c) => {
-  const dx = c.target[0] - c.pos[0], dz = c.target[2] - c.pos[2], L = Math.hypot(dx, dz) || 1;
+  const dx = c.target[0] - c.pos[0], dz = c.target[2] - c.pos[2], L = dmath.hypot(dx, dz) || 1;
   return { x: c.pos[0], z: c.pos[2], fx: dx / L, fz: dz / L };
 });
 function inVista(x: number, z: number): boolean {
   for (const v of VISTAS) {
-    const dx = x - v.x, dz = z - v.z, d = Math.hypot(dx, dz);
+    const dx = x - v.x, dz = z - v.z, d = dmath.hypot(dx, dz);
     if (d < 25) return true;
     // (±52°: the frame's horizontal half-angle is 49° — a copse crown cut by the left edge reads as a dark green blob
     // beside the hero palm)
-    if (d < 300 && (dx * v.fx + dz * v.fz) / d > Math.cos(52 * D2R)) return true;
+    if (d < 300 && (dx * v.fx + dz * v.fz) / d > dmath.cos(52 * D2R)) return true;
   }
   return false;
 }
@@ -1204,7 +1205,7 @@ function inLens(x: number, z: number, kind?: VegKind): boolean {
     if (d2 > l.cone * l.cone) continue;
     if (l.bearing) {
       // a bearing wedge (degrees from the view axis, − = left): a frame-edge keep-out, not the whole cone
-      const b = Math.atan2(dx * -l.fz + dz * l.fx, dx * l.fx + dz * l.fz) / D2R;
+      const b = dmath.atan2(dx * -l.fz + dz * l.fx, dx * l.fx + dz * l.fz) / D2R;
       if (b >= l.bearing[0] && b <= l.bearing[1]) return true;
       continue;
     }
@@ -1242,7 +1243,7 @@ const ROAD_OVERHANG = 0.5;
 function crownClearOfRoads(t: Terrain, kind: VegKind, variant: number, x: number, z: number, yaw: number, scale: number): boolean {
   const cf = crownFootprint(kind, variant);
   if (!cf) return true;
-  const c = Math.cos(yaw), sn = Math.sin(yaw);
+  const c = dmath.cos(yaw), sn = dmath.sin(yaw);
   const cx = x + (cf.x * c + cf.z * sn) * scale, cz = z + (-cf.x * sn + cf.z * c) * scale;
   return nearestRoad(t, cx, cz).d >= cf.r * scale - ROAD_OVERHANG;
 }
@@ -1287,12 +1288,12 @@ export function jungleGlades(t: Terrain, clearings: Clearing[]): Glade[] {
       let jungle = 0, steep = false;
       for (let q = 0; q < 12 && !steep; q++) {
         const a = (q / 12) * Math.PI * 2;
-        for (const k of [0.5, 1]) { const px = x + Math.cos(a) * r * k, pz = z + Math.sin(a) * r * k; if (slopeAt(t, px, pz) > G.slope) steep = true; }
-        if (t.biomeAt(x + Math.cos(a) * (r + 5), z + Math.sin(a) * (r + 5)) === Biome.Jungle) jungle++;
+        for (const k of [0.5, 1]) { const px = x + dmath.cos(a) * r * k, pz = z + dmath.sin(a) * r * k; if (slopeAt(t, px, pz) > G.slope) steep = true; }
+        if (t.biomeAt(x + dmath.cos(a) * (r + 5), z + dmath.sin(a) * (r + 5)) === Biome.Jungle) jungle++;
       }
       if (steep || jungle < 10 || slopeAt(t, x, z) > G.slope) continue;
       if (nearestRoad(t, x, z).d < G.trail || nearPad(x, z, G.pad) || nearBlocked(t, x, z, r + 4)) continue;
-      let poi = false; for (let q = 0; q < 8 && !poi; q++) { const a = (q / 8) * Math.PI * 2; if (inClearing(x + Math.cos(a) * (r + 10), z + Math.sin(a) * (r + 10), clearings)) poi = true; }
+      let poi = false; for (let q = 0; q < 8 && !poi; q++) { const a = (q / 8) * Math.PI * 2; if (inClearing(x + dmath.cos(a) * (r + 10), z + dmath.sin(a) * (r + 10), clearings)) poi = true; }
       if (poi || inClearing(x, z, clearings)) continue;
       const m = spawnMaskAt(t, x, z); if (m && m[0] > t.height(x, z) - 0.5) continue;
       best = { x, z, r };
@@ -1319,12 +1320,12 @@ function gladesNear(glades: Glade[], x: number, z: number): Glade[] | undefined 
 /** inside a glade (big plants keep out; canopy trunks keep r + 1 m back so the rim crowns roof the edge) */
 function inGlade(glades: Glade[] | undefined, x: number, z: number, extra: number): boolean {
   const near = glades && gladesNear(glades, x, z); if (!near) return false;
-  for (const g of near) { const r = g.r + extra; if ((x - g.x) ** 2 + (z - g.z) ** 2 < r * r) return true; }
+  for (const g of near) { const r = g.r + extra; if (dmath.pow(x - g.x, 2) + dmath.pow(z - g.z, 2) < r * r) return true; }
   return false;
 }
 function gladeRing(glades: Glade[] | undefined, x: number, z: number): boolean {
   const near = glades && gladesNear(glades, x, z); if (!near) return false;
-  for (const g of near) { const d = Math.hypot(x - g.x, z - g.z); if (d >= g.r && d < g.r + DESIGN.ring.w) return true; }
+  for (const g of near) { const d = dmath.hypot(x - g.x, z - g.z); if (d >= g.r && d < g.r + DESIGN.ring.w) return true; }
   return false;
 }
 function trunkGrid(out: VegInstance[]): Map<number, number[]> {
@@ -1339,7 +1340,7 @@ function nearestTrunk(m: Map<number, number[]>, x: number, z: number): number {
   let best = 1e9;
   for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) {
     const a = m.get((Math.floor(x / 8) + i + 4096) * 8192 + Math.floor(z / 8) + j + 4096); if (!a) continue;
-    for (let k = 0; k < a.length; k += 3) { const d = Math.hypot(a[k] - x, a[k + 1] - z) - a[k + 2] * 1.2; if (d < best) best = d; }
+    for (let k = 0; k < a.length; k += 3) { const d = dmath.hypot(a[k] - x, a[k + 1] - z) - a[k + 2] * 1.2; if (d < best) best = d; }
   }
   return best;
 }
@@ -1368,7 +1369,7 @@ function designKeep(t: Terrain, env: ScatterEnv, noise: Simplex2, rule: Rule, x:
     // clean edges: tall understory steps back from the trails and the drawn rivers
     if (rule.kind !== "monstera") {
       if (nearBlocked(t, x, z, D.edge.trail)) return 0;
-      for (let q = 0; q < 8; q++) { const a = q * 0.7853981633974483, px = x + Math.cos(a) * D.edge.river, pz = z + Math.sin(a) * D.edge.river; const m = spawnMaskAt(t, px, pz); if (m && m[0] > t.height(px, pz) + 0.05) return 0; }
+      for (let q = 0; q < 8; q++) { const a = q * 0.7853981633974483, px = x + dmath.cos(a) * D.edge.river, pz = z + dmath.sin(a) * D.edge.river; const m = spawnMaskAt(t, px, pz); if (m && m[0] > t.height(px, pz) + 0.05) return 0; }
     }
   }
   if (gladeRing(env.glades, x, z)) p = Math.max(p, 0.75) * D.ring.k;
@@ -1403,12 +1404,12 @@ function runRule(t: Terrain, rule: Rule, clearings: Clearing[], gaps: GapGrid, n
     } else if (nearBlocked(t, x, z, pm)) return false;
     if (rule.padMargin !== undefined && nearPad(x, z, rule.padMargin)) return false;
     if (rule.vistaFree && inVista(x, z)) return false;
-    if (!rule.detail && (inLens(x, z, rule.kind) || (env.keep && env.keep.some((k) => (x - k.x) ** 2 + (z - k.z) ** 2 < k.r * k.r)))) return false;
+    if (!rule.detail && (inLens(x, z, rule.kind) || (env.keep && env.keep.some((k) => dmath.pow(x - k.x, 2) + dmath.pow(z - k.z, 2) < k.r * k.r)))) return false;
     if (!rule.detail && env.cones && COLLIDABLE.has(rule.kind) && env.cones.some((c) => {
-      const dx = x - c.x, dz = z - c.z, d = Math.hypot(dx, dz);
+      const dx = x - c.x, dz = z - c.z, d = dmath.hypot(dx, dz);
       if (d <= c.d0 || d >= c.d1) return false;
       // crown cones widen by the angular radius of a big crown at that distance (no canopy may sit behind a hero crown)
-      const cs = c.crownR ? Math.cos(Math.min(Math.PI / 2, Math.acos(c.cos) + Math.atan(c.crownR / d))) : c.cos;
+      const cs = c.crownR ? dmath.cos(Math.min(Math.PI / 2, dmath.acos(c.cos) + dmath.atan(c.crownR / d))) : c.cos;
       return (dx * c.fx + dz * c.fz) / d > cs;
     })) return false;
     if (rule.badlandsMax !== undefined && t.biomeAt(x, z) === Biome.Cinder && badlandsAt(x, z) > rule.badlandsMax) return false;
@@ -1483,17 +1484,17 @@ function runRule(t: Terrain, rule: Rule, clearings: Clearing[], gaps: GapGrid, n
     // group: members spread across the lean direction, each leaning toward the group axis → crossing trunks
     const g = rule.group;
     const n = g.n[0] + Math.floor(rnd() * (g.n[1] - g.n[0] + 1));
-    const lx = Math.sin(yaw), lz = Math.cos(yaw);            // lateral (⟂ to the lean (cos yaw, −sin yaw))
+    const lx = dmath.sin(yaw), lz = dmath.cos(yaw);            // lateral (⟂ to the lean (cos yaw, −sin yaw))
     const placed: Array<[number, number]> = [];
     for (let m = 0; m < n; m++) {
       const side = m === 0 ? 0 : (m % 2 ? 1 : -1) * (g.r[0] + rnd() * (g.r[1] - g.r[0])) * (m > 2 ? 1.7 : 1);
       const back = (rnd() - 0.5) * 2.2;
-      const mx = x + lx * side + Math.cos(yaw) * back, mz = z + lz * side - Math.sin(yaw) * back;
+      const mx = x + lx * side + dmath.cos(yaw) * back, mz = z + lz * side - dmath.sin(yaw) * back;
       if (m > 0) {
         if ((rule.biome[t.biomeAt(mx, mz)] ?? 0) <= 0) continue;
         const my = t.height(mx, mz);
         if (!ok(mx, mz, my)) continue;
-        if (placed.some(([px, pz]) => (px - mx) ** 2 + (pz - mz) ** 2 < g.gap * g.gap)) continue;
+        if (placed.some(([px, pz]) => dmath.pow(px - mx, 2) + dmath.pow(pz - mz, 2) < g.gap * g.gap)) continue;
         if (gaps.tooClose(mx, mz, g.gap)) continue;
       }
       const my = t.height(mx, mz);
@@ -1524,9 +1525,9 @@ export interface Placed { kind: VegKind; variant: number; x: number; z: number; 
 export const JUNGLE_VIEW = { x: -429.2, z: 377.8, tx: -393.3, tz: 360.2 };
 /** camera-relative placement: f metres forward, r metres right; yaw given relative to the view direction */
 function camRel(c: { x: number; z: number; tx: number; tz: number }, list: Array<[VegKind, number, number, number, number, number, number?]>): Placed[] {
-  const L = Math.hypot(c.tx - c.x, c.tz - c.z), fx = (c.tx - c.x) / L, fz = (c.tz - c.z) / L;
+  const L = dmath.hypot(c.tx - c.x, c.tz - c.z), fx = (c.tx - c.x) / L, fz = (c.tz - c.z) / L;
   const rx = -fz, rz = fx;                                    // right = forward × up
-  const viewYaw = Math.atan2(-fz, fx);                        // yaw that points a model's +X along the view
+  const viewYaw = dmath.atan2(-fz, fx);                        // yaw that points a model's +X along the view
   return list.map(([kind, variant, f, r, yaw, scale, dy]) => ({ kind, variant, x: c.x + fx * f + rx * r, z: c.z + fz * f + rz * r, yaw: viewYaw + yaw, scale, dy }));
 }
 export const HAND_PLACED: Placed[] = camRel(JUNGLE_VIEW, [
@@ -1657,17 +1658,17 @@ export const BEACH_HUMMOCK: Array<[VegKind, number, number, number, number, numb
 HAND_PLACED.push(...camRel(BEACH_VIEW, BEACH_HUMMOCK));
 {
   // camera keep-outs (LENSES) of the dressed views (no scattered big plant in the composed foreground)
-  const L = Math.hypot(BEACH_VIEW.tx - BEACH_VIEW.x, BEACH_VIEW.tz - BEACH_VIEW.z);
-  LENSES.push({ x: BEACH_VIEW.x, z: BEACH_VIEW.z, fx: (BEACH_VIEW.tx - BEACH_VIEW.x) / L, fz: (BEACH_VIEW.tz - BEACH_VIEW.z) / L, r: 10, cone: 20, cos: Math.cos(52 * D2R) });
+  const L = dmath.hypot(BEACH_VIEW.tx - BEACH_VIEW.x, BEACH_VIEW.tz - BEACH_VIEW.z);
+  LENSES.push({ x: BEACH_VIEW.x, z: BEACH_VIEW.z, fx: (BEACH_VIEW.tx - BEACH_VIEW.x) / L, fz: (BEACH_VIEW.tz - BEACH_VIEW.z) / L, r: 10, cone: 20, cos: dmath.cos(52 * D2R) });
   // the highlands view's foreground stays low (the target art's bottom-right is banana / monstera leaves in front of the
   // open sea): no scattered tree, palm or bamboo within 32 m inside the frame (±52°)
   {
-    const V = HIGHLANDS_VIEW, VL = Math.hypot(V.tx - V.x, V.tz - V.z);
-    LENSES.push({ x: V.x, z: V.z, fx: (V.tx - V.x) / VL, fz: (V.tz - V.z) / VL, r: 6, cone: 32, cos: Math.cos(52 * D2R), kinds: ["jungle-tree", "palm", "palm-leaning", "bamboo", "mangrove"] });
+    const V = HIGHLANDS_VIEW, VL = dmath.hypot(V.tx - V.x, V.tz - V.z);
+    LENSES.push({ x: V.x, z: V.z, fx: (V.tx - V.x) / VL, fz: (V.tz - V.z) / VL, r: 6, cone: 32, cos: dmath.cos(52 * D2R), kinds: ["jungle-tree", "palm", "palm-leaning", "bamboo", "mangrove"] });
   }
   // no scattered palm stands on the frame's left edge within 140 m of the harbour camera (the POI's own headland
   // dressing stays)
-  const [hx, hz] = harborToWorld(969.5, 492.3), [htx, htz] = harborToWorld(858, 393.2), HL = Math.hypot(htx - hx, htz - hz);
+  const [hx, hz] = harborToWorld(969.5, 492.3), [htx, htz] = harborToWorld(858, 393.2), HL = dmath.hypot(htx - hx, htz - hz);
   LENSES.push({ x: hx, z: hz, fx: (htx - hx) / HL, fz: (htz - hz) / HL, r: 0, cone: 140, cos: 1, kinds: ["palm", "palm-leaning"], bearing: [-48, -24] });
 }
 /** camera-relative placement (exported for the client's live-camera fallback) */
@@ -1697,10 +1698,10 @@ export function scatterVegetation(t: Terrain, clearings: Clearing[], rules: Rule
       const a0 = rnd() * Math.PI * 2, sc = DESIGN.glade.heroScale[0] + rnd() * (DESIGN.glade.heroScale[1] - DESIGN.glade.heroScale[0]);
       for (let k = 0; k < 8; k++) {
         const a = a0 + k * 0.7853981633974483, d = g.r + 2.2 * sc;
-        const x = g.x + Math.cos(a) * d, z = g.z + Math.sin(a) * d;
+        const x = g.x + dmath.cos(a) * d, z = g.z + dmath.sin(a) * d;
         if (t.biomeAt(x, z) !== Biome.Jungle || nearBlocked(t, x, z, 4) || inClearing(x, z, clearings) || gaps.tooClose(x, z, 6)) continue;
         // the crown leans over the glade: the model's crown offset (+X lean) turned toward the glade centre
-        const yaw = Math.atan2(-(g.z - z), g.x - x) + (rnd() - 0.5) * 0.4;
+        const yaw = dmath.atan2(-(g.z - z), g.x - x) + (rnd() - 0.5) * 0.4;
         const y0 = t.height(x, z);
         if (inPoiVolume("jungle-tree", 2, x, y0, z, yaw, sc, false)) continue;
         const ys = seatPlant(t, "jungle-tree", 2, x, z, yaw, sc, false, ri);
@@ -1711,7 +1712,7 @@ export function scatterVegetation(t: Terrain, clearings: Clearing[], rules: Rule
         break;
       }
       if (rnd() < DESIGN.glade.logP) {
-        const a = rnd() * Math.PI * 2, d = g.r * (0.35 + rnd() * 0.3), x = g.x + Math.cos(a) * d, z = g.z + Math.sin(a) * d, yaw = rnd() * Math.PI * 2, sc = 0.95 + rnd() * 0.25;
+        const a = rnd() * Math.PI * 2, d = g.r * (0.35 + rnd() * 0.3), x = g.x + dmath.cos(a) * d, z = g.z + dmath.sin(a) * d, yaw = rnd() * Math.PI * 2, sc = 0.95 + rnd() * 0.25;
         if (slopeAt(t, x, z) < 0.3 && !inPoiVolume("log", 0, x, t.height(x, z), z, yaw, sc, false)) {
           const ys = seatPlant(t, "log", 0, x, z, yaw, sc, false, ri);
           if (ys !== null) { hand.push({ kind: "log", variant: Math.floor(rnd() * VARIANTS.log), x, y: ys, z, yaw, scale: sc }); gaps.add(x, z); }
@@ -1720,15 +1721,15 @@ export function scatterVegetation(t: Terrain, clearings: Clearing[], rules: Rule
     }
   }
   if (rules === BIG_RULES) for (const h of HERO_SLOTS) {
-    const L = Math.hypot(h.view.tx - h.view.x, h.view.tz - h.view.z), fx = (h.view.tx - h.view.x) / L, fz = (h.view.tz - h.view.z) / L;
-    const viewYaw = Math.atan2(-fz, fx);
+    const L = dmath.hypot(h.view.tx - h.view.x, h.view.tz - h.view.z), fx = (h.view.tx - h.view.x) / L, fz = (h.view.tz - h.view.z) / L;
+    const viewYaw = dmath.atan2(-fz, fx);
     // the view's camera (terrain-relative heights, as the terrain resolves TERRAIN_CAMS)
     const ey = Math.max(0, t.height(h.view.x, h.view.z)) + h.cam.eye;
     const ty = (h.cam.seaTarget ? Math.max(0, t.height(h.view.tx, h.view.tz)) : t.height(h.view.tx, h.view.tz)) + h.cam.target;
-    const F = [h.view.tx - h.view.x, ty - ey, h.view.tz - h.view.z]; { const l = Math.hypot(F[0], F[1], F[2]); F[0] /= l; F[1] /= l; F[2] /= l; }
-    const Rv = [-F[2], 0, F[0]]; { const l = Math.hypot(Rv[0], Rv[2]); Rv[0] /= l; Rv[2] /= l; }
+    const F = [h.view.tx - h.view.x, ty - ey, h.view.tz - h.view.z]; { const l = dmath.hypot3(F[0], F[1], F[2]); F[0] /= l; F[1] /= l; F[2] /= l; }
+    const Rv = [-F[2], 0, F[0]]; { const l = dmath.hypot(Rv[0], Rv[2]); Rv[0] /= l; Rv[2] /= l; }
     const U = [Rv[1] * F[2] - Rv[2] * F[1], Rv[2] * F[0] - Rv[0] * F[2], Rv[0] * F[1] - Rv[1] * F[0]];
-    const tanY = Math.tan((h.cam.fov / 2) * D2R), tanX = tanY * 16 / 9;
+    const tanY = dmath.tan((h.cam.fov / 2) * D2R), tanX = tanY * 16 / 9;
     const screen = (px: number, py: number, pz: number) => {
       const d = [px - h.view.x, py - ey, pz - h.view.z], zf = d[0] * F[0] + d[1] * F[1] + d[2] * F[2];
       return [0.5 + (d[0] * Rv[0] + d[2] * Rv[2]) / zf / tanX / 2, 0.5 - (d[0] * U[0] + d[1] * U[1] + d[2] * U[2]) / zf / tanY / 2];
@@ -1737,13 +1738,13 @@ export function scatterVegetation(t: Terrain, clearings: Clearing[], rules: Rule
     let done = false;
     for (const d of h.dists) {
       for (const aDeg of h.angles) {
-        const a = aDeg * D2R, f = Math.cos(a) * d, r = Math.sin(a) * d;
+        const a = aDeg * D2R, f = dmath.cos(a) * d, r = dmath.sin(a) * d;
         const x = h.view.x + fx * f - fz * r, z = h.view.z + fz * f + fx * r;
         const b = t.biomeAt(x, z);
         const why = (r: string) => { HERO_LOG?.push(`d ${d} a ${aDeg}: ${r}`); };
         if (b === Biome.Paved || b === Biome.DeepOcean || b === Biome.Reef || b === Biome.Lagoon || b === Biome.Path || b === Biome.Beach) { why(`biome ${b}`); continue; }
         if (nearBlocked(t, x, z, h.clear) || nearPad(x, z, 2) || inClearing(x, z, clearings) || slopeAt(t, x, z) > 0.7) { why(`blocked/pad/clearing/slope ${slopeAt(t, x, z).toFixed(2)}`); continue; }
-        const y = t.height(x, z), yaw = viewYaw + h.yaw, c = Math.cos(yaw), sn = Math.sin(yaw);
+        const y = t.height(x, z), yaw = viewYaw + h.yaw, c = dmath.cos(yaw), sn = dmath.sin(yaw);
         // solve the scale that puts the crown top at frameTop (the crown reaches ~1.6 m above the trunk tip)
         const top = (sc: number) => screen(x + (tip[0] * c + tip[2] * sn) * sc, y + tip[1] * sc + 1.6 * sc, z + (-tip[0] * sn + tip[2] * c) * sc);
         let lo = h.scaleRange[0], hi = h.scaleRange[1];
@@ -1758,12 +1759,12 @@ export function scatterVegetation(t: Terrain, clearings: Clearing[], rules: Rule
         if (env.rocks && (env.rocks.near(x, z, 8, y + 0.3) < 0.7 || buriedInRock(env.rocks, q))) { why(`rock ${env.rocks.near(x, z, 8, y + 0.3).toFixed(2)}`); continue; }
         HERO_LOG?.push(`d ${d} a ${aDeg}: OK scale ${sc.toFixed(2)} tx ${tx.toFixed(2)}`);
         hand.push(q); gaps.add(x, z); (env.keep ??= []).push({ x, z, r: h.keep });
-        const dx = x - h.view.x, dz = z - h.view.z, dd = Math.hypot(dx, dz);
-        (env.cones ??= []).push({ x: h.view.x, z: h.view.z, fx: dx / dd, fz: dz / dd, cos: Math.cos(4.5 * D2R), d0: dd + 3, d1: dd + 160 });
+        const dx = x - h.view.x, dz = z - h.view.z, dd = dmath.hypot(dx, dz);
+        (env.cones ??= []).push({ x: h.view.x, z: h.view.z, fx: dx / dd, fz: dz / dd, cos: dmath.cos(4.5 * D2R), d0: dd + 3, d1: dd + 160 });
         // (no broadleaf canopy behind the hero palm's crown) ±10° around the CROWN as
         // seen from the camera, widened by a big crown's angular radius — the crown stands against the sky
-        const tx0 = x + (tip[0] * c + tip[2] * sn) * sc - h.view.x, tz0 = z + (-tip[0] * sn + tip[2] * c) * sc - h.view.z, td = Math.hypot(tx0, tz0);
-        env.cones.push({ x: h.view.x, z: h.view.z, fx: tx0 / td, fz: tz0 / td, cos: Math.cos(10 * D2R), d0: Math.max(4, td - 6), d1: td + 220, crownR: 9 });
+        const tx0 = x + (tip[0] * c + tip[2] * sn) * sc - h.view.x, tz0 = z + (-tip[0] * sn + tip[2] * c) * sc - h.view.z, td = dmath.hypot(tx0, tz0);
+        env.cones.push({ x: h.view.x, z: h.view.z, fx: tx0 / td, fz: tz0 / td, cos: dmath.cos(10 * D2R), d0: Math.max(4, td - 6), d1: td + 220, crownR: 9 });
         done = true; break;
       }
       if (done) break;
@@ -1887,7 +1888,7 @@ function anchoredVines(t: Terrain, clearings: Clearing[], plants: VegInstance[])
     const f = crownFootprint(p.kind, p.variant), band = crownBand(p.kind, p.variant);
     if (!f || !band) continue;
     if (!deepJungleAt(t, p.x, p.z, nearestRoad(t, p.x, p.z).d)) continue;
-    const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+    const c = dmath.cos(p.yaw), s = dmath.sin(p.yaw);
     crowns.push({ x: p.x + (f.x * c + f.z * s) * p.scale, z: p.z + (-f.x * s + f.z * c) * p.scale, r: f.r * p.scale, lo: p.y + band[0] * p.scale, hi: p.y + band[1] * p.scale, y: p.y });
   }
   const G = 16, grid = new Map<number, number[]>();
@@ -1899,7 +1900,7 @@ function anchoredVines(t: Terrain, clearings: Clearing[], plants: VegInstance[])
     const A = crowns[i], gx = Math.floor(A.x / G), gz = Math.floor(A.z / G);
     for (let u = -1; u <= 1; u++) for (let w = -1; w <= 1; w++) for (const j of grid.get(gk(gx + u, gz + w)) ?? []) {
       if (j <= i) continue;
-      const B = crowns[j], dx = B.x - A.x, dz = B.z - A.z, d = Math.hypot(dx, dz);
+      const B = crowns[j], dx = B.x - A.x, dz = B.z - A.z, d = dmath.hypot(dx, dz);
       if (d < 6) continue;
       for (let v = 0; v < VINE_GEO.length; v++) {
         const V = VINE_GEO[v];
@@ -1919,7 +1920,7 @@ function anchoredVines(t: Terrain, clearings: Clearing[], plants: VegInstance[])
         const wm = spawnMaskAt(t, mx, mz); if (wm && wm[0] > t.height(mx, mz) - 0.5) continue;   // not over a drawn river / pool
         if (nearBlocked(t, mx, mz, 6) || nearPad(mx, mz, 6) || inClearing(mx, mz, clearings) || gaps.tooClose(mx, mz, 24)) continue;
         if (t.biomeAt(mx, mz) !== Biome.Jungle) continue;
-        out.push({ kind: "vine", variant: v, x: mx, y, z: mz, yaw: Math.atan2(-uz, ux), scale: sc });
+        out.push({ kind: "vine", variant: v, x: mx, y, z: mz, yaw: dmath.atan2(-uz, ux), scale: sc });
         gaps.add(mx, mz);
         break;
       }
@@ -1938,7 +1939,7 @@ function palmLitter(t: Terrain, clearings: Clearing[], plants: VegInstance[], ro
   for (const p of plants) {
     if (p.kind !== "palm" && p.kind !== "palm-leaning") continue;
     const s = palmShape(p.variant % 3, p.kind === "palm-leaning"), tip = s.pts[s.pts.length - 1];
-    const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+    const c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw);
     const cx = p.x + (tip[0] * c + tip[2] * sn) * p.scale, cz = p.z + (-tip[0] * sn + tip[2] * c) * p.scale;
     const b = t.biomeAt(cx, cz);
     const sandy = b === Biome.Beach || t.biomeAt(p.x, p.z) === Biome.Beach;
@@ -1947,7 +1948,7 @@ function palmLitter(t: Terrain, clearings: Clearing[], plants: VegInstance[], ro
     const n = sandy ? Math.floor(rnd() * 3.2) : rnd() < 0.3 ? 1 : 0;
     for (let k = 0; k < n; k++) {
       const a = rnd() * Math.PI * 2, d = 0.6 + rnd() * 2.6;
-      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d, y = t.height(x, z);
+      const x = cx + dmath.cos(a) * d, z = cz + dmath.sin(a) * d, y = t.height(x, z);
       const bb = t.biomeAt(x, z);
       if (y < 0.45 || bb === Biome.Path || bb === Biome.Paved || bb === Biome.DeepOcean || bb === Biome.Reef || bb === Biome.Lagoon) continue;
       if (nearPad(x, z, 1) || inClearing(x, z, clearings) || slopeAt(t, x, z) > 0.5) continue;
@@ -1982,7 +1983,7 @@ function rockCapPlants(rocks: RockIndex, clearings: Clearing[], t?: Terrain): Ve
     for (let k = 0; k < n; k++) {
       const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * reach;
       const kind = KINDS[Math.floor(rnd() * (k === 0 ? 2 : KINDS.length))];
-      const q: VegInstance = { kind, variant: Math.floor(rnd() * VARIANTS[kind]), x: r.x + Math.cos(a) * d, y: top, z: r.z + Math.sin(a) * d, yaw: rnd() * Math.PI * 2, scale: 0.7 + rnd() * 0.45 };
+      const q: VegInstance = { kind, variant: Math.floor(rnd() * VARIANTS[kind]), x: r.x + dmath.cos(a) * d, y: top, z: r.z + dmath.sin(a) * d, yaw: rnd() * Math.PI * 2, scale: 0.7 + rnd() * 0.45 };
       if (inPoiVolume(q.kind, q.variant, q.x, q.y, q.z, q.yaw, q.scale, false)) continue;
       // only on a real, open, supported cap: not inside the terrain (a rock embedded in a cliff), no rock
       // above it, the footprint fully on the rock (no plant hanging off the lip)
@@ -1993,7 +1994,7 @@ function rockCapPlants(rocks: RockIndex, clearings: Clearing[], t?: Terrain): Ve
       if (t && maskRejects(t, q.kind, q.x, q.y, q.z, 0, 6)) continue;
       const fr = (SEAT[kind]?.[0] ?? 0.4) * q.scale * 0.8;
       let onCap = true;
-      for (let k = 0; k < 4 && onCap; k++) { const b = k * 1.5707963 + 0.4; if (!R.hits(q.x + Math.cos(b) * fr, top - 0.35, top - 0.05, q.z + Math.sin(b) * fr, 0)) onCap = false; }
+      for (let k = 0; k < 4 && onCap; k++) { const b = k * 1.5707963 + 0.4; if (!R.hits(q.x + dmath.cos(b) * fr, top - 0.35, top - 0.05, q.z + dmath.sin(b) * fr, 0)) onCap = false; }
       if (onCap) out.push(q);
     }
   }
@@ -2005,7 +2006,7 @@ function buriedInRock(rocks: RockIndex, p: VegInstance): boolean {
   if (rocks.near(p.x, p.z, 6, p.y + 0.3) < 0.5) return true;
   if (p.kind === "palm" || p.kind === "palm-leaning") {
     const s = palmShape(p.variant, p.kind === "palm-leaning");
-    const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+    const c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw);
     for (const [mx, my, mz] of s.pts) {
       if (my < 0.5 || my > 5.5) continue;
       const wx = p.x + (mx * c + mz * sn) * p.scale, wz = p.z + (-mx * sn + mz * c) * p.scale;
@@ -2032,7 +2033,7 @@ export function detailCell(t: Terrain, clearings: Clearing[], cx: number, cz: nu
 // yaw sign convention of the consumer.
 
 const rotY = (x: number, z: number, yaw: number): [number, number] => {
-  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const c = dmath.cos(yaw), s = dmath.sin(yaw);
   return [x * c + z * s, -x * s + z * c];                  // three.js rotation about +Y
 };
 
@@ -2043,7 +2044,7 @@ function trunkDisks(samples: Array<[number, number, number, number]>, out: Box[]
   let i0 = 0;
   for (let i = 1; i < samples.length; i++) {
     const [x0, y0, z0, r0] = samples[i0], [x, y, z, r] = samples[i];
-    if (Math.hypot(x - x0, z - z0) > (y0 < 3.5 ? 0.12 : 0.25) || Math.abs(r - r0) > 0.06 || y - y0 > 2.0 || i === samples.length - 1) {
+    if (dmath.hypot(x - x0, z - z0) > (y0 < 3.5 ? 0.12 : 0.25) || Math.abs(r - r0) > 0.06 || y - y0 > 2.0 || i === samples.length - 1) {
       let rm = 0; for (let q = i0; q <= i; q++) rm = Math.max(rm, samples[q][3]);
       diskBoxes(out, [(x0 + x) / 2, (y0 + y) / 2, (z0 + z) / 2], rm, Math.max(0.05, (y - y0) / 2), k, surf, 0.25);
       i0 = i;
@@ -2057,7 +2058,7 @@ function samplePolyline(pts: Array<[number, number, number]>, ground: number, st
   let d = -ground;
   for (let i = 1; i < pts.length; i++) {
     const [ax, ay, az] = pts[i - 1], [bx, by, bz] = pts[i];
-    const L = Math.hypot(bx - ax, by - ay, bz - az);
+    const L = dmath.hypot3(bx - ax, by - ay, bz - az);
     for (let s = 0; s < L; s += step) {
       const f = s / L, dd = d + s;
       if (dd < 0) continue;
@@ -2082,7 +2083,7 @@ function treeFoot(variant: number): Array<[number, number, number]> {
     const s = jungleTreeShape(variant % 5), out: Array<[number, number, number]> = [];
     for (const fl of s.flanges) for (const st of rootStations(s, fl, 6)) out.push([st.x, st.z, 0.35]);
     const [cx, cz] = treeCentreAt(s, -0.8), r = treeRadius(s, -0.8);
-    for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; out.push([cx + Math.cos(a) * r, cz - Math.sin(a) * r, 0.8]); }
+    for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; out.push([cx + dmath.cos(a) * r, cz - dmath.sin(a) * r, 0.8]); }
     return out;
   });
 }
@@ -2120,7 +2121,7 @@ export function vegTrunkColliders(instances: VegInstance[]): Box[] {
         const mb = cached(`treeB:${p.variant % 5}`, () => jungleTreeBoxes(s));
         for (const b of mb) {
           const [wx, wz] = rotY(b.c[0], b.c[2], p.yaw), [ax, az] = rotY(b.ux, b.uz, p.yaw);
-          out.push({ c: [p.x + wx * S, p.y + b.c[1] * S, p.z + wz * S], h: [b.h[0] * S, b.h[1] * S, b.h[2] * S], yaw: Math.atan2(az, ax), surf: "wood", round: [p.x, p.z] });
+          out.push({ c: [p.x + wx * S, p.y + b.c[1] * S, p.z + wz * S], h: [b.h[0] * S, b.h[1] * S, b.h[2] * S], yaw: dmath.atan2(az, ax), surf: "wood", round: [p.x, p.z] });
         }
         // the pocket between neighbouring blades is filled wherever it is narrower than a kong can turn in (< 1.7 m
         // between the blade boxes): the kong stands at the pocket's mouth instead of in it. noShoot: bullets still
@@ -2133,9 +2134,9 @@ export function vegTrunkColliders(instances: VegInstance[]): Box[] {
             // could not climb out)
             for (const [f, maxGap] of [[0.12, 2.6], [0.33, 1.7]] as const) {
               const qa = flangeAt(s, A, f), qb = flangeAt(s, B, f);
-              const pa = [Math.cos(qa.a) * qa.reach + Math.sin(qa.a) * qa.lat, -Math.sin(qa.a) * qa.reach + Math.cos(qa.a) * qa.lat];
-              const pb = [Math.cos(qb.a) * qb.reach + Math.sin(qb.a) * qb.lat, -Math.sin(qb.a) * qb.reach + Math.cos(qb.a) * qb.lat];
-              const gap = Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) * S;
+              const pa = [dmath.cos(qa.a) * qa.reach + dmath.sin(qa.a) * qa.lat, -dmath.sin(qa.a) * qa.reach + dmath.cos(qa.a) * qa.lat];
+              const pb = [dmath.cos(qb.a) * qb.reach + dmath.sin(qb.a) * qb.lat, -dmath.sin(qb.a) * qb.reach + dmath.cos(qb.a) * qb.lat];
+              const gap = dmath.hypot(pa[0] - pb[0], pa[1] - pb[1]) * S;
               if (gap > maxGap || gap < 0.2) continue;
               const [wx, wz] = rotY((pa[0] + pb[0]) / 2 * 0.92, (pa[1] + pb[1]) / 2 * 0.92, p.yaw);
               const hh = Math.min(qa.h, qb.h) * S * 0.9, half = gap * 0.4;
@@ -2152,7 +2153,7 @@ export function vegTrunkColliders(instances: VegInstance[]): Box[] {
         const mb = cached(`mangB:${p.variant % 3}`, () => mangroveBoxes(p.variant % 3));
         for (const b of mb) {
           const [wx, wz] = rotY(b.c[0], b.c[2], p.yaw), [ax, az] = rotY(b.ux, b.uz, p.yaw);
-          out.push({ c: [p.x + wx * S, p.y + b.c[1] * S, p.z + wz * S], h: [b.h[0] * S, b.h[1] * S, b.h[2] * S], yaw: Math.atan2(az, ax), surf: "wood", noWalk: b.root || undefined });
+          out.push({ c: [p.x + wx * S, p.y + b.c[1] * S, p.z + wz * S], h: [b.h[0] * S, b.h[1] * S, b.h[2] * S], yaw: dmath.atan2(az, ax), surf: "wood", noWalk: b.root || undefined });
         }
         out.push({ c: [p.x, p.y + 0.3 * S, p.z], h: [1.1 * S, 0.9 * S, 1.1 * S], surf: "wood", noShoot: true });
         break;
@@ -2162,7 +2163,7 @@ export function vegTrunkColliders(instances: VegInstance[]): Box[] {
         const mb = cached(`bambooB:${p.variant % 2}`, () => bambooBoxes(p.variant % 2));
         for (const b of mb) {
           const [wx, wz] = rotY(b.c[0], b.c[2], p.yaw), [ax, az] = rotY(b.ux, b.uz, p.yaw);
-          out.push({ c: [p.x + wx * S, p.y + b.c[1] * S, p.z + wz * S], h: [b.h[0] * S, b.h[1] * S, b.h[2] * S], yaw: Math.atan2(az, ax), surf: "wood", round: [p.x, p.z] });
+          out.push({ c: [p.x + wx * S, p.y + b.c[1] * S, p.z + wz * S], h: [b.h[0] * S, b.h[1] * S, b.h[2] * S], yaw: dmath.atan2(az, ax), surf: "wood", round: [p.x, p.z] });
         }
         // a walk-only core inside the cane ring (noShoot: bullets still pass between the canes) — no way in, no trap
         diskBoxes(out, [p.x, p.y + 2.1 * S, p.z], BAMBOO.r * 0.78 * S, 2.3 * S, 2, "wood", 0.5);

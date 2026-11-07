@@ -14,6 +14,7 @@ import { TerrainLOD } from "./lod";
 import { buildRocks, setRockGround } from "./rocks";
 import { buildSteam } from "./steam";
 import { flag } from "../../flags";
+import { bake } from "../../engine/res/restore";
 
 const V = (pos: CamSpec["pos"], target: CamSpec["target"], o: Partial<CamSpec> = {}): CamSpec => ({ pos, target, fov: 50, ...o });
 
@@ -57,7 +58,7 @@ const mod: WorldModule = {
     const lava: LavaLine[] = lavaChannels(t);
     const ga = dj && dj.hash === t.hash ? dj : computeTerrainGpuArrays(t, lava);
     releaseTerrainJobs();
-    const gpu = gpuDataFromArrays(ga);
+    const gpu = gpuDataFromArrays(ga, () => computeTerrainGpuArrays(t, lava));
     ctx.shared.set("terrainSteps", stepSplatFrom(ga));
     mark("gpuData");
     await ctx.yield();
@@ -138,22 +139,27 @@ function bakeFarAlbedo(ctx: import("../../engine/engine").WorldCtx, lod: Terrain
   rt.texture.name = "terrain-far-albedo";
   const cam = new THREE.OrthographicCamera(-H, H, H, -H, 1, 2000);
   cam.position.set(0, 1200, 0); cam.up.set(0, 0, -1); cam.lookAt(0, 0, 0); cam.updateMatrixWorld(true);
-  const scene = new THREE.Scene();
-  const parent = lod.group.parent;
-  scene.add(lod.group);
-  const maxL = Math.max(...lod.nodes.map((n) => n.level));
-  const restore = lod.showLevel(maxL, lod.material);   // full 2 m detail everywhere
-  const r = ctx.renderer, shadows = r.shadowMap.enabled, prevRT = r.getRenderTarget();
-  uniforms.uBakeMode.value = 1;
-  r.shadowMap.enabled = false;
-  r.setRenderTarget(rt); r.setClearColor(0x102838, 1); r.clear();
-  r.render(scene, cam);
-  r.setRenderTarget(prevRT);
-  r.shadowMap.enabled = shadows;
-  uniforms.uBakeMode.value = 0;
-  parent?.add(lod.group);
-  restore();
-  lod.update(ctx.camera, ctx.renderer.getDrawingBufferSize(new THREE.Vector2()).y || 1440, true);
+  bake(() => {
+    const scene = new THREE.Scene();
+    const parent = lod.group.parent;
+    scene.add(lod.group);
+    const maxL = Math.max(...lod.nodes.map((n) => n.level));
+    const restore = lod.showLevel(maxL, lod.material);   // full 2 m detail everywhere
+    const r = ctx.renderer, shadows = r.shadowMap.enabled, prevRT = r.getRenderTarget();
+    const far = uniforms.tFar.value;
+    uniforms.tFar.value = null;
+    uniforms.uBakeMode.value = 1;
+    r.shadowMap.enabled = false;
+    r.setRenderTarget(rt); r.setClearColor(0x102838, 1); r.clear();
+    r.render(scene, cam);
+    r.setRenderTarget(prevRT);
+    r.shadowMap.enabled = shadows;
+    uniforms.uBakeMode.value = 0;
+    uniforms.tFar.value = far;
+    parent?.add(lod.group);
+    restore();
+    lod.update(ctx.camera, ctx.renderer.getDrawingBufferSize(new THREE.Vector2()).y || 1440, true);
+  });
   uniforms.tFar.value = rt.texture;
   ctx.shared.set("terrainAlbedoMap", rt.texture);
 }

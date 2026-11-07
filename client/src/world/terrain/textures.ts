@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { assetUrl } from "../../engine/assets";
 import { releaseAfterUpload } from "../../engine/texture-release";
+import { contextEpoch } from "../../engine/res/restore";
 
 import { LAYERS } from "./layers";
 export { LAYERS, LAYER_COUNT, layerIndex, type Layer } from "./layers";
@@ -18,6 +19,17 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 export async function loadLayerArrays(maxAniso: number): Promise<LayerArrays> {
+  const { alb, nor } = await composeLayers();
+  return layerArraysFrom(alb, nor, maxAniso);
+}
+
+let composed: { epoch: number; job: Promise<{ alb: Uint8Array; nor: Uint8Array }> } | null = null;
+function composedFor(epoch: number) {
+  if (composed?.epoch !== epoch) composed = { epoch, job: composeLayers() };
+  return composed.job;
+}
+
+async function composeLayers(): Promise<{ alb: Uint8Array; nor: Uint8Array }> {
   const n = LAYERS.length, px = SIZE * SIZE * 4;
   const alb = new Uint8Array(px * n), nor = new Uint8Array(px * n);
   const cv = document.createElement("canvas"); cv.width = SIZE; cv.height = SIZE;
@@ -37,7 +49,7 @@ export async function loadLayerArrays(maxAniso: number): Promise<LayerArrays> {
     const nd = read(nm); const on = nor.subarray(li * px, (li + 1) * px);
     for (let i = 0; i < px; i += 4) { on[i] = nd[i]; on[i + 1] = nd[i + 1]; on[i + 2] = nd[i + 2]; on[i + 3] = ad[i + 1]; } // a = roughness
   });
-  return layerArraysFrom(alb, nor, maxAniso);
+  return { alb, nor };
 }
 /** layer URLs [diff, nor, arm] + AO weights (the worker composes the same arrays off the main thread) */
 export function layerSources(): { urls: string[][]; ao: number[]; size: number } {
@@ -46,7 +58,7 @@ export function layerSources(): { urls: string[][]; ao: number[]; size: number }
 /** the two array textures from composed RGBA arrays (albedo·AO + height, normal + roughness) */
 export function layerArraysFrom(alb: Uint8Array | null, nor: Uint8Array | null, maxAniso: number): LayerArrays {
   const n = LAYERS.length;
-  const mk = (data: Uint8Array | null, srgb: boolean) => {
+  const mk = (data: Uint8Array | null, srgb: boolean, key: "alb" | "nor") => {
     const t = new THREE.DataArrayTexture(data, SIZE, SIZE, n);
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -54,9 +66,13 @@ export function layerArraysFrom(alb: Uint8Array | null, nor: Uint8Array | null, 
     // (perf: 4, not 8 — measured −0.1 ms at the volcanic view; beyond ~280 m the baked far albedo takes over anyway)
     t.generateMipmaps = true; t.anisotropy = Math.min(4, maxAniso);
     if (data) t.needsUpdate = true;
-    return releaseAfterUpload(t);
+    return releaseAfterUpload(t, async () => {
+      const data = (await composedFor(contextEpoch()))[key];
+      if (key === "nor") composed = null;
+      return { data, width: SIZE, height: SIZE, depth: n };
+    });
   };
-  return { albedo: mk(alb, true), normal: mk(nor, false) };
+  return { albedo: mk(alb, true, "alb"), normal: mk(nor, false, "nor") };
 }
 /** hand the composed layers to textures made before they arrived (the rock materials already hold them) */
 export function fillLayerArrays(a: LayerArrays, alb: Uint8Array, nor: Uint8Array) {

@@ -14,6 +14,7 @@
 //     node --import tsx client/src/world/pois/lobby-islet/bake.mts      (rewrites the GY block in place)
 // The pad centre (0, 1020) (frame lx≈-27, d≈90) is kept clear: loot / gear / the parked plane are staged there.
 import type { Box, Surface } from "../world/colliders";
+import * as dmath from "../sim/dmath";
 
 /** frame origin (world x/z) and heading: yaw rotates +X (frame right) about +Y, like Object3D.rotation.y */
 export const FRAME = { x: -6.96, z: 924.1, yaw: (168 * Math.PI) / 180 };
@@ -23,7 +24,7 @@ export const TP_SET = { kong: [42.63, 1043.2] as [number, number], heading: -12 
 /** the char-02-lobby-island camera in the frame: position (lx, d), height (absolute), pitch down (rad), vertical fov (deg) */
 export const CAM = { lx: 0, d: -3, y: 3.4, pitch: (3.5 * Math.PI) / 180, fov: 58 };
 
-const cy = Math.cos(FRAME.yaw), sy = Math.sin(FRAME.yaw);
+const cy = dmath.cos(FRAME.yaw), sy = dmath.sin(FRAME.yaw);
 /** lobby frame → world [x, z] */
 export function toWorld(lx: number, d: number): [number, number] {
   return [FRAME.x + lx * cy - d * sy, FRAME.z - lx * sy - d * cy];
@@ -59,7 +60,7 @@ const A = (deg: number) => (deg * Math.PI) / 180;
 
 /** frame position of an item-local point (x = item right, z = item FRONT = client +Z, toward the camera at a=0) */
 export function itemLocal(it: { lx: number; d: number; a?: number }, x: number, z: number): [number, number] {
-  const a = it.a ?? 0, ca = Math.cos(a), sa = Math.sin(a);
+  const a = it.a ?? 0, ca = dmath.cos(a), sa = dmath.sin(a);
   return [it.lx + x * ca + z * sa, it.d + x * sa - z * ca];
 }
 
@@ -85,8 +86,8 @@ const PLATFORM: LobbyItem = { kind: "dock", id: "platform", lx: 6.8, d: 6.6, a: 
 const PLANE: LobbyItem = { kind: "plane", id: "plane", lx: 12.5, d: 33.5, a: A(14) }; // nose along item -X (left)
 /** the runway centre line runs through the parked plane (at the runway's own heading, −14°) */
 const RUNWAY: LobbyItem = (() => {
-  const a = A(-14), t = (-8 - PLANE.lx) / Math.cos(a);
-  return { kind: "runway", id: "runway", lx: -8, d: PLANE.d + t * Math.sin(a) + 1.0, a, l: 66, w: 16 };
+  const a = A(-14), t = (-8 - PLANE.lx) / dmath.cos(a);
+  return { kind: "runway", id: "runway", lx: -8, d: PLANE.d + t * dmath.sin(a) + 1.0, a, l: 66, w: 16 };
 })();
 
 /** stools stand on the tiki porch, in front of the counter */
@@ -191,7 +192,7 @@ export function footprint(it: LobbyItem): { pts: Array<[number, number]>; mode: 
     }
     case "tramp": {
       const r = (it.s ?? 1.8) * 0.95, pts: Array<[number, number]> = [[it.lx, it.d]];
-      for (let i = 0; i < 6; i++) { const t = (i / 6) * Math.PI * 2; pts.push([it.lx + Math.cos(t) * r, it.d + Math.sin(t) * r]); }
+      for (let i = 0; i < 6; i++) { const t = (i / 6) * Math.PI * 2; pts.push([it.lx + dmath.cos(t) * r, it.d + dmath.sin(t) * r]); }
       return { pts, mode: "mean" };
     }
     case "gallows": return { pts: [[it.lx, it.d], itemLocal(it, DIM.gallows.beam, 0)], mode: "mean" };
@@ -388,7 +389,7 @@ export const clearings: Array<{ x: number; z: number; r: number } | { x: number;
   // plants): keep the scatter off the kong, out of the camera → kong corridor and out of the sightline to the hamlet
   const nBefore = out.length;
   {
-    const [kx0, kz0] = TP_SET.kong, h = TP_SET.heading, f = [Math.cos(h), Math.sin(h)], r = [-Math.sin(h), Math.cos(h)];
+    const [kx0, kz0] = TP_SET.kong, h = TP_SET.heading, f = [dmath.cos(h), dmath.sin(h)], r = [-dmath.sin(h), dmath.cos(h)];
     const at = (fw: number, rt: number): [number, number] => [kx0 + f[0] * fw + r[0] * rt, kz0 + f[1] * fw + r[1] * rt];
     const rectF = (fw: number, rt: number, hx: number, hz: number, turn = 0) => { const [x, z] = at(fw, rt); out.push({ x, z, hx, hz, yaw: h + turn }); };
     rectF(-0.9, 1.0, 3.2, 3.5);                                  // kong footprint + the camera → kong corridor + the right edge
@@ -405,8 +406,8 @@ export const clearings: Array<{ x: number; z: number; r: number } | { x: number;
 /** point-in-clearing test for the char-05 set's clearings (the lobby's own dressing honours them too) */
 export function inTpClearing(x: number, z: number) {
   for (const c of TP_CLEAR) {
-    if ("r" in c) { if ((x - c.x) ** 2 + (z - c.z) ** 2 < c.r * c.r) return true; continue; }
-    const cy = Math.cos(c.yaw ?? 0), sy = Math.sin(c.yaw ?? 0), lx = (x - c.x) * cy + (z - c.z) * sy, lz = -(x - c.x) * sy + (z - c.z) * cy;
+    if ("r" in c) { if (dmath.pow(x - c.x, 2) + dmath.pow(z - c.z, 2) < c.r * c.r) return true; continue; }
+    const cy = dmath.cos(c.yaw ?? 0), sy = dmath.sin(c.yaw ?? 0), lx = (x - c.x) * cy + (z - c.z) * sy, lz = -(x - c.x) * sy + (z - c.z) * cy;
     if (Math.abs(lx) < c.hx && Math.abs(lz) < c.hz) return true;
   }
   return false;

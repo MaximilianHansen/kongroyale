@@ -89,14 +89,14 @@ export class DetailCull {
   private items: Item[] = [];
   /** every instanced mesh below a root (frustumCulled or not): one with count 0 still costs a full draw setup */
   private inst: Array<{ o: THREE.InstancedMesh; off: boolean; mask: number }> = [];
-  private roots: THREE.Object3D[] = [];
-  private stale = new Set<THREE.Object3D>();
+  readonly roots: THREE.Object3D[] = [];
+  readonly stale = new Set<THREE.Object3D>();
   /** the frame a root's structure last changed: a root is re-collected once it has been quiet for
    *  SETTLE frames — a module that builds lazily (the Murk's far crowns: two cells a frame) used to trigger a
    *  re-collect every frame, cross the churn limit below and lose its culling AND its visibility fades for good */
-  private touchedAt = new Map<THREE.Object3D, number>();
+  readonly touchedAt = new Map<THREE.Object3D, number>();
   /** …but a root that never goes quiet is still re-collected every 120 frames (then the churn limit applies) */
-  private staleSince = new Map<THREE.Object3D, number>();
+  readonly staleSince = new Map<THREE.Object3D, number>();
   private frame = 0;
   culled = 0;
   /** scale fades started (each one is a prop visibly shrinking away
@@ -127,8 +127,15 @@ export class DetailCull {
     for (let p: THREE.Object3D | null = parent; p; p = p.parent) if ((p as unknown as Record<string, unknown>)[ROOT]) { this.stale.add(p); this.touchedAt.set(p, this.frame); if (!this.staleSince.has(p)) this.staleSince.set(p, this.frame); return; }
   }
 
+
+
   /** a root whose structure churns (> 12 re-collects in 240 frames) is left alone for good */
   private release(root: THREE.Object3D) {
+    this.drop(root);
+    this.released++;
+  }
+
+  drop(root: THREE.Object3D) {
     for (const it of this.items) if ((it.culled || it.dir !== 0) && isBelow(it.o, root)) this.uncull(it);
     this.items = this.items.filter((it) => !isBelow(it.o, root));
     for (const x of this.inst) if (x.off && isBelow(x.o, root)) x.o.layers.mask |= x.mask;
@@ -136,7 +143,6 @@ export class DetailCull {
     this.roots.splice(this.roots.indexOf(root), 1);
     delete (root as unknown as Record<string, unknown>)[ROOT];
     this.unwrapVis(root); this.reconcile();
-    this.released++;
   }
   released = 0;
 
@@ -227,11 +233,11 @@ export class DetailCull {
     let c = this.byObj.get(o)?.lc;
     if (!c) { if (!m.geometry) return; if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere(); c = m.geometry.boundingSphere?.center; if (!c) return; }
     const saved = (o.__krCullSaved = new THREE.Matrix4()), lc = c;
-    // a module's own per-object hooks keep running (chained) and come back unchanged after the fade
+    // the object's hooks keep running (chained), inherited ones too (a BatchedMesh rebuilds its per-camera draw list in
+    // onBeforeRender / onBeforeShadow); its own ones come back unchanged after the fade
     const own = (k: string) => (Object.prototype.hasOwnProperty.call(o, k) ? (o as unknown as Record<string, unknown>)[k] : undefined);
-    const pb = own("onBeforeRender") as THREE.Object3D["onBeforeRender"] | undefined, pa = own("onAfterRender") as THREE.Object3D["onAfterRender"] | undefined;
-    const ps = own("onBeforeShadow") as THREE.Object3D["onBeforeShadow"] | undefined;
-    o.__krCullPrev = [pb, pa, ps] as unknown as [unknown, unknown];
+    o.__krCullPrev = [own("onBeforeRender"), own("onAfterRender"), own("onBeforeShadow")] as unknown as [unknown, unknown];
+    const pb = o.onBeforeRender, pa = o.onAfterRender, ps = o.onBeforeShadow;
     const scaled = (out: THREE.Matrix4) => {
       const f = Math.max(1e-3, this.factorOf(o)), e = out.elements, s = o.matrixWorld.elements;
       // M' = M · T(c) · S(f) · T(−c): columns scaled, translation moved so the bounding centre stays put
@@ -242,15 +248,15 @@ export class DetailCull {
     };
     const tmp = new THREE.Matrix4();
     o.onBeforeRender = (...args: Parameters<THREE.Object3D["onBeforeRender"]>) => {
-      pb?.apply(o, args);
+      pb.apply(o, args);
       saved.copy(o.matrixWorld);
       o.matrixWorld.copy(scaled(tmp));
     };
-    o.onAfterRender = (...args: Parameters<THREE.Object3D["onAfterRender"]>) => { o.matrixWorld.copy(saved); pa?.apply(o, args); };
+    o.onAfterRender = (...args: Parameters<THREE.Object3D["onAfterRender"]>) => { o.matrixWorld.copy(saved); pa.apply(o, args); };
     // the shadow pass computed modelViewMatrix before this hook: redo it with the scaled matrix (shadows fade too;
     // with ?visfade only until measured)
     if (VIS_FADE) o.onBeforeShadow = (...args: Parameters<THREE.Object3D["onBeforeShadow"]>) => {
-      ps?.apply(o, args);
+      ps.apply(o, args);
       const sc = args[3] as THREE.Camera;
       o.modelViewMatrix.multiplyMatrices(sc.matrixWorldInverse, scaled(tmp));
     };
