@@ -383,6 +383,7 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
     // the one primary
     if (ui === "room") {
       if (host) setCta(s.matchRunning ? "Match in progress" : s.startingIn != null ? `Starting ${Math.ceil(s.startingIn)}` : "Start match", !s.busy && !s.matchRunning);
+      else if (s.hostAway && !s.matchRunning) setCta("Start match", !s.busy, false, "The host is away");
       else setCta(s.matchRunning ? "Match in progress" : "Waiting for host", false, !s.matchRunning);
     } else if (starting) setCta("Starting…", false, true);
     else if (s.busy) setCta("Connecting…", false, true);

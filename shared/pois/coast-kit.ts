@@ -10,6 +10,7 @@ import type { Box, Surface } from "../world/colliders";
 // hands the function to floraColliders() inside a lazyBoxes() callback (called long after every module evaluated)
 import type { VegInstance, VegKind } from "../world/veg-scatter";
 import type { InteriorRoom, LootSlots } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 export type V3 = [number, number, number];
 
@@ -37,7 +38,7 @@ export type FloraKind = "palm" | "palm-leaning" | "jungle-tree" | "bush" | "fern
 export type Flora = [FloraKind, number, number, number, number, number];
 export const FLORA_SOLID: ReadonlySet<FloraKind> = new Set<FloraKind>(["palm", "palm-leaning", "jungle-tree", "log"]);
 /** = client/src/world/veg/detail-gen.ts hash01 (the variant the client's VegApi.plant picks for a plant at x, z) */
-const hash01 = (x: number, z: number) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
+const hash01 = (x: number, z: number) => { const s = dmath.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
 /** variant counts of the collidable kinds (= veg-scatter VARIANTS; asserted in floraColliders — kept local so this kit
  *  needs no runtime import of veg-scatter) */
 const NV: Record<string, number> = { palm: 3, "palm-leaning": 3, "jungle-tree": 5, log: 2 };
@@ -103,7 +104,7 @@ export function addKitLoot(spots: LootSpots, rooms: InteriorRoom[], loot: (r: In
 
 /** is (x, z) inside the frame-local rectangle [x0, x1] × [z0, z1] (+ margin m)? */
 export function inFrameRect(f: Frame, x: number, z: number, x0: number, x1: number, z0: number, z1: number, m = 0): boolean {
-  const dx = x - f.x, dz = z - f.z, c = Math.cos(f.yaw), s = Math.sin(f.yaw);
+  const dx = x - f.x, dz = z - f.z, c = dmath.cos(f.yaw), s = dmath.sin(f.yaw);
   const lx = dx * c - dz * s, lz = dx * s + dz * c;
   return lx > x0 - m && lx < x1 + m && lz > z0 - m && lz < z1 + m;
 }
@@ -132,7 +133,7 @@ export const F = (x: number, y: number, z: number, yaw = 0): Frame => ({ x, y, z
 
 /** local → world point */
 export function toWorld(f: Frame, lx: number, ly: number, lz: number): V3 {
-  const c = Math.cos(f.yaw), s = Math.sin(f.yaw);
+  const c = dmath.cos(f.yaw), s = dmath.sin(f.yaw);
   return [f.x + lx * c + lz * s, f.y + ly, f.z - lx * s + lz * c];
 }
 
@@ -169,7 +170,7 @@ export function toBoxes(pieces: Piece[]): Box[] {
     if (p.vis) continue;
     const pitch = p.pitch ?? 0;
     if (!pitch) { push(p, [...p.c] as V3, [...p.h] as V3); continue; }
-    const sp = Math.sin(pitch), cp = Math.cos(pitch), fy = Math.sin(p.yaw ?? 0), fz = Math.cos(p.yaw ?? 0);
+    const sp = dmath.sin(pitch), cp = dmath.cos(pitch), fy = dmath.sin(p.yaw ?? 0), fz = dmath.cos(p.yaw ?? 0);
     // ≤ 0.25 m per step and each step CENTRED on the drawn slope (on top of it, a kong on a roof would float up to
     // 0.25 m over the drawn sheet)
     const n = Math.max(1, Math.ceil((Math.abs(sp) * 2 * p.h[2]) / 0.25)), seg = (2 * p.h[2]) / n, half = Math.abs(sp) * seg / 2;
@@ -195,8 +196,8 @@ export interface Opening { u: number; w: number; y0: number; h: number; kind?: "
  */
 export function wall(k: string, x0: number, z0: number, x1: number, z1: number, y0: number, h: number, t: number,
   openings: Opening[] = [], o: Partial<Piece> = {}): Piece[] {
-  const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
-  const yaw = Math.atan2(-uz, ux);
+  const dx = x1 - x0, dz = z1 - z0, L = dmath.hypot(dx, dz), ux = dx / L, uz = dz / L;
+  const yaw = dmath.atan2(-uz, ux);
   const out: Piece[] = [];
   const seg = (a: number, b: number, ya: number, yb: number) => {
     if (b - a < 0.02 || yb - ya < 0.02) return;
@@ -231,7 +232,7 @@ export function massif(k: string, x: number, y: number, z: number, seed: number,
     let cx = x + dx, cz = z + dz, R = (w + d) / 4;
     for (let i = 0; i < n; i++) {
       // (the collider octagon is 0.2 m inside the drawn one, whose facets jitter inward ≤ 0.15: drawn ⊇ collider)
-      const yaw = (r() - 0.5) * 0.8, Rc = R - MASSIF_INSET, ri = Rc * Math.cos(Math.PI / 8), aa = Rc * Math.sin(Math.PI / 8);
+      const yaw = (r() - 0.5) * 0.8, Rc = R - MASSIF_INSET, ri = Rc * dmath.cos(Math.PI / 8), aa = Rc * dmath.sin(Math.PI / 8);
       for (let q = 0; q < 4; q++) out.push({ k, c: [cx, y + ch * (i + 0.5), cz], h: [ri, ch / 2 + 0.02, aa], yaw: yaw + (q * Math.PI) / 4, col: true, surf: "stone" });
       R *= 0.86 + r() * 0.07; cx += (r() - 0.5) * R * 0.22; cz += (r() - 0.5) * R * 0.22;
     }
@@ -246,8 +247,8 @@ export function massif(k: string, x: number, y: number, z: number, seed: number,
  * by `swing` (three.js yaw); drawn lw = w − 0.06, lh = min(h − 0.04, maxH), 0.05 thick — the collider is 0.08 thick.
  */
 export function doorLeaves(k: string, x0: number, z0: number, x1: number, z1: number, y0: number, ops: ReadonlyArray<{ u: number; w: number; y0: number; h: number }>, t: number, swing: number, o: { maxH?: number; surf?: Surface } = {}): Piece[] {
-  const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L, yaw = Math.atan2(-uz, ux);
-  const out: Piece[] = [], c = Math.cos(yaw), s = Math.sin(yaw), a2 = yaw + swing, ca = Math.cos(a2), sa = Math.sin(a2);
+  const dx = x1 - x0, dz = z1 - z0, L = dmath.hypot(dx, dz), ux = dx / L, uz = dz / L, yaw = dmath.atan2(-uz, ux);
+  const out: Piece[] = [], c = dmath.cos(yaw), s = dmath.sin(yaw), a2 = yaw + swing, ca = dmath.cos(a2), sa = dmath.sin(a2);
   for (const op of ops) {
     if (op.y0 > 0.05) continue;
     const cx = x0 + ux * op.u, cz = z0 + uz * op.u, a = -op.w / 2 + 0.03, b = t / 2 + 0.02;
@@ -267,7 +268,7 @@ export function doorLeaves(k: string, x0: number, z0: number, x1: number, z1: nu
 export function stairs(k: string, x: number, z: number, y0: number, yaw: number, w: number, rise: number, run: number, n: number,
   o: { base?: number; surf?: Surface; ramp?: boolean } = {}): Piece[] {
   const out: Piece[] = [];
-  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const fx = dmath.sin(yaw), fz = dmath.cos(yaw);
   const base = o.base ?? y0;
   for (let i = 0; i < n; i++) {
     const top = y0 + rise * (i + 1), d = run * (i + 0.5);
@@ -289,7 +290,7 @@ export function spiral(k: string, cx: number, cz: number, y0: number, a0: number
     const a = a0 + da * (i + 0.5), top = y0 + rise * (i + 1);
     // tread box: radial length (r1-r0), tangential width = arc at the outer radius (overlap a little)
     const tw = Math.abs(da) * r1 * 1.08;
-    out.push({ k, c: [cx + Math.cos(a) * rm, top - thick / 2, cz + Math.sin(a) * rm],
+    out.push({ k, c: [cx + dmath.cos(a) * rm, top - thick / 2, cz + dmath.sin(a) * rm],
       h: [(r1 - r0) / 2, thick / 2, tw / 2], yaw: -a, surf: o.surf });
   }
   return out;
@@ -308,8 +309,8 @@ export function ringWall(k: string, cx: number, cz: number, y0: number, h: numbe
   for (let i = 0; i < segs; i++) {
     const a = da * (i + 0.5);
     if (inGap(a)) continue;
-    const rm = r - t / 2, w = 2 * r * Math.tan(da / 2) + 0.05;
-    out.push({ k, c: [cx + Math.cos(a) * rm, y0 + h / 2, cz + Math.sin(a) * rm], h: [t / 2, h / 2, w / 2], yaw: -a, ...o });
+    const rm = r - t / 2, w = 2 * r * dmath.tan(da / 2) + 0.05;
+    out.push({ k, c: [cx + dmath.cos(a) * rm, y0 + h / 2, cz + dmath.sin(a) * rm], h: [t / 2, h / 2, w / 2], yaw: -a, ...o });
   }
   return out;
 }
@@ -339,7 +340,7 @@ export function rng(seed: number) {
 export function settleLoot<T extends number[]>(spots: T[], boxes: Box[], o: { chest?: boolean; needFloor?: (s: T) => boolean; snap?: number } = {}): T[] {
   const r = o.chest ? 0.46 : 0.36, snap = o.snap ?? 0.15;
   type B = { b: Box; c: number; s: number; x0: number; x1: number; z0: number; z1: number };
-  const bs: B[] = boxes.map((b) => { const y = b.yaw ?? 0, c = Math.cos(y), s = Math.sin(y), ex = Math.abs(c) * b.h[0] + Math.abs(s) * b.h[2], ez = Math.abs(s) * b.h[0] + Math.abs(c) * b.h[2]; return { b, c, s, x0: b.c[0] - ex, x1: b.c[0] + ex, z0: b.c[2] - ez, z1: b.c[2] + ez }; });
+  const bs: B[] = boxes.map((b) => { const y = b.yaw ?? 0, c = dmath.cos(y), s = dmath.sin(y), ex = Math.abs(c) * b.h[0] + Math.abs(s) * b.h[2], ez = Math.abs(s) * b.h[0] + Math.abs(c) * b.h[2]; return { b, c, s, x0: b.c[0] - ex, x1: b.c[0] + ex, z0: b.c[2] - ez, z1: b.c[2] + ez }; });
   const local = (q: B, x: number, z: number) => { const dx = x - q.b.c[0], dz = z - q.b.c[2]; return [dx * q.c + dz * q.s, -dx * q.s + dz * q.c]; };
   const out: T[] = [];
   for (const sp of spots) {
@@ -350,7 +351,7 @@ export function settleLoot<T extends number[]>(spots: T[], boxes: Box[], o: { ch
     const want = o.needFloor?.(sp) ?? false;
     let done: T | null = null;
     outer: for (const d of [0, 0.3, 0.6, 0.9]) for (let k = 0; k < (d ? 12 : 1); k++) {
-      const px = x + Math.cos(k * Math.PI / 6) * d, pz = z + Math.sin(k * Math.PI / 6) * d;
+      const px = x + dmath.cos(k * Math.PI / 6) * d, pz = z + dmath.sin(k * Math.PI / 6) * d;
       const f = floorAt(px, pz, y0), y = f ?? y0;
       if (want && f === null) continue;
       if (!clear(px, pz, y)) continue;

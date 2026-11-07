@@ -21,6 +21,7 @@ import { createKong, kongManager } from "../actors/kong";
 import type { KongActor, KongPose } from "../actors/api";
 import { createPlane } from "../actors/plane";
 import { createGlider } from "../actors/glider";
+import { loadHeli, loadsLazily } from "../actors/heli-tripo";
 import { createStormVisual } from "./storm/index";
 import { createHud } from "../ui/hud";
 import { createInventory } from "../ui/inventory";
@@ -225,7 +226,10 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   preferences.subscribe((p) => { audio.setMaster(p.master); audio.setDynamicRange?.(p.dynamicRange); audio.setMix?.({ combat: p.combat, ui: p.ui, ambience: p.ambience }); audio.radio?.setVolume(p.radio); });
   const currentFov = () => (engine.shared.get("display:fov") as number | undefined) ?? 72;
 
-  function setBusy(b: boolean, err: string | null = null) { lobbyState.busy = b; lobbyState.error = err; lobby.update(lobbyState); }
+  /** why the server took us out of our match while keeping us in the room (AFK): the room shows it until the next match
+   *  or until the player moves on, so a later room frame does not wipe it */
+  let roomReason: string | null = null;
+  function setBusy(b: boolean, err: string | null = null) { roomReason = null; lobbyState.busy = b; lobbyState.error = err; lobby.update(lobbyState); }
   /** connect for this session; false when it failed or a newer session superseded it while connecting */
   async function online(generation: number) {
     if (link && !link.offline) return true;
@@ -244,9 +248,12 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   }
   // (perf) a match never starts on a half-built island: while the world still streams in after the title, the first
   // PRACTICE / CREATE / JOIN finishes it at full speed behind a "preparing" card (main.ts __kr.prepare)
-  function prepareIsland(): Promise<void> {
+  // a session asked for before main.ts marks the title ready (Enter, a controller's A or a focused button behind the
+  // loading screen) waits for it: wiring a GameRender before the prefabs exist throws and strands the match scope
+  async function prepareIsland(): Promise<void> {
+    while (document.documentElement.dataset.ready !== "1") await new Promise((done) => setTimeout(done, 100));
     const p = (window as unknown as { __kr: { prepare?: () => Promise<void> } }).__kr.prepare;
-    return p ? p() : Promise.resolve();
+    if (p) await p();
   }
   async function offline(mode: Mode, range = false, difficulty: BotDifficulty = botDifficulty) {
     const generation = nextSessionGeneration();
@@ -280,7 +287,8 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     { const r = render; render.onVictory = () => { victoryTimer = window.setTimeout(() => { if (render === r && inMatch) showResults(true); }, 4000); }; }
     // a replaced link's late messages / close never reach the current session
     l.onJSON = (m) => { if (link === l) onJSON(m); };
-    l.onClose = (reason) => { if (link === l && (inMatch || lobbyState.code)) linkLost(l, reason); };
+    // at the title nothing is lost, but the dead link must go, or the next CREATE / JOIN reuses it and sends nothing
+    l.onClose = (reason) => { if (link !== l) return; if (inMatch || lobbyState.code) linkLost(l, reason); else link = null; };
   }
   function onJSON(m: Record<string, unknown>) {
     if (reconnect && (m.t === "lobby" || m.t === "match")) stopReconnect();   // back in: the room or our seat answered
@@ -307,14 +315,14 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     }
     else if (m.t === "lobby") {
       const players = m.players as Array<{ id: number; name: string; squad: number; pid: number; host: boolean }>;
-      lobbyState.code = m.code as string; lobbyState.mode = m.mode as Mode; lobbyState.isHost = (m.host as number) === myUid;
+      lobbyState.code = m.code as string; lobbyState.mode = m.mode as Mode; lobbyState.isHost = (m.host as number) === myUid; lobbyState.hostAway = m.hostAway === true;
       lobbyState.inviteUrl = link?.offline ? null : `${location.origin}${location.pathname}?join=${lobbyState.code}`;
       lobbyState.players = players.map((p) => ({ id: p.id, name: p.name, bot: false, host: p.host, squad: p.squad, ready: true }));
       lobbyState.matchRunning = m.inMatch === true && !inMatch;
       lobbyState.casters = Array.isArray(m.casters) ? m.casters.length : 0;
       lobbyState.event = m.ev && typeof m.ev === "object" && Array.isArray((m.ev as EventRoom).players) ? m.ev as EventRoom : null;
       if (staleMatch && m.inMatch === false && link) { staleMatch = false; render?.dispose(); wire(link); }
-      lobbyState.busy = false; lobbyState.error = null; lobbyState.invite = null; lobby.update(lobbyState);
+      lobbyState.busy = false; lobbyState.error = roomReason; lobbyState.invite = null; lobby.update(lobbyState);
       if (cm && render) for (const p of players) if (p.pid >= 0) { cm.names[p.pid] = p.name; render.names[p.pid] = p.name; }
       // the match is over (results done / crash): everyone goes back to the room
       // (practice: the results card stays up for PLAY AGAIN / BACK TO LOBBY)
@@ -324,7 +332,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
       // a refused re-join (the lobby is gone / locked / full) gets no room frame after it: stop trying
       if (reconnect) { const r = reconnect, msg = String(m.msg); clearTimeout(r.timer); r.timer = window.setTimeout(() => { if (reconnect === r) reconnectGiveUp(msg); }, 1500); }
       // (AFK) the server gave our seat to a bot for inactivity and kept us in the room: show the room
-      else if (m.afk === true && inMatch && link && !link.offline && lobbyState.code) backToRoom();
+      else if (m.afk === true && inMatch && link && !link.offline && lobbyState.code) { roomReason = String(m.msg); backToRoom(); }
     }
     // (admin lobby) out of the event lobby for good: the server closes the socket next (no "connection lost" after this)
     else if (m.t === "evend") {
@@ -333,6 +341,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
       leaveAll();
     }
     else if (m.t === "match") {
+      roomReason = null;
       if (staleMatch && link) { staleMatch = false; render?.dispose(); wire(link); }
       if (!cm || !render) return;
       resultOutcome = null; resultDismissed = false; recapSession = {};
@@ -496,8 +505,15 @@ export async function startGame(engine: Engine, boot: GameBoot) {
 
   // ---- keys: map, pause
   let resultsOpen = false;
+  // padLayer and gameplayAllowed run every frame: live class lists instead of document.querySelector, whose
+  // selectors walk the DOM on every call
+  const videoMenus = document.getElementsByClassName("kr-video"), guides = document.getElementsByClassName("kr-guide");
+  function openVideoMenu(): HTMLElement | null {
+    for (let i = 0; i < videoMenus.length; i++) if (videoMenus[i].classList.contains("on")) return videoMenus[i] as HTMLElement;
+    return null;
+  }
   /** only live gameplay moves, aims or fires: never behind the map, the inventory, pause, results or the video menu */
-  const videoMenuOpen = () => !!document.querySelector(".kr-video.on");
+  const videoMenuOpen = () => !!openVideoMenu();
   input.gameplayAllowed = () => inMatch && !paused && !resultsOpen && !hud.mapOpen && !inv.open && !shop.open && !videoMenuOpen() && !spectating();
   // ---- spectating: out for good and watching someone. The cursor is free (the bar's ◀ ▶ and the
   // player list are clicked; a drag on the game looks around, the wheel zooms); ← / → (and the strafe keys) cycle,
@@ -647,10 +663,14 @@ export async function startGame(engine: Engine, boot: GameBoot) {
       first: () => video.querySelector<HTMLElement>(".preference-tabs button[aria-pressed=true]"),
     };
   }
+  function openGuide(): HTMLElement | null {
+    for (let i = 0; i < guides.length; i++) if (!(guides[i] as HTMLElement).hidden) return guides[i] as HTMLElement;
+    return null;
+  }
   function padLayer(): PadLayer | null {
-    const video = document.querySelector<HTMLElement>(".kr-video.on");
+    const video = openVideoMenu();
     if (video) return settingsLayer(video);
-    const guide = document.querySelector<HTMLElement>(".kr-guide:not([hidden])");
+    const guide = openGuide();
     if (guide) return { root: guide, back: () => guide.querySelector<HTMLButtonElement>(".close")?.click() };
     if (inMatch) {
       if (resultsOpen) return { root: results.el, back: () => {}, noBack: true };
@@ -814,6 +834,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   // (perf) the prefabs every match spawns: made + warmed in the title's idle time, never behind the loading screen
   if (DEFER_PREFABS) { const kr = (window as unknown as { __kr: Record<string, unknown> }).__kr; kr.prefabWarmP = (async () => {
     while (!kr.ready) await new Promise((r) => setTimeout(r, 100));
+    if (!loadsLazily()) void loadHeli().catch((e) => console.error("[heli] model failed", e));
     if (!kits.viewModel) { const t = performance.now(); const vm = await weapons.createViewModel(); vm.object.visible = false; engine.camera.add(vm.object); kits.viewModel = vm; kr.viewModelMs = Math.round(performance.now() - t); }
     const lootRoot = await weapons.prepareLoot(() => new Promise<void>((r) => (kr.prepareUrgent ? setTimeout(r, 0) : requestAnimationFrame(() => setTimeout(r, 0)))));
     await prewarmPrefabs(engine, kits, () => inMatch, lootRoot); await prewarmMatch(engine, kits, title, () => inMatch); kr.warmDone = true; })(); }
@@ -862,6 +883,9 @@ function gameStage(name: string, p: number) {
 /** perf: chests / loot / held weapons / glider / render prefabs are prewarmed after the title is ready
  * (prewarmPrefabs) — ?prewarm=full builds them all before ready instead */
 const DEFER_PREFABS = flag("prewarm") !== "full";
+/** scene roots whose content the loading frames never draw (storm, weapon FX, loot beams, the FX fallback): with
+ *  DEFER_PREFABS their programs compile after ready (prewarmMatch), not behind the loading screen */
+const MATCH_ONLY_ROOTS = new Set(["storm", "weapons-fx", "loot-system", "fx-fallback"]);
 
 /** after the title is ready: make every spawnable prefab (chests of every rarity, opened; every weapon × rarity as loot
  * and held; consumables; ammo; glider; render prefabs) one at a time, then compile them in parallel and draw them ONCE
@@ -888,7 +912,7 @@ async function prewarmPrefabs(engine: Engine, kits: Kits, isBusy: () => boolean,
   for (const c of CONSUMABLES) makers.push(() => kits.weapons.createLoot(c, "rare").then((v) => put(v.object)));
   makers.push(() => kits.weapons.createLoot("ammo", "common").then((v) => put(v.object)));
   makers.push(() => kits.createGlider(engine).then((gl) => put(gl.object)));
-  makers.push(async () => { for (const o of renderPrefabs()) put(o); });
+  makers.push(async () => { if (!loadsLazily()) await loadHeli().catch((e) => console.error("[heli] model failed", e)); for (const o of renderPrefabs()) put(o); });
   for (const mk of makers) {
     if (isBusy()) { kr.prefabWarm = "stopped (match)"; return; }
     try { await mk(); } catch (e) { console.warn("[prewarm] prefab", e); }
@@ -923,17 +947,21 @@ async function prewarmPrefabs(engine: Engine, kits: Kits, isBusy: () => boolean,
   // one offscreen draw: first use, texture uploads, VAOs (the shadow maps are left alone)
   kr.prefabWarm = "draw";
   await idle();
-  const sm = r.shadowMap, au = sm.autoUpdate;
-  for (const l of lights) l.layers.enable(LAYER);
-  sm.autoUpdate = false;
-  try { r.setRenderTarget(rt); r.render(engine.scene, cam); } catch (e) { console.warn("[prewarm] draw", e); }
-  finally { r.setRenderTarget(prev); sm.autoUpdate = au; for (const l of lights) l.layers.disable(LAYER); }
+  const lost = engine.contextLost;
+  if (!lost) {
+    const sm = r.shadowMap, au = sm.autoUpdate;
+    for (const l of lights) l.layers.enable(LAYER);
+    sm.autoUpdate = false;
+    try { r.setRenderTarget(rt); r.render(engine.scene, cam); } catch (e) { console.warn("[prewarm] draw", e); }
+    finally { r.setRenderTarget(prev); sm.autoUpdate = au; for (const l of lights) l.layers.disable(LAYER); }
+  }
   rt.dispose();
   // hide (never dispose — a disposed material would compile again); the pool lights go back to the pool
   const pool: THREE.Object3D[] = []; g.traverse((o) => { if ((o as THREE.PointLight).isPointLight) pool.push(o); });
   for (const l of pool) l.removeFromParent();
   g.visible = false;
   kits.lights?.update();
+  if (lost) { kr.prefabWarm = "stopped (context lost)"; return; }
   kr.prefabWarm = "done";
   kr.prefabWarmMs = Math.round(performance.now() - t0);
 }
@@ -949,6 +977,9 @@ async function prewarmMatch(engine: Engine, kits: Kits, title: TitleScene, isBus
   const idle = () => kr.prepareUrgent ? Promise.resolve() : new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   const vm = kits.viewModel;
   const vmItems: Array<WeaponId | ConsumableId> = [...WEAPONS, ...CONSUMABLES];
+  kr.matchWarm = "match-only";
+  await Promise.all([engine.compileObjects(engine.scene.children.filter((o) => MATCH_ONLY_ROOTS.has(o.name))), kits.storm.compile(engine.renderer)]);
+  if (isBusy()) return;
   kr.matchWarm = "viewmodel";
   for (const it of vmItems) { if (isBusy()) return; vm.equip(it, (CONSUMABLES as readonly string[]).includes(it) ? "rare" : "epic"); await idle(); }
   vm.equip(null);
@@ -1009,6 +1040,10 @@ async function prewarmMatch(engine: Engine, kits: Kits, title: TitleScene, isBus
     excursion(look, 0.1);
     for (const a of made) a.setVisible(false);
   }
+  const crowd = (await kongManager(engine)).warmBatches();
+  patchTree(engine, crowd);
+  await engine.compileObjects([crowd]);
+  if (!isBusy()) engine.warmDraw([crowd]);
   made.forEach((a, i) => kits.releaseKong?.(a, i % 6));
   kits.lights?.update();
   kr.matchWarm = "done";
@@ -1036,6 +1071,7 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
   for (const c of CONSUMABLES) jobs.push(kits.weapons.createLoot(c, "rare").then((v) => put(v.object, n++)));
   jobs.push(kits.weapons.createLoot("ammo", "common").then((v) => put(v.object, n++)));
   jobs.push(kits.createGlider(engine).then((gl) => put(gl.object, n++)));
+  if (!loadsLazily()) await loadHeli().catch((e) => console.error("[heli] model failed", e));
   for (const o of renderPrefabs()) put(o, n++);
   }
   // one kong of every variant (team tints / outlines included), posed in a row
@@ -1052,7 +1088,7 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
   }
   if (kits.viewModel) engine.camera.add(kits.viewModel.object);
   // storm: show a ring so its materials compile too
-  kits.storm.set({ cx: 0, cz: 0, r: 900, tx: 0, tz: 0, tr: 700, shrinking: true, phase: 2 });
+  if (!DEFER_PREFABS) kits.storm.set({ cx: 0, cz: 0, r: 900, tx: 0, tz: 0, tr: 700, shrinking: true, phase: 2 });
   // everything visible (hidden burst cones / lids / beams included) for the compile pass
   g.traverse((o) => { o.visible = true; o.frustumCulled = false; });
   title.update(0.016, 0);
@@ -1094,13 +1130,15 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
   gameStage("prewarm:compile", 0.45);
   const hidden: THREE.Object3D[] = [];
   engine.scene.traverse((o) => { if (!o.visible && !o.userData.krDummy) { hidden.push(o); o.visible = true; } });
+  const deferred = DEFER_PREFABS ? engine.scene.children.filter((o) => MATCH_ONLY_ROOTS.has(o.name)) : [];
+  const walk = (o: THREE.Object3D, fn: (o: THREE.Object3D) => void) => { if (deferred.includes(o)) return; fn(o); for (const c of o.children) walk(c, fn); };
+  const titleScene = { traverse: (fn: (o: THREE.Object3D) => void) => walk(engine.scene, fn), traverseVisible() {} } as unknown as THREE.Object3D;
   const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
   const prevRT = engine.renderer.getRenderTarget();
   engine.renderer.setRenderTarget(rt);
   let compiled: Promise<unknown> = Promise.resolve();
-  try { compiled = engine.renderer.compileAsync(engine.scene, cam); } catch { /* unsupported: the frames below compile */ }
+  try { compiled = engine.renderer.compileAsync(titleScene, cam, engine.scene); } catch { /* unsupported: the frames below compile */ }
   engine.renderer.setRenderTarget(prevRT);
-  compiled = Promise.all([compiled, kits.storm.compile(engine.renderer)]);
   // (perf: textures upload on first draw behind the loading screen — the frames below — and the rest one per frame in
   // the title (warmer.tick); the synchronous upload of every scene texture here cost 2.2 s of texSubImage2D)
   // shadow DEPTH programs (alpha-tested foliage, skinned kongs, instanced props): compileAsync never makes them and the
@@ -1112,10 +1150,15 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
     engine.scene.traverse((o) => { if (o.castShadow && o.frustumCulled) { unculled.push(o); o.frustumCulled = false; } });
     const sm = engine.renderer.shadowMap, au = sm.autoUpdate, nu = sm.needsUpdate;
     sm.needsUpdate = true; sun.shadow.needsUpdate = true;
+    for (const o of deferred) o.visible = false;
     try { sm.render([sun], engine.scene, cam); } catch { /* the frames below compile */ }
+    for (const o of deferred) o.visible = true;
     sm.autoUpdate = au; sm.needsUpdate = nu; sun.shadow.needsUpdate = true;
     for (const o of unculled) o.frustumCulled = true;
   }
+  // (after the shadow pass: storm.compile compiles its own scene, which leaves three's render state without the sun's
+  // shadow, so a shadow pass after it warmed depth programs without USE_SHADOWMAP that no real frame draws)
+  if (!DEFER_PREFABS) compiled = Promise.all([compiled, kits.storm.compile(engine.renderer)]);
   for (const o of hidden) o.visible = false;
   gameStage("prewarm:compile-wait", 0.55);
   try { await compiled; } catch { /* the frames below compile */ }
@@ -1185,6 +1228,10 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
     await frames(2);
     for (const a of made) a.setVisible(false);
   }
+  const crowd = (await kongManager(engine)).warmBatches();
+  patchTree(engine, crowd);
+  await engine.compileObjects([crowd]);
+  engine.warmDraw([crowd]);
   made.forEach((a, i) => kits.releaseKong?.(a, i % 6));
   }
   // hide (never dispose) — programs stay cached for the whole session. The chest pool lights go back to the pool
