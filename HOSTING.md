@@ -91,6 +91,11 @@ These are read when you build or run the dev server, not by the game server:
 KONGBOT is the in-game bug reporter (`/kongbot <message>` in the chat bar). Without MongoDB, reports pile up in
 `.kongbot/spool/`; delete them if you don't want them.
 
+Reports from the player diagnostics sheet (`?diag`) arrive gzip-compressed (`Content-Encoding: gzip`). The server
+inflates them itself, up to the same 12 MB as an uncompressed report, so a proxy in front must pass the body through
+unchanged (nginx and Caddy do by default) and allow bodies that large (nginx: `client_max_body_size 12m;` on the
+`/api/kongbot` location).
+
 ## Be careful with these
 
 - **`KR_TRUST_PROXY`**: set it only when a reverse proxy (nginx, Caddy) runs on the same machine, or at an address you

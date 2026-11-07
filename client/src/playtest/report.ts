@@ -166,11 +166,15 @@ function bodyNow(c: Choice, m: Moment) {
 }
 
 async function send(c: Choice, m: Moment): Promise<string> {
-  const b = bodyNow(c, m);
+  const json = JSON.stringify(bodyNow(c, m));
+  // gzip where the browser can: a report is mostly numbers in JSON and shrinks about tenfold on a stream's uplink.
+  // The server inflates it (server/kongbot.ts); a browser without CompressionStream sends it as it is
+  const gz = typeof CompressionStream === "undefined" ? null : await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer().catch(() => null);
   const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(new Error("no answer from the server")), TIMEOUT_MS);
   try {
-    const res = await fetch(base + "api/kongbot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b), signal: ctl.signal });
+    const headers: Record<string, string> = gz ? { "content-type": "application/json", "content-encoding": "gzip" } : { "content-type": "application/json" };
+    const res = await fetch(base + "api/kongbot", { method: "POST", headers, body: gz ?? json, signal: ctl.signal });
     const j = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
     if (!res.ok || !j.ok) throw new Error(j.error || "HTTP " + res.status);
     lastSend = performance.now();

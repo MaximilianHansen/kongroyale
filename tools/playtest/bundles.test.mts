@@ -3,6 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import { BUNDLE_MAX_BYTES, bundleDir, bundleWriter, parseBundle } from "../../server/playtest-bundles";
 
 const good = {
@@ -139,6 +140,16 @@ assert.equal(bundleDir(root, path.join(root, "elsewhere")), path.join(root, "els
   const withDiag = written().map((f) => JSON.parse(fs.readFileSync(path.join(process.env.KR_PLAYTEST_BUNDLES!, f, "bundle.json"), "utf8"))).find((j) => j.bundle.diag);
   assert.deepEqual(withDiag?.bundle.diag.events, diag.events, "the validated diagnostics are what the bundle folder keeps");
   assert.equal(withDiag?.bundle.diag.more, undefined);
+  const raw = async (body: Buffer | string, encoding: string) => (await fetch(`http://127.0.0.1:${port}/api/kongbot`, { method: "POST", headers: { "content-type": "application/json", "content-encoding": encoding }, body })).status;
+  const before = written().length;
+  assert.equal(await raw(zlib.gzipSync(JSON.stringify(report({ ...good, diag }))), "gzip"), 200, "a gzip upload is inflated and accepted");
+  assert.equal(written().length, before + 1, "a gzip upload writes its bundle");
+  const bomb = zlib.gzipSync(Buffer.alloc(13 * 1024 * 1024, 32));
+  assert.ok(bomb.length < 64 * 1024, "the bomb is small on the wire");
+  assert.equal(await raw(bomb, "gzip"), 413, "an upload that inflates past the body cap is refused");
+  assert.equal(await raw(Buffer.from("not gzip at all"), "gzip"), 400, "a broken gzip upload is refused");
+  assert.equal(await raw(JSON.stringify(report(good)), "br"), 415, "an encoding the server doesn't inflate is refused");
+  assert.equal(written().length, before + 1, "a refused upload writes nothing");
   const codes: number[] = [];
   for (let i = 0; i < 30; i++) codes.push(await post(report(good)));
   assert.ok(codes.includes(429), "F8 marks hit the per-address rate limit");
