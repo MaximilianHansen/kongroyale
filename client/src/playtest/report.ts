@@ -175,8 +175,12 @@ async function send(c: Choice, m: Moment): Promise<string> {
   try {
     const headers: Record<string, string> = gz ? { "content-type": "application/json", "content-encoding": "gzip" } : { "content-type": "application/json" };
     const res = await fetch(base + "api/kongbot", { method: "POST", headers, body: gz ?? json, signal: ctl.signal });
-    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
-    if (!res.ok || !j.ok) throw new Error(j.error || "HTTP " + res.status);
+    const j = (await res.json().catch(() => null)) as { ok?: boolean; id?: string; error?: string } | null;
+    // the server answers 200 with JSON only once the report is stored. On a starved main thread the abort can fire
+    // after that answer arrived and before its body is read, which fails the read: the report still went
+    const stored = res.ok && (res.headers.get("content-type") ?? "").startsWith("application/json");
+    if (!j && stored) { lastSend = performance.now(); return ""; }
+    if (!res.ok || !j?.ok) throw new Error(j?.error || "HTTP " + res.status);
     lastSend = performance.now();
     return j.id ?? "";
   } finally { clearTimeout(timer); }
