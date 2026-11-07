@@ -25,6 +25,7 @@ import type { Box, Surface } from "../world/colliders";
 import { poiById } from "../world/map";
 import { wallPieces, slabPieces, mulberry, type Opening } from "./town-kit";
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
+import * as dmath from "../sim/dmath";
 
 const POI = poiById("coco-caves");
 export const CX = POI.x, CZ = POI.z;
@@ -66,7 +67,7 @@ function groundMax(x0: number, z0: number, x1: number, z1: number, step = 1): nu
 }
 /** min / max ground under an oriented rect (local half extents hx, hz) */
 function groundUnder(x: number, z: number, hx: number, hz: number, yaw: number, fn: "min" | "max", at: (x: number, z: number) => number = groundAt): number {
-  const c = Math.cos(yaw), s = Math.sin(yaw); let m = fn === "min" ? 1e9 : -1e9;
+  const c = dmath.cos(yaw), s = dmath.sin(yaw); let m = fn === "min" ? 1e9 : -1e9;
   const nx = Math.max(1, Math.ceil(hx)), nz = Math.max(1, Math.ceil(hz));
   for (let a = -nx; a <= nx; a++) for (let b = -nz; b <= nz; b++) {
     const lx = hx * a / nx, lz = hz * b / nz, h = at(x + lx * c + lz * s, z - lx * s + lz * c);
@@ -105,8 +106,8 @@ const WALL_T = 9;
 /** massif top height (smooth — neighbouring roof slabs differ ≤ 0.55 m so the plateau is walkable from the rim) */
 // (0.018 / m, ≤ 0.9 m, ±0.15 m swell: neighbouring roof boxes differ ≤ 0.25 m, so their tops' drawn
 //  seams stay inside the parity tolerance; 0.035 / m gave 0.5 m box steps on the plateau)
-export const topAt = (x: number, z: number) => SKY.y1 + Math.min(0.9, 0.018 * Math.max(0, Math.hypot(x - SKY.x, z - SKY.z) - SKY.r - 3))
-  + 0.15 * Math.sin(x * 0.08 + 1.3) * Math.sin(z * 0.1 + 0.4) * Math.min(1, Math.max(0, Math.hypot(x - SKY.x, z - SKY.z) - SKY.r - 3) / 8);
+export const topAt = (x: number, z: number) => SKY.y1 + Math.min(0.9, 0.018 * Math.max(0, dmath.hypot(x - SKY.x, z - SKY.z) - SKY.r - 3))
+  + 0.15 * dmath.sin(x * 0.08 + 1.3) * dmath.sin(z * 0.1 + 0.4) * Math.min(1, Math.max(0, dmath.hypot(x - SKY.x, z - SKY.z) - SKY.r - 3) / 8);
 
 export function insidePoly(poly: V2[], x: number, z: number): boolean {
   let inside = false;
@@ -122,7 +123,7 @@ export function hallDist(x: number, z: number): number {
   for (let i = 0; i < HALL.length; i++) {
     const [ax, az] = HALL[i], [bx, bz] = HALL[(i + 1) % HALL.length], dx = bx - ax, dz = bz - az;
     const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
-    d = Math.min(d, Math.hypot(x - ax - dx * t, z - az - dz * t));
+    d = Math.min(d, dmath.hypot(x - ax - dx * t, z - az - dz * t));
   }
   return insidePoly(HALL, x, z) ? d : -d;
 }
@@ -152,19 +153,19 @@ const CLEAR: Array<{ x: number; z: number; r: number; y: number }> = [
 ];
 /** roof underside (dome): 20 m over the pool, ≥ 7.5 m over the floor near the walls */
 export function roofBottom(x: number, z: number): number {
-  const d = Math.hypot((x - HALL_C[0]) / 38, (z - HALL_C[1]) / 35);
+  const d = dmath.hypot((x - HALL_C[0]) / 38, (z - HALL_C[1]) / 35);
   let y = 55.6 + 7.2 * Math.max(0, 1 - d * d);
   y = Math.max(y, groundAt(x, z) + 7.5);
-  for (const c of CLEAR) { const k = Math.hypot(x - c.x, z - c.z); if (k < c.r + 4) y = Math.max(y, c.y - Math.max(0, k - c.r) * 0.6); }
+  for (const c of CLEAR) { const k = dmath.hypot(x - c.x, z - c.z); if (k < c.r + 4) y = Math.max(y, c.y - Math.max(0, k - c.r) * 0.6); }
   return y;
 }
 CRAG.y = Math.round((topAt(CRAG.x, CRAG.z) + 9.5) * 100) / 100;
 
-function segYaw(ax: number, az: number, bx: number, bz: number) { return Math.atan2(-(bz - az), bx - ax); }
+function segYaw(ax: number, az: number, bx: number, bz: number) { return dmath.atan2(-(bz - az), bx - ax); }
 /** an oriented box along the segment a→b, offset `off` metres along the outward normal n (inner face), thickness t,
  *  extended past a / b by ext (one number, or [at a, at b]) */
 function slabAlong(a: V2, b: V2, n: V2, off: number, t: number, ext: number | V2, y0: number, y1: number, tag: RockTag): Rock {
-  const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
+  const dx = b[0] - a[0], dz = b[1] - a[1], L = dmath.hypot(dx, dz), ux = dx / L, uz = dz / L;
   const [ea, eb] = typeof ext === "number" ? [ext, ext] : ext, sh = (eb - ea) / 2;
   const mx = (a[0] + b[0]) / 2 + ux * sh + n[0] * (off + t / 2), mz = (a[1] + b[1]) / 2 + uz * sh + n[1] * (off + t / 2);
   return { c: [mx, (y0 + y1) / 2, mz], h: [L / 2 + (ea + eb) / 2, (y1 - y0) / 2, t / 2], yaw: segYaw(a[0], a[1], b[0], b[1]), tag };
@@ -175,7 +176,7 @@ function slabAlong(a: V2, b: V2, n: V2, off: number, t: number, ext: number | V2
  *  plates. The colliders ARE the facets, so a faceted wall stays collider-exact (unfaceted tight walls read as flat boxes). */
 const facetRnd = mulberry(2718);
 function facets(r: Rock, seg = 3.1, j = 0.32, dTop = 0): Rock[] {
-  const L = r.h[0] * 2, n = Math.max(1, Math.round(L / seg)), c = Math.cos(r.yaw), s = Math.sin(r.yaw), out: Rock[] = [];
+  const L = r.h[0] * 2, n = Math.max(1, Math.round(L / seg)), c = dmath.cos(r.yaw), s = dmath.sin(r.yaw), out: Rock[] = [];
   for (let i = 0; i < n; i++) {
     const u = -r.h[0] + (i + 0.5) * L / n, dz = (facetRnd() * 2 - 1) * j, dyaw = (facetRnd() * 2 - 1) * 0.07, top = r.c[1] + r.h[1] + facetRnd() * dTop;
     const bot = r.c[1] - r.h[1];
@@ -185,9 +186,9 @@ function facets(r: Rock, seg = 3.1, j = 0.32, dTop = 0): Rock[] {
   return out;
 }
 function hitsTunnel(r: Rock): boolean {
-  const c = Math.cos(r.yaw), s = Math.sin(r.yaw);
+  const c = dmath.cos(r.yaw), s = dmath.sin(r.yaw);
   for (const t of TUNNELS) {
-    const dx = t.b[0] - t.a[0], dz = t.b[1] - t.a[1], L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
+    const dx = t.b[0] - t.a[0], dz = t.b[1] - t.a[1], L = dmath.hypot(dx, dz), ux = dx / L, uz = dz / L;
     for (let i = -1; i <= 1; i += 0.25) for (let k = -1; k <= 1; k += 0.25) {
       const px = r.c[0] + i * r.h[0] * c + k * r.h[2] * s, pz = r.c[2] - i * r.h[0] * s + k * r.h[2] * c;
       const along = (px - t.a[0]) * ux + (pz - t.a[1]) * uz, across = Math.abs(-(px - t.a[0]) * uz + (pz - t.a[1]) * ux);
@@ -206,7 +207,7 @@ function buildRocks(): Rock[] {
   for (let i = 0; i < N; i++) {
     if (i === OPEN.north || i === OPEN.southeast || i === OPEN.west) continue;
     const a = HALL[i], b = HALL[(i + 1) % N];
-    const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+    const dx = b[0] - a[0], dz = b[1] - a[1], L = dmath.hypot(dx, dz);
     let n: V2 = [dz / L, -dx / L];
     const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
     if ((mx - HALL_C[0]) * n[0] + (mz - HALL_C[1]) * n[1] < 0) n = [-n[0], -n[1]];
@@ -226,7 +227,7 @@ function buildRocks(): Rock[] {
     const s1 = slabAlong(a, b, n, WALL_T - 1.5, 7 + rnd() * 2, 1.4 + rnd() * 1.5, gMin - 3, sh1, "buttress"), s2 = slabAlong(a, b, n, WALL_T + 4.6, 5 + rnd() * 2, 0.6 + rnd(), gMin - 3, sh2, "buttress");
     // (a shoulder whose top stands < 4.5 m over the ground round it is a ledge a kong reaches — its loose rounded top
     //  read 0.2–1.6 m off the box (parity): dropped, the wall behind it is the cliff)
-    const rise = (r: Rock) => { const c = Math.cos(r.yaw), sn = Math.sin(r.yaw); let g = -1e9;
+    const rise = (r: Rock) => { const c = dmath.cos(r.yaw), sn = dmath.sin(r.yaw); let g = -1e9;
       for (let u = -1; u <= 1; u += 0.25) for (let v = -1.3; v <= 1.3; v += 0.25) { const lx = u * (r.h[0] + 1.5), lz = v * r.h[2]; g = Math.max(g, groundAt(r.c[0] + lx * c + lz * sn, r.c[2] - lx * sn + lz * c)); }
       return r.c[1] + r.h[1] - g; };
     if (sh1 > gOut + 2.5 && !hitsTunnel(s1) && rise(s1) > 4.5) out.push(s1);
@@ -237,7 +238,7 @@ function buildRocks(): Rock[] {
   for (let x = x0; x <= x1; x += 7) for (let z = z0; z <= z1; z += 7) {
     const cx = x + 3.5, cz = z + 3.5;
     if (hallDist(cx, cz) < -3.5) continue;
-    if (Math.hypot(Math.max(0, Math.abs(cx - SKY.x) - 4.3), Math.max(0, Math.abs(cz - SKY.z) - 4.3)) < SKY.r + 0.8) continue;   // the rim ring covers the rest
+    if (dmath.hypot(Math.max(0, Math.abs(cx - SKY.x) - 4.3), Math.max(0, Math.abs(cz - SKY.z) - 4.3)) < SKY.r + 0.8) continue;   // the rim ring covers the rest
     const yb = roofBottom(cx, cz), yt = topAt(cx, cz);
     out.push({ c: [cx, (yb + yt) / 2, cz], h: [4.3, (yt - yb) / 2, 4.3], yaw: 0, tag: "roof" });
   }
@@ -245,14 +246,14 @@ function buildRocks(): Rock[] {
   //  RAGGED opening, not a regular polygon)
   const rimRnd = mulberry(909);
   for (let k = 0; k < 13; k++) {
-    const ang = (k + 0.5) * Math.PI * 2 / 13 + (rimRnd() - 0.5) * 0.12, nx = Math.cos(ang), nz = Math.sin(ang), t = 5.5, jr = rimRnd() * 1.3, L = 2 * (SKY.r + jr) * Math.tan(Math.PI / 13) + 1.8;
+    const ang = (k + 0.5) * Math.PI * 2 / 13 + (rimRnd() - 0.5) * 0.12, nx = dmath.cos(ang), nz = dmath.sin(ang), t = 5.5, jr = rimRnd() * 1.3, L = 2 * (SKY.r + jr) * dmath.tan(Math.PI / 13) + 1.8;
     const cx = SKY.x + nx * (SKY.r + jr + t / 2), cz = SKY.z + nz * (SKY.r + jr + t / 2);
     // local x along the tangent (−nz, nx): (cos yaw, −sin yaw) = (−nz, nx) → yaw = atan2(−nx, −nz)
-    out.push({ c: [cx, (SKY.y0 + SKY.y1) / 2 - rimRnd() * 0.4, cz], h: [L / 2, (SKY.y1 - SKY.y0) / 2, t / 2], yaw: Math.atan2(-nx, -nz) + (rimRnd() - 0.5) * 0.16, tag: "rim" });
+    out.push({ c: [cx, (SKY.y0 + SKY.y1) / 2 - rimRnd() * 0.4, cz], h: [L / 2, (SKY.y1 - SKY.y0) / 2, t / 2], yaw: dmath.atan2(-nx, -nz) + (rimRnd() - 0.5) * 0.16, tag: "rim" });
   }
   // ---- tunnels: two side walls + a lintel, level with the plateau
   const tunnel = (a: V2, b: V2, width: number, height: number, tag: RockTag = "tunnel") => {
-    const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L, px = -uz, pz = ux;
+    const dx = b[0] - a[0], dz = b[1] - a[1], L = dmath.hypot(dx, dz), ux = dx / L, uz = dz / L, px = -uz, pz = ux;
     const yaw = segYaw(a[0], a[1], b[0], b[1]);
     let gMin = 1e9, gMax = -1e9; for (let k = 0; k <= 10; k++) for (const s of [-1, 0, 1]) { const g = groundAt(a[0] + dx * k / 10 + px * s * width / 2, a[1] + dz * k / 10 + pz * s * width / 2); gMin = Math.min(gMin, g); gMax = Math.max(gMax, g); }
     for (const s of [-1, 1]) {
@@ -283,7 +284,7 @@ function buildRocks(): Rock[] {
   out.push(...facets({ c: [CRAG.x, (topAt(CRAG.x, CRAG.z) - 4 + CRAG.y) / 2, CRAG.z], h: [CRAG.hx, (CRAG.y - topAt(CRAG.x, CRAG.z) + 4) / 2, CRAG.hz], yaw: 0, tag: "outcrop", tight: true }, 3.2, 0.55));
   // the lava cleft in the north wall: a tight plate flush with the wall face (a flat face for the fall) + a low rock lip
   // in front of the lava pool at its foot. Local x runs along the wall: (cos yaw, −sin yaw) = (−nz, nx)
-  { const yw = Math.atan2(-LAVA.nx, -LAVA.nz), g = groundAt(LAVA.x + LAVA.nx, LAVA.z + LAVA.nz);
+  { const yw = dmath.atan2(-LAVA.nx, -LAVA.nz), g = groundAt(LAVA.x + LAVA.nx, LAVA.z + LAVA.nz);
     block(LAVA.x - LAVA.nx * 0.44, LAVA.z - LAVA.nz * 0.44, LAVA.w / 2 + 2, 0.5, yw, g - 2, LAVA.yTop + 1.5, "ledge");
     // (1.0 m thick — the 0.56 m lip fell between the bake's 0.5 m voxels: parity "invisible wall")
     block(LAVA.x + LAVA.nx * 1.52, LAVA.z + LAVA.nz * 1.52, LAVA.w / 2 + 0.4, 0.5, yw, g - 1, g + 0.55, "lip"); }
@@ -307,7 +308,7 @@ function buildRocks(): Rock[] {
   // apron turned against it and a side chunk — a faceted rock silhouette instead of one bevelled box
   const cluster = (x: number, z: number, hx: number, hz: number, h: number, yaw: number) => {
     const g = groundUnder(x, z, hx, hz, yaw, "min"), gmax = groundUnder(x, z, hx, hz, yaw, "max", floorAt);
-    const c = Math.cos(yaw), sn = Math.sin(yaw), at = (lx: number, lz: number): V2 => [x + lx * c + lz * sn, z - lx * sn + lz * c];
+    const c = dmath.cos(yaw), sn = dmath.sin(yaw), at = (lx: number, lz: number): V2 => [x + lx * c + lz * sn, z - lx * sn + lz * c];
     // the main block is 0.25 m lower and a smaller CAP turned 0.75 rad against it
     // crowns it (its top ≤ 1.2 × 0.8 m — no floor), so the silhouette steps and turns like a chiselled rock
     const capped = h >= 1.1, mainTop = gmax + h - (capped ? 0.25 : 0);
@@ -371,14 +372,14 @@ function plates(): Float32Array {
     const gmin = Math.min(...gs), gmax = Math.max(...gs);
     let t = insidePoly(POOL, x, z) && gmin < BED_Y - 0.25 ? BED_Y : -1e9;
     for (const b of BEACHES) {
-      const dx = b.b[0] - b.a[0], dz = b.b[1] - b.a[1], L = Math.hypot(dx, dz), u = ((x - b.a[0]) * dx + (z - b.a[1]) * dz) / L;
+      const dx = b.b[0] - b.a[0], dz = b.b[1] - b.a[1], L = dmath.hypot(dx, dz), u = ((x - b.a[0]) * dx + (z - b.a[1]) * dz) / L;
       if (u < -0.5 || u > L + 0.5) continue;
-      const d = (x - b.a[0]) * b.n[0] + (z - b.a[1]) * b.n[1] - b.wave * (1.2 * Math.sin(u * 0.31 + 0.7) + 0.6 * Math.sin(u * 0.83 + 2.1)); if (d < -1) continue;
+      const d = (x - b.a[0]) * b.n[0] + (z - b.a[1]) * b.n[1] - b.wave * (1.2 * dmath.sin(u * 0.31 + 0.7) + 0.6 * dmath.sin(u * 0.83 + 2.1)); if (d < -1) continue;
       const top = q(b.top - 0.125 * (Math.floor(Math.max(0, d) / 0.5) + 1));
       if (top > BED_Y - 0.01 && top > gmin + 0.08) t = Math.max(t, top);
     }
     for (const il of ISLANDS) {
-      const a = Math.atan2(z - il.z, x - il.x), r = Math.hypot(x - il.x, z - il.z) * (1 + 0.12 * Math.sin(a * 3 + 1.1));
+      const a = dmath.atan2(z - il.z, x - il.x), r = dmath.hypot(x - il.x, z - il.z) * (1 + 0.12 * dmath.sin(a * 3 + 1.1));
       const top = q(il.top - 0.125 * Math.ceil(Math.max(0, r - il.r) / 0.5));
       if (top > BED_Y - 0.01 && top > gmin + 0.08) t = Math.max(t, top);
     }
@@ -513,7 +514,7 @@ export const INTERIOR_ROOMS: InteriorRoom[] = (() => {
   ];
 })();
 export function hutToWorld(h: { x: number; z: number; yaw: number }, lx: number, lz: number): V2 {
-  const c = Math.cos(h.yaw), s = Math.sin(h.yaw); return [h.x + lx * c + lz * s, h.z - lx * s + lz * c];
+  const c = dmath.cos(h.yaw), s = dmath.sin(h.yaw); return [h.x + lx * c + lz * s, h.z - lx * s + lz * c];
 }
 function hutBox(h: HutSpec, lx0: number, lz0: number, lx1: number, lz1: number, y0: number, y1: number, surf: Surface = "wood"): Box {
   const [cx, cz] = hutToWorld(h, (lx0 + lx1) / 2, (lz0 + lz1) / 2);
@@ -571,7 +572,7 @@ export function hutPieces(h: HutSpec): HutPiece[] {
     }
   }
   for (const p of h.partitions) {
-    const len = Math.hypot(p.x1 - p.x0, p.z1 - p.z0), alongX = Math.abs(p.x1 - p.x0) > Math.abs(p.z1 - p.z0);
+    const len = dmath.hypot(p.x1 - p.x0, p.z1 - p.z0), alongX = Math.abs(p.x1 - p.x0) > Math.abs(p.z1 - p.z0);
     const y0 = h.y + p.floor * h.fh, y1 = y0 + h.fh - 0.28;
     const segs: V2[] = [[0, p.door[0]], [p.door[1], len]];
     for (const [u0, u1] of segs) {
@@ -612,7 +613,7 @@ export const LEDGE = { x0: -739.2, x1: -733.2, z0: -313.0, z1: -303.2, y: DEN.y 
 /** a stair whose TOP edge centre is (tx, tz), rising along yaw ((sin, cos) of yaw) to y1; from the ground when y0 is
  *  undefined (the foot is found by walking back until the step count agrees with the ground there) */
 function stairTo(id: string, tx: number, tz: number, yaw: number, width: number, y1: number, y0?: number, o: { tread?: number; rails?: boolean } = {}): CStair {
-  const tread = o.tread ?? 0.28, sx = Math.sin(yaw), sz = Math.cos(yaw);
+  const tread = o.tread ?? 0.28, sx = dmath.sin(yaw), sz = dmath.cos(yaw);
   if (y0 !== undefined) { const n = Math.max(1, Math.ceil((y1 - y0) / 0.21 - 1e-6)); return { id, x: tx - sx * n * tread, z: tz - sz * n * tread, yaw, width, y0, y1, tread, rails: o.rails }; }
   let n = 1;
   for (let it = 0; it < 30; it++) { const g = floorAt(tx - sx * n * tread, tz - sz * n * tread), m = Math.max(1, Math.ceil((y1 - g) / 0.21 - 1e-6)); if (m === n) break; n = m; }
@@ -663,7 +664,7 @@ function buildTimber() {
   const topWest = T.flights % 2 === 1;
   decks.push({ id: "tower-top", x: T.x + (topWest ? -lane / 2 : lane / 2), z: T.z, yaw: 0, w: lane, d: T.len, y: T.yb + T.flights * T.rise, rails: topWest ? { 3: true } : { 1: true }, kind: "landing" });
   // (the bridge reaches 0.8 m onto the north rim whatever SKY.r is)
-  const rimZ = SKY.z - Math.sqrt(Math.max(0, SKY.r * SKY.r - (T.x - SKY.x) ** 2)) - 0.8, bridgeD = tz1 - rimZ;
+  const rimZ = SKY.z - Math.sqrt(Math.max(0, SKY.r * SKY.r - dmath.pow(T.x - SKY.x, 2))) - 0.8, bridgeD = tz1 - rimZ;
   decks.push({ id: "tower-rim", x: T.x, z: tz1 - bridgeD / 2, yaw: 0, w: T.w, d: bridgeD, y: T.yb + T.flights * T.rise, rails: { 1: true, 3: true }, kind: "bridge" });
   for (let k = 0; k < T.flights; k++) {
     const north = k % 2 === 0, y0 = T.yb + k * T.rise;
@@ -718,7 +719,7 @@ function buildProps(): CProp[] {
   add("crate", -747.8, -318.9, 0.6); add("barrel", -748.4, -316.9);
   add("crate-stack", -704.8, -340.2, 0.2); add("crate", -706.9, -341.3, 0.8);
   // mine mouth: rails + cart, crates
-  add("rails", -692.5, -284.5, Math.atan2(7.5, 15.5)); add("cart", -693.2, -286.2, Math.atan2(7.5, 15.5)); add("crate-stack", -698.4, -281.6, 0.4); add("crate", -686.8, -287.9, 0.2);
+  add("rails", -692.5, -284.5, dmath.atan2(7.5, 15.5)); add("cart", -693.2, -286.2, dmath.atan2(7.5, 15.5)); add("crate-stack", -698.4, -281.6, 0.4); add("crate", -686.8, -287.9, 0.2);
   // office interior
   const O = (lx: number, lz: number): V2 => hutToWorld(OFFICE, lx, lz);
   void O;
@@ -760,7 +761,7 @@ function buildProps(): CProp[] {
     const lootPts: V2[] = [...loot.chests.map((q): V2 => [q[0], q[2]]), ...loot.floor.map((q): V2 => [q[0], q[2]])];
     const KINDS: Record<string, PropKind[]> = { storage: ["nuggets", "coil", "gold", "nuggets", "coil"], captain: ["gold", "coil", "gold", "nuggets", "gold"], bunk: ["coil", "gold", "nuggets", "coil", "gold"] };
     for (const r of INTERIOR_ROOMS) {
-      const c = Math.cos(r.yaw), s = Math.sin(r.yaw), W = (lx: number, lz: number): V2 => [r.x + lx * c + lz * s, r.z - lx * s + lz * c];
+      const c = dmath.cos(r.yaw), s = dmath.sin(r.yaw), W = (lx: number, lz: number): V2 => [r.x + lx * c + lz * s, r.z - lx * s + lz * c];
       const cand: V2[] = [];
       for (const inset of [0.45, 0.8]) for (const side of [0, 1, 2, 3]) {
         const half = side % 2 === 0 ? r.w / 2 : r.d / 2, off = (side % 2 === 0 ? r.d / 2 : r.w / 2) - inset;
@@ -769,13 +770,13 @@ function buildProps(): CProp[] {
           if (r.openings.some((o) => o.side === side && o.kind !== "window" && Math.abs(o.at - a) < o.w / 2 + 0.7)) continue;
           if ((r.keepOut ?? []).some((k) => { const q = Array.isArray(k) ? k : k.r; return lx > q[0] - 0.4 && lx < q[2] + 0.4 && lz > q[1] - 0.4 && lz < q[3] + 0.4; })) continue;
           const [x, z] = W(lx, lz);
-          if (kit.some((b) => { const yw = b.yaw ?? 0, cc = Math.cos(yw), sn = Math.sin(yw), dx = x - b.c[0], dz = z - b.c[2]; return b.c[1] - b.h[1] < r.y + 0.6 && Math.abs(dx * cc - dz * sn) < b.h[0] + 0.25 && Math.abs(dx * sn + dz * cc) < b.h[2] + 0.25; })) continue;
-          if (lootPts.some((p) => Math.hypot(p[0] - x, p[1] - z) < 0.9)) continue;
+          if (kit.some((b) => { const yw = b.yaw ?? 0, cc = dmath.cos(yw), sn = dmath.sin(yw), dx = x - b.c[0], dz = z - b.c[2]; return b.c[1] - b.h[1] < r.y + 0.6 && Math.abs(dx * cc - dz * sn) < b.h[0] + 0.25 && Math.abs(dx * sn + dz * cc) < b.h[2] + 0.25; })) continue;
+          if (lootPts.some((p) => dmath.hypot(p[0] - x, p[1] - z) < 0.9)) continue;
           cand.push([x, z]);
         }
       }
       const kinds = KINDS[r.role ?? ""] ?? KINDS.captain, picked: V2[] = [];
-      for (const p of cand) { if (picked.length >= 5) break; if (picked.every((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) >= 1.3)) picked.push(p); }
+      for (const p of cand) { if (picked.length >= 5) break; if (picked.every((q) => dmath.hypot(q[0] - p[0], q[1] - p[1]) >= 1.3)) picked.push(p); }
       picked.forEach(([x, z], i) => add(kinds[i % kinds.length], x, z, (x * 3.1 + z) % 6.28, r.y, kinds[i % kinds.length] === "coil" ? 0.9 : 0.75));
     }
   }
@@ -808,10 +809,10 @@ function buildCrystals(): Crystal[] {
   c(CRAG.x - 4.5, CRAG.y - 0.2, CRAG.z - 3.5, 2.6, 0.1, -0.1, 11, true); c(CRAG.x + 5, CRAG.y - 0.2, CRAG.z - 4.5, 1.6, 0.3, 0.2, 8);
   c(-711.0, topAt(-711, -327) - 0.2, -327.0, 1.9, -0.2, 0.25, 9, true);
   // big gold clusters round the skylight on the plateau: the landmark's glow, readable from the plane
-  for (const a of [0.5, 2.3, 4.1]) { const x = SKY.x + Math.cos(a) * 14.5, z = SKY.z + Math.sin(a) * 14.5; c(x, topAt(x, z) - 0.25, z, 4.2, Math.cos(a) * 0.35, Math.sin(a) * 0.35, 12, true); }
+  for (const a of [0.5, 2.3, 4.1]) { const x = SKY.x + dmath.cos(a) * 14.5, z = SKY.z + dmath.sin(a) * 14.5; c(x, topAt(x, z) - 0.25, z, 4.2, dmath.cos(a) * 0.35, dmath.sin(a) * 0.35, 12, true); }
   // landmark: a crown of gold round the skylight's lip between the three giants — reads from the plane
   // (six round the lip)
-  for (const a of [0.2, 1.4, 2.35, 3.2, 4.45, 5.3]) { const x = SKY.x + Math.cos(a) * (SKY.r + 3.4), z = SKY.z + Math.sin(a) * (SKY.r + 3.4); c(x, topAt(x, z) - 0.2, z, 2.5, Math.cos(a) * 0.3, Math.sin(a) * 0.3, 10, true); }
+  for (const a of [0.2, 1.4, 2.35, 3.2, 4.45, 5.3]) { const x = SKY.x + dmath.cos(a) * (SKY.r + 3.4), z = SKY.z + dmath.sin(a) * (SKY.r + 3.4); c(x, topAt(x, z) - 0.2, z, 2.5, dmath.cos(a) * 0.3, dmath.sin(a) * 0.3, 10, true); }
   c(-727.0, topAt(-727, -325.5) - 0.2, -325.5, 1.3, 0.3, -0.3, 7);
   return out;
 }
@@ -820,15 +821,15 @@ function buildCrystals(): Crystal[] {
 export interface Prism { x: number; y: number; z: number; d: V3; r: number; rt: number; len: number }
 export function crystalPrisms(k: Crystal): Prism[] {
   const rnd = mulberry(k.seed), out: Prism[] = [];
-  const ml = Math.hypot(k.tilt[0], 1, k.tilt[1]), main: V3 = [k.tilt[0] / ml, 1 / ml, k.tilt[1] / ml];
+  const ml = dmath.hypot3(k.tilt[0], 1, k.tilt[1]), main: V3 = [k.tilt[0] / ml, 1 / ml, k.tilt[1] / ml];
   for (let i = 0; i < k.n; i++) {
     const big = i < (k.hero ? 3 : 2);
     const len = k.s * (big ? 1.05 + rnd() * 0.45 : 0.4 + rnd() * 0.6), r = k.s * (big ? 0.19 + rnd() * 0.06 : 0.09 + rnd() * 0.07);
     // (the giants stand straighter — a tilted shard boxes loosely)
     const spread = big ? (k.s > 2.2 ? 0.14 : 0.28) : 0.75, a = rnd() * Math.PI * 2;
-    const dx = main[0] + Math.cos(a) * spread * rnd(), dz = main[2] + Math.sin(a) * spread * rnd(), dl = Math.hypot(dx, main[1], dz);
+    const dx = main[0] + dmath.cos(a) * spread * rnd(), dz = main[2] + dmath.sin(a) * spread * rnd(), dl = dmath.hypot3(dx, main[1], dz);
     const rt = r * (0.8 + rnd() * 0.15), off = big ? 0.05 : 0.28;
-    out.push({ x: k.x + Math.cos(a) * k.s * off * rnd(), y: k.y - r * 0.4, z: k.z + Math.sin(a) * k.s * off * rnd(), d: [dx / dl, main[1] / dl, dz / dl], r, rt, len });
+    out.push({ x: k.x + dmath.cos(a) * k.s * off * rnd(), y: k.y - r * 0.4, z: k.z + dmath.sin(a) * k.s * off * rnd(), d: [dx / dl, main[1] / dl, dz / dl], r, rt, len });
   }
   return out;
 }
@@ -849,7 +850,7 @@ export function crystalBoxes(k: Crystal): Box[] {
   for (const p of crystalPrisms(k)) {
     if (p.r < 0.1) continue;
     // (0.3 m segments on tilted shards — a yaw-only box round a tilted 0.5 m segment overhung the shard by 0.3 m+)
-    const hl = Math.hypot(p.d[0], p.d[2]), st = hl, ct = p.d[1], yaw = hl > 1e-4 ? Math.atan2(-p.d[2], p.d[0]) : 0;
+    const hl = dmath.hypot(p.d[0], p.d[2]), st = hl, ct = p.d[1], yaw = hl > 1e-4 ? dmath.atan2(-p.d[2], p.d[0]) : 0;
     // radius along the shard: body tapers r → rt over 0 … 0.74 len, the tip cone 0.8 r → 0 over 0.74 … 1.04 len (the hex's
     // corner radius; × 0.78: the square section sits 0.09 r inside the hex faces and 0.1 r past its corners)
     const rad = (t: number) => (t <= p.len * 0.74 ? p.r + (p.rt - p.r) * t / (p.len * 0.74) : p.r * 0.8 * Math.max(0, 1 - (t - p.len * 0.74) / (p.len * 0.3)));
@@ -890,7 +891,7 @@ function buildLamps(crystals: Crystal[], props: CProp[]): Lamp[] {
   return out;
 }
 /** the midday sun (atmos preset: elev 42°, az −32°), unit vector toward it */
-export const SUN_DIR: V3 = [Math.sin(-32 * Math.PI / 180) * Math.cos(42 * Math.PI / 180), Math.sin(42 * Math.PI / 180), -Math.cos(-32 * Math.PI / 180) * Math.cos(42 * Math.PI / 180)];
+export const SUN_DIR: V3 = [dmath.sin(-32 * Math.PI / 180) * dmath.cos(42 * Math.PI / 180), dmath.sin(42 * Math.PI / 180), -dmath.cos(-32 * Math.PI / 180) * dmath.cos(42 * Math.PI / 180)];
 /** where the sun through the skylight's middle lands at height y */
 export function sunDrop(y: number): V2 { const k = ((SKY.y0 + SKY.y1) / 2 - y) / SUN_DIR[1]; return [SKY.x - SUN_DIR[0] * k, SKY.z - SUN_DIR[2] * k]; }
 
@@ -915,7 +916,7 @@ export function stairSteps(s: CStair): Array<{ box: Box; top: number }> {
   const out: Array<{ box: Box; top: number }> = [], tread = s.tread ?? 0.28;
   const y0 = s.ground ? floorAt(s.x, s.z) : s.y0;
   const n = Math.max(1, Math.ceil((s.y1 - y0) / 0.21 - 1e-6)), rise = (s.y1 - y0) / n;
-  const c = Math.cos(s.yaw), sn = Math.sin(s.yaw);
+  const c = dmath.cos(s.yaw), sn = dmath.sin(s.yaw);
   for (let i = 0; i < n; i++) {
     const lz = (i + 0.5) * tread, x = s.x + lz * sn, z = s.z + lz * c, top = y0 + (i + 1) * rise;
     const bottom = s.ground ? Math.min(groundUnder(x, z, s.width / 2, tread / 2, s.yaw, "min"), top) - 0.4 : s.y0 - 0.25;
@@ -932,15 +933,15 @@ export const CURB_H = 0.18;
 export function deckCurbs(k: CDeck): Box[] {
   if (k.rails && Object.keys(k.rails).length) return [];
   if (k.kind !== "deck" && k.kind !== "bridge") return [];
-  const c = Math.cos(k.yaw), s = Math.sin(k.yaw), out: Box[] = [];
-  const covered = (lx: number, lz: number) => { const x = k.x + lx * c + lz * s, z = k.z - lx * s + lz * c; return TIMBER.decks.some((o) => { if (o === k || Math.abs(o.y - k.y) > 0.3) return false; const oc = Math.cos(o.yaw), os = Math.sin(o.yaw), dx = x - o.x, dz = z - o.z, ox = dx * oc - dz * os, oz = dx * os + dz * oc; return Math.abs(ox) < o.w / 2 + 0.05 && Math.abs(oz) < o.d / 2 + 0.05; }); };
+  const c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), out: Box[] = [];
+  const covered = (lx: number, lz: number) => { const x = k.x + lx * c + lz * s, z = k.z - lx * s + lz * c; return TIMBER.decks.some((o) => { if (o === k || Math.abs(o.y - k.y) > 0.3) return false; const oc = dmath.cos(o.yaw), os = dmath.sin(o.yaw), dx = x - o.x, dz = z - o.z, ox = dx * oc - dz * os, oz = dx * os + dz * oc; return Math.abs(ox) < o.w / 2 + 0.05 && Math.abs(oz) < o.d / 2 + 0.05; }); };
   const side = (lx: number, lz: number, hx: number, hz: number) => { if (!covered(lx + Math.sign(lx) * (hx < 0.1 ? 0.35 : 0), lz + Math.sign(lz) * (hz < 0.1 ? 0.35 : 0))) out.push({ c: [k.x + lx * c + lz * s, k.y + CURB_H / 2, k.z - lx * s + lz * c], h: [hx, CURB_H / 2, hz], yaw: k.yaw, surf: "wood" }); };
   if (k.kind === "bridge") { side(k.w / 2 - 0.08, 0, 0.08, k.d / 2); side(-k.w / 2 + 0.08, 0, 0.08, k.d / 2); }
   else { side(0, k.d / 2 - 0.08, k.w / 2, 0.08); side(0, -k.d / 2 + 0.08, k.w / 2, 0.08); side(k.w / 2 - 0.08, 0, 0.08, k.d / 2); side(-k.w / 2 + 0.08, 0, 0.08, k.d / 2); }
   return out;
 }
 export function deckBoxes(k: CDeck): Box[] {
-  const out: Box[] = [], t = k.t ?? 0.22, c = Math.cos(k.yaw), s = Math.sin(k.yaw);
+  const out: Box[] = [], t = k.t ?? 0.22, c = dmath.cos(k.yaw), s = dmath.sin(k.yaw);
   out.push({ c: [k.x, k.y - t / 2, k.z], h: [k.w / 2, t / 2, k.d / 2], yaw: k.yaw, surf: "wood" });
   out.push(...deckCurbs(k));
   for (const [sideStr, spec] of Object.entries(k.rails ?? {})) {
@@ -958,16 +959,16 @@ export function deckBoxes(k: CDeck): Box[] {
   return out;
 }
 let pileAvoid: Box[] | null = null;
-const inRock = (x: number, y: number, z: number) => ROCKS.some((r) => { const c = Math.cos(r.yaw), s = Math.sin(r.yaw), dx = x - r.c[0], dz = z - r.c[2], lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < r.h[0] && Math.abs(lz) < r.h[2] && Math.abs(y - r.c[1]) < r.h[1]; });
+const inRock = (x: number, y: number, z: number) => ROCKS.some((r) => { const c = dmath.cos(r.yaw), s = dmath.sin(r.yaw), dx = x - r.c[0], dz = z - r.c[2], lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < r.h[0] && Math.abs(lz) < r.h[2] && Math.abs(y - r.c[1]) < r.h[1]; });
 /** the highest solid rock-box top under (x, z) below y (−1e9 = none) */
-const rockTopUnder = (x: number, z: number, y: number) => { let m = -1e9; for (const r of ROCKS) { if (r.ghost || r.tag === "bed") continue; const top = r.c[1] + r.h[1]; if (top > y || top < m) continue; const c = Math.cos(r.yaw), s = Math.sin(r.yaw), dx = x - r.c[0], dz = z - r.c[2], lx = dx * c - dz * s, lz = dx * s + dz * c; if (Math.abs(lx) < r.h[0] && Math.abs(lz) < r.h[2]) m = top; } return m; };
+const rockTopUnder = (x: number, z: number, y: number) => { let m = -1e9; for (const r of ROCKS) { if (r.ghost || r.tag === "bed") continue; const top = r.c[1] + r.h[1]; if (top > y || top < m) continue; const c = dmath.cos(r.yaw), s = dmath.sin(r.yaw), dx = x - r.c[0], dz = z - r.c[2], lx = dx * c - dz * s, lz = dx * s + dz * c; if (Math.abs(lx) < r.h[0] && Math.abs(lz) < r.h[2]) m = top; } return m; };
 /** pile posts under a deck (visual + collider): at the corners and every ~2.4 m along the edges — never inside a stair's
  *  footprint (they blocked the gallery stairs) or inside rock */
 export function deckPiles(k: CDeck): CPost[] {
   if (!k.piles) return [];
   pileAvoid ??= TIMBER.stairs.flatMap((st) => stairSteps(st).map((q) => q.box));
-  const inStair = (x: number, z: number) => pileAvoid!.some((b) => { const c = Math.cos(b.yaw ?? 0), s = Math.sin(b.yaw ?? 0), dx = x - b.c[0], dz = z - b.c[2], lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < b.h[0] + 0.6 && Math.abs(lz) < b.h[2] + 0.6; });
-  const out: CPost[] = [], c = Math.cos(k.yaw), s = Math.sin(k.yaw), t = k.t ?? 0.22;
+  const inStair = (x: number, z: number) => pileAvoid!.some((b) => { const c = dmath.cos(b.yaw ?? 0), s = dmath.sin(b.yaw ?? 0), dx = x - b.c[0], dz = z - b.c[2], lx = dx * c - dz * s, lz = dx * s + dz * c; return Math.abs(lx) < b.h[0] + 0.6 && Math.abs(lz) < b.h[2] + 0.6; });
+  const out: CPost[] = [], c = dmath.cos(k.yaw), s = dmath.sin(k.yaw), t = k.t ?? 0.22;
   const nx = Math.max(1, Math.round(k.w / 2.4)), nz = Math.max(1, Math.round(k.d / 2.4));
   for (let i = 0; i <= nx; i++) for (let j = 0; j <= nz; j++) {
     if (i !== 0 && i !== nx && j !== 0 && j !== nz) continue;
@@ -992,7 +993,7 @@ export function postBoxes(p: CPost): Box[] {
  *  as a boarded balustrade panel — rope + 3 posts gave a parity "invisible wall" beside the tower flights) */
 export function stairRails(s: CStair): Box[] {
   if (!s.rails) return [];
-  const steps = stairSteps(s), out: Box[] = [], n = steps.length, c = Math.cos(s.yaw), sn = Math.sin(s.yaw), tread = s.tread ?? 0.28;
+  const steps = stairSteps(s), out: Box[] = [], n = steps.length, c = dmath.cos(s.yaw), sn = dmath.sin(s.yaw), tread = s.tread ?? 0.28;
   for (const sd of [-1, 1]) for (let seg = 0; seg < 3; seg++) {
     const i0 = Math.floor(seg * n / 3), i1 = Math.floor((seg + 1) * n / 3) - 1; if (i1 < i0) continue;
     const lz = (i0 + i1 + 1) / 2 * tread, lx = sd * (s.width / 2 + 0.05), top = steps[i1].top;
@@ -1017,7 +1018,7 @@ function assemble(): Box[] {
   // the lava fall's sheet (0.3–0.9 m proud of the wall, fx.ts) — nobody walks into molten rock (parity: walk-through);
   // the braided stream's core only, flush with the sheet; 0.4 m deep: its top is no ledge a kong fits on
   { const g = groundAt(LAVA.x + LAVA.nx * 0.8, LAVA.z + LAVA.nz * 0.8);
-    out.push({ c: [LAVA.x + LAVA.nx * 0.22, g + 2.5, LAVA.z + LAVA.nz * 0.22], h: [LAVA.w * 0.24, 2.8, 0.2], yaw: Math.atan2(-LAVA.nx, -LAVA.nz), surf: "stone" }); }
+    out.push({ c: [LAVA.x + LAVA.nx * 0.22, g + 2.5, LAVA.z + LAVA.nz * 0.22], h: [LAVA.w * 0.24, 2.8, 0.2], yaw: dmath.atan2(-LAVA.nx, -LAVA.nz), surf: "stone" }); }
   out.push(...TIMBER.panels);
   const surf = (p: CProp): Surface => (p.kind === "barrel" || p.kind === "drum" || p.kind === "cart" ? "metal" : p.kind === "sacks" ? "fabric" : "wood");
   for (const p of PROPS) {
@@ -1026,7 +1027,7 @@ function assemble(): Box[] {
     // the boat: its floor + two gunwale walls (a kong stands IN it; the hull's sides stop bullets and walkers)
     // (measured on the drawn longboat (page raycasts): inner floor 0.3 m over p.y, ±0.45 m wide; gunwales ±0.5 m,
     //  top 0.72 m — ±0.66 m gunwales stood 0.16 m outside the hull = an underwater step box)
-    if (p.kind === "boat") { const c = Math.cos(p.yaw), sn = Math.sin(p.yaw); out.push({ c: [p.x, p.y + 0.15, p.z], h: [1.75, 0.15, 0.44], yaw: p.yaw, surf: "wood" });
+    if (p.kind === "boat") { const c = dmath.cos(p.yaw), sn = dmath.sin(p.yaw); out.push({ c: [p.x, p.y + 0.15, p.z], h: [1.75, 0.15, 0.44], yaw: p.yaw, surf: "wood" });
       for (const sd of [-1, 1]) out.push({ c: [p.x + sd * 0.47 * sn, p.y + 0.36, p.z + sd * 0.47 * c], h: [1.6, 0.36, 0.05], yaw: p.yaw, surf: "wood" }); continue; }
     if (p.kind === "crate-stack") { const sf = surf(p); out.push({ c: [p.x, p.y + 0.45, p.z], h: [0.55, 0.45, 0.55], yaw: p.yaw, surf: sf }, { c: [p.x, p.y + 0.9 + 0.42, p.z], h: [0.46, 0.42, 0.46], yaw: p.yaw, surf: sf }); continue; }
     const hh = PROP_HALF[p.kind]; if (!hh) continue; const k = p.s ?? 1;
@@ -1041,7 +1042,7 @@ function assemble(): Box[] {
     // 0.525 × 0.275 × 0.48 at local (0.05, 0.05)) and an open chest (0.62 × 0.3 × 0.36 at local (−0.1, −0.325)) — boxed
     // as those two
     if (Math.abs(b.h[0] - 0.5) < 0.01 && Math.abs(b.h[1] - 0.25) < 0.01 && Math.abs(b.h[2] - 0.42) < 0.01) {
-      const y0 = b.c[1] - 0.25, yw = b.yaw ?? 0, c = Math.cos(yw), sn = Math.sin(yw), W = (lx: number, lz: number): V2 => [b.c[0] + lx * c + lz * sn, b.c[2] - lx * sn + lz * c];
+      const y0 = b.c[1] - 0.25, yw = b.yaw ?? 0, c = dmath.cos(yw), sn = dmath.sin(yw), W = (lx: number, lz: number): V2 => [b.c[0] + lx * c + lz * sn, b.c[2] - lx * sn + lz * c];
       const hp = W(0.05, 0.05), ch = W(-0.1, -0.325);
       out.push({ ...b, c: [hp[0], y0 + 0.1, hp[1]], h: [0.37, 0.1, 0.34] }, { ...b, c: [ch[0], y0 + 0.15, ch[1]], h: [0.31, 0.15, 0.18] });
       continue;
@@ -1075,9 +1076,9 @@ export const clearings: Array<{ x: number; z: number; r: number } | { x: number;
  *  step each one out (≤ 0.4 m) to where a 0.36 m disc of loot clears every box between 3 cm and 0.6 m over its floor */
 function clearOfFurniture(f: [number, number, number]): [number, number, number] {
   const near = colliders.filter((b) => Math.abs(b.c[0] - f[0]) < 3 && Math.abs(b.c[2] - f[2]) < 3 && b.c[1] + b.h[1] > f[1] + 0.03 && b.c[1] - b.h[1] < f[1] + 0.6);
-  const fits = (x: number, z: number) => near.every((b) => { let dx = x - b.c[0], dz = z - b.c[2]; if (b.yaw) { const c = Math.cos(b.yaw), sn = Math.sin(b.yaw); const u = dx * c + dz * sn, v = -dx * sn + dz * c; dx = u; dz = v; } const qx = Math.max(0, Math.abs(dx) - b.h[0]), qz = Math.max(0, Math.abs(dz) - b.h[2]); return qx * qx + qz * qz >= 0.4 * 0.4; });
+  const fits = (x: number, z: number) => near.every((b) => { let dx = x - b.c[0], dz = z - b.c[2]; if (b.yaw) { const c = dmath.cos(b.yaw), sn = dmath.sin(b.yaw); const u = dx * c + dz * sn, v = -dx * sn + dz * c; dx = u; dz = v; } const qx = Math.max(0, Math.abs(dx) - b.h[0]), qz = Math.max(0, Math.abs(dz) - b.h[2]); return qx * qx + qz * qz >= 0.4 * 0.4; });
   if (fits(f[0], f[2])) return f;
-  for (const r of [0.1, 0.2, 0.3, 0.4]) for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2, x = f[0] + r * Math.cos(a), z = f[2] + r * Math.sin(a); if (fits(x, z)) return [x, f[1], z]; }
+  for (const r of [0.1, 0.2, 0.3, 0.4]) for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2, x = f[0] + r * dmath.cos(a), z = f[2] + r * dmath.sin(a); if (fits(x, z)) return [x, f[1], z]; }
   return f;
 }
 export const LOOT_SPOTS: { chests: Array<[number, number, number, number]>; floor: Array<[number, number, number]> } = (() => {

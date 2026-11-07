@@ -10,6 +10,7 @@ import { poiLadders, landingBoxes } from "../pois/ladders";
 import { pickClimbTrees, treeClimb, perchFor, perchBoxes } from "../pois/climb-trees";
 import { StaticWorld } from "./world";
 import { PLAYER_H, PLAYER_R } from "./const";
+import * as dmath from "./dmath";
 
 export function buildClimbs(terrain: Terrain, plants: VegInstance[] = [], boxes: Box[] = []): { climbs: Climb[]; boxes: Box[] } {
   // the cliff landings between ladders (Mist Falls) collide like the perches: in the boxes and the hash
@@ -42,7 +43,7 @@ function treeClimbClear(w: StaticWorld, t: Terrain, c: Climb): boolean {
   const free = (x: number, y: number, z: number, maxPush: number) => {
     w.velY = 0; w.headBump = false; w.wallHit = false;
     w.resolveCapsule(x, y, z, PLAYER_R, PLAYER_H, false);
-    return Math.hypot(w.P[0] - x, w.P[2] - z) <= maxPush && w.P[1] - y < 0.6 && !w.headBump;
+    return dmath.hypot(w.P[0] - x, w.P[2] - z) <= maxPush && w.P[1] - y < 0.6 && !w.headBump;
   };
   // the approach (on the ground in front of the line) and the foot of the line
   for (const k of [0.3, 0.9]) { const x = hx + c.nx * k, z = hz + c.nz * k; if (!free(x, t.height(x, z) + 0.05, z, 0.15)) return false; }
@@ -52,7 +53,7 @@ function treeClimbClear(w: StaticWorld, t: Terrain, c: Climb): boolean {
   const vx = -c.nz, vz = c.nx, ax = c.ax ?? c.x, az = c.az ?? c.z;
   for (const [u, v] of [[-1.5, -1.5], [-1.5, 1.5], [1.5, 1.5], [1.5, -1.5], [1.5, 0], [-1.5, 0]]) {
     const x = ax + c.nx * u + vx * v, z = az + c.nz * u + vz * v;
-    if (Math.hypot(x - ax, z - az) < (c.ar ?? 0.8) + PLAYER_R + 0.1) continue;
+    if (dmath.hypot(x - ax, z - az) < (c.ar ?? 0.8) + PLAYER_R + 0.1) continue;
     if (!free(x, c.y1 + 0.02, z, 0.05)) return false;
   }
   return true;

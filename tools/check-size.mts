@@ -3,6 +3,7 @@
 // server/static.ts serves them by (a missing, stale or larger .br falls back to the .gz, and then to the raw file).
 //   npx tsx tools/check-size.mts                 (markdown tables on stdout)
 //   npx tsx tools/check-size.mts --json sizes.json --dist dist
+// JS sizes ignore Vite's content-hash chunk names (see sizeOf), so they do not move when an unrelated chunk is renamed.
 // Three views:
 // - entry: the module script index.html loads.
 // - boot JS: the entry plus every chunk index.html modulepreloads, the JS that must arrive before the game boots.
@@ -10,6 +11,7 @@
 //   `new Worker(new URL("/assets/<chunk>.js", ...))`, boot when it is the entry or a modulepreload, else lazy.
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import { GateError, orExit, parseFlags } from "./gate.mts";
 
 const USAGE = "npx tsx tools/check-size.mts [--dist dist] [--json FILE] [--budgets tools/size-budgets.json]";
@@ -32,8 +34,19 @@ if (!fs.existsSync(indexFile)) { console.error(`check-size: no ${indexFile}; run
 if (jsonOut && (path.resolve(jsonOut) === dist || path.resolve(jsonOut).startsWith(dist + path.sep))) { console.error("check-size: write --json outside the build, or the next run counts the report"); process.exit(2); }
 
 interface Size { raw: number; gz: number; br: number }
+// Vite names a chunk by a hash of its content and every importer embeds that name, so changing one chunk changes a few
+// bytes of every chunk that imports it, and a gzip of the changed file moves by 1-3 B. JS is therefore measured with every
+// 8-character chunk hash replaced by one fixed string (the same length, so raw is unchanged), and compressed here with the
+// settings tools/performance/precompress.mjs uses (gzip 9, brotli quality 9) instead of read from its
+// sidecar. A file under 1 KB has no sidecar and is served raw, so it keeps the sidecar rule below.
+const HASHED_REF = /-[A-Za-z0-9_-]{8}(?=\.(?:js|css)\b)/g;
 const sizeOf = (file: string): Size => {
   const original = fs.statSync(file), raw = original.size;
+  if (file.endsWith(".js") && raw >= 1024) {
+    const data = Buffer.from(fs.readFileSync(file, "utf8").replace(HASHED_REF, "-HHHHHHHH"));
+    const brotli = zlib.brotliCompressSync(data, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } });
+    return { raw, gz: Math.min(zlib.gzipSync(data, { level: 9 }).length, raw), br: Math.min(brotli.length, raw) };
+  }
   // the rule server/static.ts serves by: a sidecar only when it is at least as new as the file and smaller
   const packed = (ext: string): number => { const s = fs.existsSync(file + ext) ? fs.statSync(file + ext) : null; return s && s.mtimeMs >= original.mtimeMs && s.size < raw ? s.size : ext === ".br" ? packed(".gz") : raw; };
   return { raw, gz: packed(".gz"), br: packed(".br") };

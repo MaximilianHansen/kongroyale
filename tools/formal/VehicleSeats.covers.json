@@ -1,0 +1,240 @@
+{
+  "skill": ".agents/skills/verify-vehicle-seats/SKILL.md",
+  "note": "stepVehicle and stepTumble (tipping, sinking) are not regions on purpose: the model lets any vehicle tip or sink at any time, so their physics may change without a re-check. A seat or rider write added there still fails the writes check.",
+  "regions": [
+    "shared/sim/vehicle.ts#freeSeat",
+    "shared/sim/vehicle.ts#enterVehicle",
+    "shared/sim/vehicle.ts#exitVehicle",
+    "shared/sim/vehicle.ts#switchSeat",
+    "shared/sim/vehicle.ts#takeSeat",
+    "shared/sim/vehicle.ts#flipVehicle",
+    "shared/sim/vehicle.ts#stepRighting",
+    "shared/sim/vehicle.ts#spawnVehicle",
+    "shared/sim/vehicle.ts#VehicleSet.reset",
+    "shared/sim/vehicle.ts#RIDE_ST",
+    "shared/sim/match.ts#Match.useVehicle",
+    "shared/sim/match.ts#Match.ejectAll",
+    "shared/sim/match.ts#Match.tukEvents",
+    "shared/sim/match.ts#Match.blowTuk",
+    "shared/sim/match.ts#Match.stepVehicles",
+    "shared/sim/match.ts#Match.spawnTuks",
+    "shared/sim/match.ts#Match.kill",
+    "shared/sim/match.ts#Match.enterWarmup",
+    "shared/sim/match.ts#Match.enterPlane",
+    "shared/sim/match.ts#Match.stepRespawns",
+    "shared/sim/match.ts#Match.spawnWarmup",
+    "shared/sim/match.ts#Match.spawnAt",
+    "shared/sim/player.hot.ts#stepRide",
+    "shared/sim/player.ts#resetForMatch"
+  ],
+  "writes": [
+    {
+      "what": "a vehicle's seats, a rider's vehicle and seat, and every kong-state write (a rider leaves the Ride state only together with its seat); vehicle states (VS.*) are not kong states",
+      "pattern": "seats\\[[^\\]]*\\]\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)\\s*[^\\s;]+|\\.(veh|seat)\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)\\s*[^\\s;]+|\\.st\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?)?=(?!=)(?!\\s*VS\\.)\\s*[^\\s;]+",
+      "files": [
+        "shared/sim/",
+        "shared/net/",
+        "server/"
+      ]
+    }
+  ],
+  "allow": [
+    {
+      "at": "shared/sim/vehicle.ts#VehicleSet.bind",
+      "writes": [
+        ".veh = this"
+      ],
+      "why": "world.veh is the vehicle set, not a rider's vehicle"
+    },
+    {
+      "at": "shared/net/proto.ts#readSelf",
+      "writes": [
+        ".seat = r.u8()",
+        ".st = r.u8()",
+        ".st = r.u8()",
+        ".veh = vi"
+      ],
+      "why": "decodes a snapshot into the client's copy of its own kong; the server's seats are what the model checks"
+    },
+    {
+      "at": "shared/net/proto.ts#readPlayer",
+      "writes": [
+        ".seat = 0",
+        ".seat = 0",
+        ".seat = s",
+        ".st = 8",
+        ".st = 9",
+        ".st = b"
+      ],
+      "why": "decodes a snapshot into the client's copy of another kong"
+    },
+    {
+      "at": "server/index.ts#Lobby.castJoin",
+      "writes": [
+        ".seat = seat"
+      ],
+      "why": "a commentator seat (Client.seat), not a vehicle seat"
+    },
+    {
+      "at": "server/index.ts#Lobby.castLeave",
+      "writes": [
+        ".seat = -1"
+      ],
+      "why": "a commentator seat (Client.seat), not a vehicle seat"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#stepPlayer",
+      "writes": [
+        ".st = PS.Glide",
+        ".st = PS.Glide"
+      ],
+      "why": "its state writes come after the Ride early return, so they never touch a rider"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#tryMantle",
+      "writes": [
+        ".st = PS.Mantle"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#stepMantle",
+      "writes": [
+        ".st = PS.Ground",
+        ".st = PS.Ground"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#tryVault",
+      "writes": [
+        ".st = PS.Mantle"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#stepVault",
+      "writes": [
+        ".st = PS.Ground"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#grabClimb",
+      "writes": [
+        ".st = PS.Climb"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#leaveClimb",
+      "writes": [
+        ".st = PS.Ground"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#stepClimb",
+      "writes": [
+        ".st = PS.Mantle"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/player.hot.ts#stepAir",
+      "writes": [
+        ".st = PS.Freefall",
+        ".st = PS.Glide",
+        ".st = PS.Glide",
+        ".st = PS.Ground",
+        ".st = PS.Ground"
+      ],
+      "why": "runs only from stepPlayer's on-foot and air branches, after it hands a riding kong to stepRide and returns (player.hot.ts: if (p.st === PS.Ride) ... return)"
+    },
+    {
+      "at": "shared/sim/plane.ts#planeExit",
+      "writes": [
+        ".st = PS.Freefall"
+      ],
+      "why": "a kong jumping from the plane is on the plane, never in a vehicle"
+    },
+    {
+      "at": "shared/sim/match.ts#Match.ramKongs",
+      "writes": [
+        ".st = PS.Ground"
+      ],
+      "why": "changes only kongs that are mantling, on a zipline or climbing, never riders"
+    },
+    {
+      "at": "shared/sim/match.ts#Match.setupRange",
+      "writes": [
+        ".st = PS.Spectate"
+      ],
+      "why": "the firing range has no vehicles"
+    },
+    {
+      "at": "shared/sim/match.ts#Match.placeDummy",
+      "writes": [
+        ".st = PS.Ground"
+      ],
+      "why": "the firing range has no vehicles"
+    },
+    {
+      "at": "shared/sim/match.ts#Match.spawnShooter",
+      "writes": [
+        ".st = PS.Ground"
+      ],
+      "why": "the firing range has no vehicles"
+    },
+    {
+      "at": "shared/sim/zipline.ts#zipAttach",
+      "writes": [
+        ".st = ZIP_ST"
+      ],
+      "why": "grabs a trolley only from on foot (returns early unless p.st === 0)"
+    },
+    {
+      "at": "shared/sim/zipline.ts#toFoot",
+      "writes": [
+        ".st = 0"
+      ],
+      "why": "called only from the zipline step, for a kong riding a cable, never a vehicle"
+    },
+    {
+      "at": "shared/net/proto.ts#readVehicle",
+      "writes": [
+        ".st = sb"
+      ],
+      "why": "decodes a snapshot into the client's copy of a vehicle"
+    }
+  ],
+  "verified": {
+    "model": "df57961969cad1e8",
+    "regions": {
+      "shared/sim/vehicle.ts#freeSeat": "706a387d7a9bfacb",
+      "shared/sim/vehicle.ts#enterVehicle": "5da2594d416b51fb",
+      "shared/sim/vehicle.ts#exitVehicle": "2a22bc408324c4ee",
+      "shared/sim/vehicle.ts#switchSeat": "15705ecc77387291",
+      "shared/sim/vehicle.ts#takeSeat": "9c4340edfb0f2e0f",
+      "shared/sim/vehicle.ts#flipVehicle": "e6a560f5d5919ced",
+      "shared/sim/vehicle.ts#stepRighting": "6fcd1dbb13c1d1ed",
+      "shared/sim/vehicle.ts#spawnVehicle": "75f57b80fa828623",
+      "shared/sim/vehicle.ts#VehicleSet.reset": "9df4e76f0587f841",
+      "shared/sim/vehicle.ts#RIDE_ST": "15e54421aa74cc3e",
+      "shared/sim/match.ts#Match.useVehicle": "f5e38d031020fedb",
+      "shared/sim/match.ts#Match.ejectAll": "576ea7a83e6cacbf",
+      "shared/sim/match.ts#Match.tukEvents": "934c72cb26ee417a",
+      "shared/sim/match.ts#Match.blowTuk": "1f72097815d13564",
+      "shared/sim/match.ts#Match.stepVehicles": "875c476a57279794",
+      "shared/sim/match.ts#Match.spawnTuks": "bfc04241a89d8d63",
+      "shared/sim/match.ts#Match.kill": "acb855d8aeec42e9",
+      "shared/sim/match.ts#Match.enterWarmup": "7618bee68a8f4a70",
+      "shared/sim/match.ts#Match.enterPlane": "531ea3b536fe627d",
+      "shared/sim/match.ts#Match.stepRespawns": "e952cbe4f8040ffe",
+      "shared/sim/match.ts#Match.spawnWarmup": "d80d6daaee6bea3a",
+      "shared/sim/match.ts#Match.spawnAt": "5561f4b5355d899f",
+      "shared/sim/player.hot.ts#stepRide": "6053d1f64dfe44c6",
+      "shared/sim/player.ts#resetForMatch": "6066e6d9b3148c1f"
+    }
+  }
+}

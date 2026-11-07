@@ -208,6 +208,27 @@
     #kr-loading .acts { flex-direction: column; align-items: stretch; }
     #kr-loading .btn { width: 100%; }
   }
+/* ---- desktop-only screen (phones and tablets with no mouse): the gate script below the loading markup reveals it and stops
+     the page before the game's modules run. The loading screen's Toon look, on its own tokens. */
+  #kr-desktop-only { --bg: #071422; --outline: #04101A; --text: #FFF8E7; --muted: #A9C6DA;
+    --display: "Lilita One", "Arial Black", sans-serif; --ui: "Nunito", "Segoe UI", sans-serif;
+    position: fixed; inset: 0; z-index: 200; overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; padding: 24px; box-sizing: border-box; text-align: center; color: var(--text); font-family: var(--ui);
+    background: linear-gradient(180deg, rgba(7,20,34,.55), rgba(7,20,34,.92)), var(--bg) url('/assets/ui/loading.webp') center / cover no-repeat; }
+  #kr-desktop-only[hidden] { display: none; }
+  #kr-desktop-only * { box-sizing: border-box; }
+  #kr-desktop-only img { width: min(280px, 70vw); height: auto; -webkit-user-drag: none;
+    filter: drop-shadow(3px 0 0 var(--outline)) drop-shadow(-3px 0 0 var(--outline)) drop-shadow(0 3px 0 var(--outline)) drop-shadow(0 -3px 0 var(--outline)) drop-shadow(0 6px 0 var(--outline)); }
+  #kr-desktop-only .eyebrow { margin: 0; font-weight: 900; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  #kr-desktop-only h1 { margin: 0; max-width: 14ch; font-family: var(--display); font-weight: 400; font-size: clamp(40px, 11vw, 84px); line-height: .98;
+    letter-spacing: .01em; text-transform: uppercase; -webkit-text-stroke: 6px var(--outline); paint-order: stroke fill; text-shadow: 0 6px 0 var(--outline); }
+  #kr-desktop-only .body { margin: 0; max-width: 34ch; font-weight: 700; font-size: clamp(16px, 4.2vw, 20px); line-height: 1.45; }
+  #kr-desktop-only button { appearance: none; min-height: 56px; padding: 0 28px; border-radius: 16px; border: 4px solid var(--outline); box-shadow: 0 6px 0 var(--outline);
+    background: linear-gradient(180deg, #FFE45C, #FFD21A 55%, #F2B800); color: var(--outline); cursor: pointer; font: inherit; font-weight: 900; font-size: 16px;
+    letter-spacing: .14em; text-transform: uppercase; touch-action: manipulation; }
+  #kr-desktop-only button:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--outline); }
+  #kr-desktop-only button:focus-visible { outline: 4px solid #fff; outline-offset: 3px; }
+  #kr-desktop-only .fine { margin: 0; font-weight: 700; font-size: 13px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -244,6 +265,55 @@
     <div class="card"><h2 id="kr-load-failure-title">The island couldn't load</h2><p class="body" id="kr-load-failure-description">The game couldn't finish loading. Reload this page to try again.</p><div class="acts"><button type="button" class="btn">Reload game</button></div></div>
   </div>
 </div>
+<div id="kr-desktop-only" hidden>
+  <img src="/assets/ui/toon/kong-royale-lockup.svg" alt="Kong Royale" width="320" height="119" draggable="false" />
+  <p class="eyebrow">Battle royale · 50 players</p>
+  <h1>Desktop only, for now</h1>
+  <p class="body">Kong Royale needs a mouse and keyboard and doesn't run on phones or tablets yet. Open this link on a computer to play.</p>
+  <button type="button">Copy link</button>
+  <p class="fine" role="status" aria-live="polite"></p>
+</div>
+<script>
+  // Desktop-only gate: a phone or tablet with no mouse can't run the game (no touch controls, several times the memory its browser
+  // allows), so it gets the screen above and window.stop() ends the page here: the module scripts below and in the head never run,
+  // so no engine, world build, worker or WebGL context starts. It sits before the loading script on purpose, and is plain
+  // inline script so it costs the game bundle nothing. ?mobile=1 forces the screen, ?mobile=0 boots the game anyway
+  // (a saved kr.flags value counts too, the URL wins, as in client/src/flags.ts).
+  (function () {
+    var q = new URLSearchParams(location.search), stored = "", blocked;
+    try { stored = localStorage.getItem("kr.flags") || ""; } catch (e) { /* private mode */ }
+    var forced = q.has("mobile") ? q.get("mobile") : new URLSearchParams(stored).get("mobile");
+    blocked = forced === "1";
+    if (forced === null) try {
+      var fine = matchMedia("(any-pointer: fine)").matches, ua = navigator.userAgent;
+      // iPadOS 13+ reports itself as a Mac; a real Mac has no touch points
+      var hinted = /iPhone|iPad|iPod|Android/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+      blocked = !fine && (hinted || matchMedia("(pointer: coarse)").matches);
+    } catch (e) { /* no matchMedia: boot */ }
+    if (!blocked) return;
+    var screen = document.getElementById("kr-desktop-only"), btn = screen.querySelector("button"), note = screen.querySelector(".fine");
+    q.delete("mobile");
+    var qs = q.toString(), link = location.origin + location.pathname + (qs ? "?" + qs : "") + location.hash;
+    document.getElementById("kr-loading").remove();
+    document.getElementById("c").remove();
+    screen.hidden = false;
+    window.__kr = { ready: false, desktopOnly: true, errors: [] };
+    function copied(ok) { btn.textContent = ok ? "Copied" : "Copy link"; note.textContent = ok ? "Link copied. Paste it on your computer." : link; }
+    btn.addEventListener("click", function () {
+      function fallback() {
+        var f = document.createElement("textarea");
+        f.value = link; f.setAttribute("readonly", ""); f.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+        document.body.appendChild(f); f.select(); f.setSelectionRange(0, link.length);
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) { /* shown as text below */ }
+        f.remove(); copied(ok);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(function () { copied(true); }, fallback);
+      else fallback();
+    });
+    window.stop();
+  })();
+</script>
 <script>
   // Loading screen (gameplay; Toon). Progress = main.ts's cost-weighted __kr.progress ("loading progress, weighted by
   // measured cost"), fed with the game's own sub-steps (__kr.gameProgress / gameStage from client/src/game/index.ts).

@@ -8,8 +8,10 @@
 import * as THREE from "three";
 import { mulberry } from "./jungle-mat";
 import { tint, type Geo } from "./jungle-geo";
+import { onRestore } from "../../../engine/res/restore";
 
 let _env: THREE.Texture | null = null;
+let _rt: THREE.WebGLRenderTarget | null = null;
 /** the warm contrasty PMREM env for gold (built once per renderer) */
 export function goldEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   if (!_env) for (const _ of goldEnvSteps(renderer)) { /* all at once */ }
@@ -70,7 +72,9 @@ function* goldEnvSteps(renderer: THREE.WebGLRenderer): Generator<void> {
   const tex = new THREE.DataTexture(half, W2, H2, THREE.RGBAFormat, THREE.HalfFloatType);
   tex.mapping = THREE.EquirectangularReflectionMapping; tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
   const pm = new THREE.PMREMGenerator(renderer);
-  _env = pm.fromEquirectangular(tex).texture;
+  if (!_rt) onRestore("bake", () => { Array.from(goldEnvSteps(renderer)); });
+  _rt = pm.fromEquirectangular(tex, _rt);
+  _env = _rt.texture;
   pm.dispose(); tex.dispose();
 }
 

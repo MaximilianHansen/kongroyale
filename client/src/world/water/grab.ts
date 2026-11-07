@@ -12,6 +12,7 @@
 // draw tells index.ts when no water pixel survived the depth test (jungle, interiors): then the grab, the ripple tile
 // and the caustics all sleep (the draw itself stays, cheap when fully occluded, to keep the query alive).
 import * as THREE from "three";
+import { contextEpoch } from "../../engine/res/restore";
 
 export class SceneGrab {
   /** colour copy (linear HDR, or sRGB from the canvas) */
@@ -49,6 +50,7 @@ export class SceneGrab {
   private q: WebGLQuery | null = null;
   private qActive = false;
   private qPending = false;
+  private epoch = contextEpoch();
 
   constructor(onChange?: (fromCanvas: boolean, hasDepth: boolean) => void) { this.onChange = onChange ?? null; }
 
@@ -56,6 +58,7 @@ export class SceneGrab {
   attach(mesh: THREE.Mesh, isMain: (camera: THREE.Camera) => boolean) {
     mesh.onBeforeRender = (renderer, _scene, camera) => {
       if (!isMain(camera)) return;
+      this.revive();
       if (!this.skip && !this.dbgSkip) { this.copy(renderer); if (this.dbgTwice) this.copy(renderer); }
       this.beginQuery(renderer);
     };
@@ -67,11 +70,20 @@ export class SceneGrab {
 
   /** read a finished query (call once per frame before deciding what to update) */
   poll(renderer: THREE.WebGLRenderer) {
+    this.revive();
     if (!this.qPending || !this.q) return;
     const gl = renderer.getContext() as WebGL2RenderingContext;
     if (!gl.getQueryParameter(this.q, gl.QUERY_RESULT_AVAILABLE)) return;
     this.visible = !!gl.getQueryParameter(this.q, gl.QUERY_RESULT);
     this.qPending = false;
+  }
+
+  private revive() {
+    if (this.epoch === contextEpoch()) return;
+    this.epoch = contextEpoch();
+    this.cTex = this.dTex = null; this.dFbo = this.cdFbo = null; this.cdKey = "";
+    this.q = null; this.qActive = this.qPending = false; this.visible = true;
+    this.texture = this.depth = null;
   }
 
   /** issue the occlusion query only every Nth frame (a query per frame cost ~0.2-0.6 ms on ANGLE/Metal) */
