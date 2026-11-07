@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { BUNDLE_MAX_BYTES, bundleDir, bundleWriter, parseBundle } from "../../server/playtest-bundles";
+import { BUNDLE_CAP_COUNT, BUNDLE_CAP_MB, BUNDLE_MAX_BYTES, bundleDir, bundleLimits, bundleWriter, parseBundle } from "../../server/playtest-bundles";
 
 const good = {
   mark: true,
@@ -114,7 +114,32 @@ assert.equal(bundleDir(root, path.join(root, "elsewhere")), path.join(root, "els
   assert.equal(again.write({ at, id: "KB-6", json: {}, shot: null, shotMime: null }), null, "a second writer on the same folder sees the same cap");
   for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { recursive: true });
   assert.ok(w.write({ at, id: "KB-7", json: {}, shot: null, shotMime: null }), "clearing the folder lets writing resume");
+  assert.ok(again.write({ at, id: "KB-8", json: {}, shot: null, shotMime: null }));
+  assert.equal(w.write({ at, id: "KB-9", json: {}, shot: null, shotMime: null }), null, "a bundle another writer added counts toward the cap");
+  const failing = path.join(root, "failing"), fw = bundleWriter(failing, () => {}, { count: 10, bytes: 1024 * 1024 });
+  assert.throws(() => fw.write({ at, id: "KB-10", json: {}, shot: {} as Buffer, shotMime: "image/jpeg" }), "a write that fails part way throws");
+  assert.deepEqual(fs.readdirSync(failing), [], "and leaves no partial bundle to count toward the caps");
+
+  const mixed = path.join(root, "mixed"), filling = path.join(mixed, "2026-11-04T12-00-02-000Z-KB-60");
+  fs.mkdirSync(filling, { recursive: true });
+  const mw = bundleWriter(mixed, () => {}, { count: 10, bytes: 300 });
+  assert.ok(mw.write({ at, id: "KB-61", json: {}, shot: null, shotMime: null }), "an empty folder another server just made counts as nothing yet");
+  fs.writeFileSync(path.join(filling, "bundle.json"), "d".repeat(298));
+  assert.equal(mw.write({ at, id: "KB-62", json: {}, shot: null, shotMime: null }), null, "its bytes count once that server fills it");
   assert.ok(parseBundle({ ...good, replay: { ...good.replay, opts: { seed: 1, botAimRange: "Infinity", humans: [{ id: 0, name: "KONG", team: 0 }] } } }).ok);
+}
+
+{
+  const logs: string[] = [], log = (...a: unknown[]) => logs.push(a.join(" "));
+  assert.deepEqual(bundleLimits({}, log), { count: BUNDLE_CAP_COUNT, bytes: BUNDLE_CAP_MB * 1024 * 1024 }, "unset settings keep the default caps");
+  assert.deepEqual(bundleLimits({ KR_PLAYTEST_BUNDLES_MAX: "", KR_PLAYTEST_BUNDLES_MB: "" }, log), { count: 500, bytes: 1024 * 1024 * 1024 });
+  assert.deepEqual(bundleLimits({ KR_PLAYTEST_BUNDLES_MAX: "5000", KR_PLAYTEST_BUNDLES_MB: "20480" }, log), { count: 5000, bytes: 20480 * 1024 * 1024 });
+  assert.equal(logs.length, 0, "valid settings log nothing");
+  for (const v of ["0", "-3", "1.5", "abc", "1e400", "9007199254740993", " "]) {
+    const n = logs.length;
+    assert.deepEqual(bundleLimits({ KR_PLAYTEST_BUNDLES_MAX: v, KR_PLAYTEST_BUNDLES_MB: v }, log), { count: BUNDLE_CAP_COUNT, bytes: BUNDLE_CAP_MB * 1024 * 1024 }, `${JSON.stringify(v)} keeps the defaults`);
+    assert.equal(logs.length, n + 2, `${JSON.stringify(v)} is logged for each setting`);
+  }
 }
 
 {
@@ -156,6 +181,18 @@ assert.equal(bundleDir(root, path.join(root, "elsewhere")), path.join(root, "els
   assert.ok(written().length <= 20);
   server.close();
   await kb.close();
+
+  process.env.KR_PLAYTEST_BUNDLES = path.join(root, "capped");
+  process.env.KR_PLAYTEST_BUNDLES_MAX = "1";
+  const capped = kongbotDb(root);
+  delete process.env.KR_PLAYTEST_BUNDLES_MAX;
+  const one = http.createServer((req, res) => void capped.handle(req, res, "203.0.113.8"));
+  await new Promise<void>((r) => one.listen(0, "127.0.0.1", r));
+  const at = `http://127.0.0.1:${(one.address() as { port: number }).port}/api/kongbot`;
+  for (let i = 0; i < 2; i++) assert.equal((await fetch(at, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(report(good)) })).status, 200, "a report is accepted when the bundle folder is full");
+  assert.equal(fs.readdirSync(process.env.KR_PLAYTEST_BUNDLES).length, 1, "KR_PLAYTEST_BUNDLES_MAX caps the folder");
+  one.close();
+  await capped.close();
 }
 
 fs.rmSync(root, { recursive: true, force: true });

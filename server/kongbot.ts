@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import zlib from "node:zlib";
 import { MongoClient, Binary, type Collection, type Document } from "mongodb";
-import { bundleDir, bundleWriter, parseBundle, type Bundle } from "./playtest-bundles";
+import { bundleDir, bundleLimits, bundleWriter, parseBundle, type Bundle } from "./playtest-bundles";
 
 const URI = process.env.KR_MONGO_URI || "mongodb://127.0.0.1:27017";
 const DB = process.env.KR_MONGO_DB || "kong_royale";
@@ -43,8 +43,8 @@ export function kongbotDb(root: string) {
   let changedAt = new Date().toISOString();
   const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[kongbot]", ...a);
   const bundleRoot = bundleDir(root, process.env.KR_PLAYTEST_BUNDLES ?? (process.env.npm_lifecycle_event === "server" ? "1" : undefined));
-  const bundles = bundleRoot ? bundleWriter(bundleRoot, log) : null;
-  if (bundles) log(`playtest bundles are written to ${bundles.dir}`);
+  const bundles = bundleRoot ? bundleWriter(bundleRoot, log, bundleLimits(process.env, log)) : null;
+  if (bundles) log(`playtest bundles are written to ${bundles.dir} (up to ${bundles.limits.count} bundles, ${Math.round(bundles.limits.bytes / 1048576)} MB)`);
   function state(next: typeof storageState) {
     if (next === storageState) return;
     storageState = next; changedAt = new Date().toISOString();

@@ -52,6 +52,8 @@ The server reads these environment variables. Leave a variable unset to get its 
 | `KR_SERVE` | `1` with `npm start` | Also serve the built client from `dist/`. Without it the server only answers WebSockets and the API. |
 | `KR_EVENT_MODE` | on | Players can only join lobbies by link. Set `0` to let players create rooms and caster exhibitions. |
 | `KR_PLAYTEST_BUNDLES` | off | `1` (or a folder path) saves playtest bundles (F8 and KONGBOT reports with `?perfhud`) to disk. `npm run server` defaults it to `1`; `npm start` does not. `0` switches it off. `npx tsx tools/playtest/cli.mts list` reads the folder. |
+| `KR_PLAYTEST_BUNDLES_MAX` | `500` | Most bundles the folder holds. At the cap the server keeps taking reports but writes no more bundles until the folder is cleared. |
+| `KR_PLAYTEST_BUNDLES_MB` | `1024` | Most megabytes the folder holds, with the same rule. A report with its replay and picture is a few MB, so 1 GB holds about 200 to 300. Raise both for a long stream on a big disk. |
 | `KR_ADMIN_KEY_SHA256` | unset (admin off) | SHA-256 of the admin key, from `node tools/admin-lobby/key.mjs --hash`. Never the key itself. |
 | `KR_ADMIN_ALLOW_IPS` | empty | Comma list of addresses that skip the global wrong-key brake. Per-address lockouts still apply. |
 | `KR_ADMIN_ORIGINS` | `KR_ORIGINS` | Origins allowed to use the admin pages, if they differ from the site's own. |

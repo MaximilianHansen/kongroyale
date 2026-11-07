@@ -113,25 +113,59 @@ export function bundleDir(root: string, setting: string | undefined): string | n
 
 export interface BundleFile { at: Date; id: string; json: unknown; shot: Buffer | null; shotMime: string | null }
 
-function usage(dir: string): { count: number; bytes: number } {
-  let count = 0, bytes = 0;
-  try {
-    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      count++;
-      for (const f of fs.readdirSync(path.join(dir, d.name))) bytes += fs.statSync(path.join(dir, d.name, f)).size;
-    }
-  } catch { return { count: 0, bytes: 0 }; }
-  return { count, bytes };
+/** the bundle folder's default caps: KR_PLAYTEST_BUNDLES_MAX bundles and KR_PLAYTEST_BUNDLES_MB megabytes override them */
+export const BUNDLE_CAP_COUNT = 500, BUNDLE_CAP_MB = 1024;
+
+/** the caps from the two settings; a value that isn't a whole number above zero keeps the default and says so */
+export function bundleLimits(env: { KR_PLAYTEST_BUNDLES_MAX?: string; KR_PLAYTEST_BUNDLES_MB?: string }, log: (...a: unknown[]) => void): { count: number; bytes: number } {
+  const read = (name: "KR_PLAYTEST_BUNDLES_MAX" | "KR_PLAYTEST_BUNDLES_MB", fallback: number) => {
+    const v = env[name];
+    if (v === undefined || v === "") return fallback;
+    const n = Number(v);
+    if (Number.isSafeInteger(n) && n > 0) return n;
+    log(`${name}=${JSON.stringify(v.slice(0, 40))} is not a whole number above zero; using ${fallback}`);
+    return fallback;
+  };
+  return { count: read("KR_PLAYTEST_BUNDLES_MAX", BUNDLE_CAP_COUNT), bytes: read("KR_PLAYTEST_BUNDLES_MB", BUNDLE_CAP_MB) * 1024 * 1024 };
 }
 
-export function bundleWriter(dir: string, log: (...a: unknown[]) => void, limits = { count: 500, bytes: 1024 * 1024 * 1024 }) {
+/** a bundle folder untouched this long is final, so its size is counted once */
+const SETTLED_MS = 60_000;
+
+export function bundleWriter(dir: string, log: (...a: unknown[]) => void, limits = { count: BUNDLE_CAP_COUNT, bytes: BUNDLE_CAP_MB * 1024 * 1024 }) {
   let full = false;
+  // The folder is listed before every write, so servers sharing it share the cap and clearing it resumes writing.
+  // A bundle is never rewritten, so its bytes are kept once its folder has settled (untouched for SETTLED_MS) and a
+  // write costs one listing instead of a stat per file, which took 70 ms at 5000 bundles. A newer folder, such as one
+  // another server is still filling, is counted afresh each time. The folder is counted in full once, at start.
+  const sizes = new Map<string, number>();
+
+  function usage(): { count: number; bytes: number } {
+    let names: string[];
+    try { names = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); }
+    catch { sizes.clear(); return { count: 0, bytes: 0 }; }
+    const listed = new Set(names);
+    for (const name of sizes.keys()) if (!listed.has(name)) sizes.delete(name);
+    let bytes = 0;
+    for (const name of names) {
+      const known = sizes.get(name);
+      if (known !== undefined) { bytes += known; continue; }
+      let size = 0, settled = false;
+      try {
+        const folder = path.join(dir, name);
+        for (const f of fs.readdirSync(folder)) size += fs.statSync(path.join(folder, f)).size;
+        settled = Date.now() - fs.statSync(folder).mtimeMs > SETTLED_MS;
+      } catch { /* removed while being counted */ }
+      if (settled) sizes.set(name, size);
+      bytes += size;
+    }
+    return { count: names.length, bytes };
+  }
 
   function write(b: BundleFile): string | null {
     const body = Buffer.from(JSON.stringify(b.json));
     const size = body.length + (b.shot?.length ?? 0);
-    const { count, bytes } = usage(dir);
+    const { count, bytes } = usage();
     if (count >= limits.count || bytes + size > limits.bytes) {
       if (!full) { full = true; log(`playtest bundles: ${dir} is full (${count} bundles, ${Math.round(bytes / 1048576)} MB); not writing more until it is cleared`); }
       return null;
@@ -140,10 +174,15 @@ export function bundleWriter(dir: string, log: (...a: unknown[]) => void, limits
     const name = `${b.at.toISOString().replace(/[:.]/g, "-")}-${b.id.replace(/[^A-Za-z0-9-]/g, "").slice(0, 24) || "report"}`;
     const folder = path.resolve(dir, name);
     if (path.dirname(folder) !== path.resolve(dir)) return null;
-    fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(path.join(folder, "bundle.json"), body, { mode: 0o600 });
-    if (b.shot) fs.writeFileSync(path.join(folder, b.shotMime === "image/png" ? "shot.png" : b.shotMime === "image/webp" ? "shot.webp" : "shot.jpg"), b.shot, { mode: 0o600 });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(folder, { mode: 0o700 });
+    try {
+      fs.writeFileSync(path.join(folder, "bundle.json"), body, { mode: 0o600 });
+      if (b.shot) fs.writeFileSync(path.join(folder, b.shotMime === "image/png" ? "shot.png" : b.shotMime === "image/webp" ? "shot.webp" : "shot.jpg"), b.shot, { mode: 0o600 });
+    } catch (e) { fs.rmSync(folder, { recursive: true, force: true }); throw e; }
+    sizes.set(name, size);
     return folder;
   }
-  return { dir, write };
+  usage();
+  return { dir, limits, write };
 }
