@@ -34,7 +34,7 @@ pieces fit; read it before changing networking, the simulation or world loading.
 | `npm run server` | Game server on port 3020, restarted when a file changes. Add `KR_EVENT_MODE=0` to allow creating rooms. |
 | `npm run build` | Production build into `dist/` and `dist-admin/`, then precompression. About 15 s. |
 | `npm test` | Every check that needs no GPU, network or database. Run `npm run build` first. About 6 min (8 on 2 vCPU). |
-| `npm test -- --fast` | Skips the eleven slow checks (solver, glass, parity, sim, replay, nettail, afk, redteam, planeview, wt, wtbrowser). About 30 s. `--list` shows each check's id and `--only lint,sim` runs some of them. |
+| `npm test -- --fast` | Skips the twelve slow checks (solver, glass, parity, alloc, sim, replay, nettail, afk, redteam, planeview, wt, wtbrowser). About 30 s. `--list` shows each check's id and `--only lint,sim` runs some of them. |
 | `npm run typecheck` | The TypeScript check alone (the first step of `npm test`). |
 | `npm run sim` | A headless 50-bot match (trios, seed 42). Fast feedback for simulation changes. |
 | `npm run netlab` | Hit registration under simulated latency, using the real client and server code. Add `-- --check` to fail on a regression. |
@@ -112,7 +112,7 @@ catching it; turn it into a check when the same mistake shows up twice.
 | 1. The server is authoritative | Review only. The `redteam` step of `npm test` attacks the admin lobby. |
 | 2. `shared/` is deterministic: no `Math.random`, wall-clock time, Node or DOM APIs | Lint rule `shared-determinism`; the `sim` step of `npm test` fails when the headless match's state hash changes |
 | 2. `shared/` math gives the same bits everywhere: transcendental functions, `hypot` and `**` go through `shared/sim/dmath.ts` | Lint rule `shared-math` (empty baseline); the `dmath` step of `npm test` checks every dmath function bit for bit against recorded vectors |
-| 2. Hot paths don't allocate | Lint rule `hot-alloc` over `*.hot.ts` and `tools/lint/hot.json` |
+| 2. Hot paths don't allocate | Lint rule `hot-alloc` over `*.hot.ts` and `tools/lint/hot.json`; `npm test` (`alloc` step): bytes allocated per host tick and GC count on the real-play match against `tools/alloc-budgets.json`. Over budget fails, and so does more than 20% under until the budget is lowered |
 | 3. Never commit secrets | CI job "no secrets" (key and env file check, gitleaks) |
 | 4. Every asset needs a source and a licence | `npm test` (`assets` step): no new unattributed asset beyond `tools/verify-assets.baseline.json`, which only shrinks |
 | 5. One change per pull request | Review only |
