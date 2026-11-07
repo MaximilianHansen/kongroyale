@@ -54,6 +54,8 @@ The server reads these environment variables. Leave a variable unset to get its 
 | `KR_PLAYTEST_BUNDLES` | off | `1` (or a folder path) saves playtest bundles (F8 and KONGBOT reports with `?perfhud`) to disk. `npm run server` defaults it to `1`; `npm start` does not. `0` switches it off. `npx tsx tools/playtest/cli.mts list` reads the folder. |
 | `KR_PLAYTEST_BUNDLES_MAX` | `500` | Most bundles the folder holds. At the cap the server keeps taking reports but writes no more bundles until the folder is cleared. |
 | `KR_PLAYTEST_BUNDLES_MB` | `1024` | Most megabytes the folder holds, with the same rule. A report with its replay and picture is a few MB, so 1 GB holds about 200 to 300. Raise both for a long stream on a big disk. |
+| `KR_DIAG_AUTO` | off | `1` (or a folder path) accepts automatic performance summaries from players who opted in, at `/api/diag/auto`, and appends them to `<UTC date>.jsonl` in that folder (`1` is `.kongbot/diag-auto/`). `npm run server` defaults it to `1`; `npm start` does not. See "Bug reports" below. |
+| `KR_DIAG_AUTO_MB` | `256` | Most megabytes of summaries the folder holds. At the cap the server refuses new rows until the folder is cleared. |
 | `KR_ADMIN_KEY_SHA256` | unset (admin off) | SHA-256 of the admin key, from `node tools/admin-lobby/key.mjs --hash`. Never the key itself. |
 | `KR_ADMIN_ALLOW_IPS` | empty | Comma list of addresses that skip the global wrong-key brake. Per-address lockouts still apply. |
 | `KR_ADMIN_ORIGINS` | `KR_ORIGINS` | Origins allowed to use the admin pages, if they differ from the site's own. |
@@ -97,6 +99,13 @@ Reports from the player diagnostics sheet (`?diag`) arrive gzip-compressed (`Con
 inflates them itself, up to the same 12 MB as an uncompressed report, so a proxy in front must pass the body through
 unchanged (nginx and Caddy do by default) and allow bodies that large (nginx: `client_max_body_size 12m;` on the
 `/api/kongbot` location).
+
+Automatic performance summaries (`KR_DIAG_AUTO`) are a separate endpoint, `/api/diag/auto`, with its own limits, so
+they never use up the budget for players' own reports. A row is at most 4 KB of numbers and short keys, with no
+picture, logs, callsign or note. The server takes at most 60 rows per address per 10 minutes, 30 per install per hour
+and 6000 per hour in total, and stores a row sent twice (same install, session, kind, time and signature) once.
+`/health` counts them under `diagAuto`. Without `KR_TRUST_PROXY=1` behind a proxy every player shares one address, so the per-address
+limit becomes a server-wide one.
 
 ## Be careful with these
 

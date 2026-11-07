@@ -31,6 +31,7 @@ import { startWt, type WtEndpoint } from "./wt";
 import { makeBucket, struck, take, type Bucket } from "./limits";
 import { kongbotDb } from "./kongbot";
 import { annotationsApi } from "./annotations";
+import { autoCapBytes, autoDir, diagAutoApi } from "./diag-auto";
 import { serveStatic } from "./static";
 import { performanceMetrics } from "./perf";
 // (voice) squad comms + caster listen-in: the WebRTC handshake relay (the audio is peer to peer)
@@ -346,6 +347,9 @@ const dist = path.join(root, "dist");
 const kongbot = kongbotDb(root);
 // dev view notes (?dev=annotate) → .kongbot/annotations/*.jsonl (+ Mongo kongbot_annotations)
 const annotations = annotationsApi(root);
+// automatic performance summaries from players who opted in (?diag) → <KR_DIAG_AUTO>/<date>.jsonl, own limits
+const diagAuto = diagAutoApi(autoDir(root, process.env.KR_DIAG_AUTO ?? (process.env.npm_lifecycle_event === "server" ? "1" : undefined)), log, autoCapBytes(process.env.KR_DIAG_AUTO_MB, log));
+if (diagAuto.dir) log(`automatic summaries are written to ${diagAuto.dir}`);
 const adminHttp = createAdminHttp({ root, ipOf: (req) => ipOf(req), log });
 const server = http.createServer((req, res) => {
   const url = (req.url || "/").split("?")[0];
@@ -360,6 +364,14 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (url === "/api/diag/auto") {
+    void diagAuto.handle(req, res, ipOf(req)).catch((error) => {
+      log("automatic summary request failed", error);
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
+      if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: "could not store the row" }));
+    });
+    return;
+  }
   if (url === "/api/annotations") {
     void annotations.handle(req, res, ipOf(req)).catch((error) => {
       log("annotation request failed", error);
@@ -368,7 +380,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (url === "/health") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ ok: true, feedback: kongbot.health(), lobbies: lobbies.size, clients: [...lobbies.values()].reduce((a, l) => a + l.clients.length, 0), sockets: socks.size, transports: transportHealth(), inputs: [...lobbies.values()].flatMap((l) => (l.match && l.inputGaps ? [l.inputGaps.report()] : [])), ...(perf ? { performance: perf.read() } : {}) })); return; }
+  if (url === "/health") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ ok: true, feedback: kongbot.health(), diagAuto: diagAuto.health(), lobbies: lobbies.size, clients: [...lobbies.values()].reduce((a, l) => a + l.clients.length, 0), sockets: socks.size, transports: transportHealth(), inputs: [...lobbies.values()].flatMap((l) => (l.match && l.inputGaps ? [l.inputGaps.report()] : [])), ...(perf ? { performance: perf.read() } : {}) })); return; }
   if (!serve || (req.method !== "GET" && req.method !== "HEAD")) { res.writeHead(404); res.end(); return; }
   void serveStatic(req, res, url, dist).catch((error) => { log("asset request failed", error); if (!res.headersSent) res.writeHead(500); res.end(); });
 });
