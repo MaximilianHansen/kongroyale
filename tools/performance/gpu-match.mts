@@ -11,7 +11,8 @@
 // ground), --timeout-s 420 (whole match; 1800 with --route), --headed, --chrome <path> (else the installed Chrome channel),
 // --angle d3d11|metal|vulkan|default (default: d3d11 on Windows, metal on macOS, vulkan on Linux),
 // --shots <dir> (a screenshot per window), --trace <file> (a Chrome performance trace of the first --trace-s 30 s of
-// the match), --query "a=1&b=2" (extra URL flags, e.g. an A/B switch). --query, --trace and --shots are recorded in
+// the match), --census <file> (the per-draw cost census of each route segment, see below), --query "a=1&b=2" (extra URL
+// flags, e.g. an A/B switch), --cpuprofile <dir> (a V8 CPU profile per route segment). --query, --trace and --shots are recorded in
 // config, so runs that differ in them never mix. A software renderer (SwiftShader, llvmpipe, ...) fails the run.
 //
 // Interleave baseline and candidate runs yourself (base, cand, base, cand ...), five or more a side, one at a time:
@@ -106,7 +107,16 @@ const PRESETS = {
   epic: { aa: "taa", shadows: "epic", ao: true, post: "epic", viewDist: "epic", foliage: "epic", effects: "epic" },
 };
 const VIDEO = { v: 2, preset: PRESET, auto: PRESET, res3d: 1, resUser: true, dynres: false, fpsCap: 0, fov: 72, showFps: false, ...PRESETS[PRESET] };
-const QUERY = "seed=" + SEED + "&dynres=0&dpr=1" + (EXTRA ? "&" + EXTRA : "");
+// --census <file>: the per-draw cost census (client/src/engine/draw-census.ts) over each route segment's measured frames,
+// saved to <file>. The page is made cross-origin isolated (COOP + COEP added to every response it loads), so
+// performance.now() resolves 5 us instead of 100 us. The census wraps every draw and GL call: its timings are for
+// ranking draw classes, never for comparing with a run without it.
+const CENSUS = arg("--census", "");
+// --cpuprofile <dir>: a sampled V8 CPU profile of each route segment's run phase, <dir>/cpu-<segment>.cpuprofile (the
+// profiler slows the page: read its shares, never its milliseconds against an unprofiled run)
+const CPUPROF = arg("--cpuprofile", "");
+if ((CPUPROF || CENSUS) && ROUTE === "pan") throw Error("--cpuprofile and --census work per route segment: use them with --route tour or survey");
+const QUERY = "seed=" + SEED + "&dynres=0&dpr=1" + (CENSUS ? "&drawcensus" : "") + (EXTRA ? "&" + EXTRA : "");
 
 // ---- server: the measured checkout's production entry point, loopback only
 async function up() { try { return (await fetch(ORIGIN + "/", { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } }
@@ -223,6 +233,7 @@ function install(cfg: { maxFrames: number; panRate: number; panPitch: number; pl
     let progs0 = 0;
     if (!pan) {
       const run = kr.tourRun; c.SEG[i] = run ? run.index : -1; c.MEAS[i] = run?.measuring ? 1 : 0;
+      const dc = kr.drawCensus; if (dc) { dc.label = String(c.SEG[i]); dc.on = c.MEAS[i] === 1; }
       A.simIn = A.pred = A.rupd = A.act = A.vehu = A.idle = A.occ0 = A.cull1 = 0; A.inStep = true;
       info.reset(); progs0 = info.programs?.length ?? 0;
     }
@@ -306,6 +317,11 @@ function startTour(cfg: { segs: Segment[]; maxHp: number; ar: number; arMag: num
 const browser: Browser = await chromium.launch({ executablePath: CHROME || undefined, channel: CHROME ? undefined : "chrome", headless: !HEADED, args: FLAGS, timeout: 120_000 });
 const browserVersion = browser.version();
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+if (CENSUS) await ctx.route(ORIGIN + "/**", async (rt) => {
+  const res = await rt.fetch(), headers = { ...res.headers(), "cross-origin-opener-policy": "same-origin", "cross-origin-embedder-policy": "require-corp" };
+  delete headers["content-encoding"]; delete headers["content-length"];
+  await rt.fulfill({ response: res, headers });
+});
 await ctx.addInitScript((v) => { try { localStorage.setItem("kr-video", v); localStorage.setItem("kr-fov-moved", "1"); } catch { /* private mode */ } }, JSON.stringify(VIDEO));
 // tsx compiles the page functions below with esbuild's keepNames, which calls a __name helper the page doesn't have
 await ctx.addInitScript("globalThis.__name = (f) => f;");
@@ -348,6 +364,7 @@ try {
   if (pageInfo.stage === "failed") throw Error("boot failed");
   pageInfo.software = /swiftshader|llvmpipe|softpipe|software|microsoft basic/i.test(String(pageInfo.renderer));
   if (pageInfo.software && !SOFTWARE) throw Error("software renderer " + pageInfo.renderer + ": not a real-GPU run (--software checks the route, never the timing)");
+  if (CENSUS) await page.evaluate(() => { const dc = (window as any).__kr.drawCensus; if (!dc) throw Error("?drawcensus did not install __kr.drawCensus"); dc.on = false; dc.reset(); });
   await page.evaluate(install, { maxFrames: Math.ceil(TIMEOUT_S * (ROUTE === "pan" ? 250 : 150)), panRate: PAN_RATE, panPitch: PAN_PITCH, planeSpeed: PLANE_SPEED, route: ROUTE });
   if (ROUTE !== "pan") await page.evaluate("globalThis.__krTourFns = { steer: " + steer.toString() + ", runner: " + tourRunner.toString() + " }");
 
@@ -364,6 +381,16 @@ try {
   });
   const m0 = Date.now();
   let tracing = !!TRACE, landedAt = 0, last = "", lastSeg = "";
+  const cdp = CPUPROF ? await ctx.newCDPSession(page) : null;
+  let profiling = -1;
+  const stopProfile = async () => {
+    if (!cdp || profiling < 0) return;
+    const { profile } = await cdp.send("Profiler.stop") as { profile: unknown };
+    const f = path.resolve(CPUPROF, "cpu-" + SEGS[profiling].id + ".cpuprofile");
+    fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(profile)); artifacts.push(f);
+    profiling = -1;
+  };
+  if (cdp) { await cdp.send("Profiler.enable"); await cdp.send("Profiler.setSamplingInterval", { interval: 200 }); }
   const seen = new Set<string>();
   for (;;) {
     const s = await read();
@@ -383,9 +410,10 @@ try {
         const tag = s.seg + " " + s.segPhase;
         if (landedAt && tag !== lastSeg) {
           lastSeg = tag; log("  " + (SEGS[s.seg]?.id ?? "-") + " " + s.segPhase + " at " + s.x + ", " + s.z);
+          if (cdp) { await stopProfile(); if (s.segPhase === "run") { await cdp.send("Profiler.start"); profiling = s.seg; } }
           if (s.segPhase === "run") { const at = s.seg; setTimeout(() => { void page.evaluate(() => (window as any).__kr.tourRun?.index).then((now) => now === at ? shot("tour-" + SEGS[at].id) : undefined).catch(() => {}); }, Math.min(8, SEGS[at].seconds / 2) * 1000); }
         }
-        if (s.done) { await sleep(500); break; }
+        if (s.done) { await stopProfile(); await sleep(500); break; }
         if (landedAt && s.phase >= 3) { errors.push("the match ended at " + el.toFixed(0) + " s, in " + (SEGS[s.seg]?.id ?? "-") + ": run fewer --segments per match"); break; }
       } else if (s.pan && !landedAt) {
         landedAt = Date.now(); route.landed = { x: s.x, z: s.z };
@@ -405,6 +433,14 @@ try {
     const attrib: Record<string, number[]> = {}; for (const k of names) attrib[k] = a(c[k]);
     return { panT0: c.panT0 as number, PN: a(c.PN), n, invalid: c.invalid, disjoints: c.disjoints, timer: c.timer, T: a(c.T), CPU: a(c.CPU), GPU: a(c.GPU), PH: a(c.PH), ST: a(c.ST), SR: a(c.SR), loaf: c.loaf, ...attrib } as any;
   }, [...ATTRIB]);
+  if (CENSUS) {
+    const rep = await page.evaluate(() => (window as any).__kr.drawCensus.report()) as Record<string, unknown>;
+    const named: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rep)) named[/^\d+$/.test(k) ? SEGS[Number(k)]?.id ?? k : k] = v;
+    fs.mkdirSync(path.dirname(path.resolve(CENSUS)), { recursive: true });
+    fs.writeFileSync(path.resolve(CENSUS), JSON.stringify({ query: QUERY, preset: PRESET, viewport: W + "x" + H, ...named }, null, 1));
+    artifacts.push(path.resolve(CENSUS));
+  }
   if (ROUTE !== "pan") tour = await page.evaluate(() => { const r = (window as any).__kr.tourRun; return r ? { results: r.results, log: r.log } : null; });
   pageInfo.krErrors = await page.evaluate(() => (window as any).__kr.errors.slice(0, 20));
   pageInfo.renderScale = await page.evaluate(() => (window as any).__kr.engine.renderScale);
@@ -516,7 +552,7 @@ const winInfo = process.platform === "win32" ? {
 const result: RunResult = {
   schema: RESULT_SCHEMA, version: RESULT_VERSION, tool: "tools/performance/gpu-match.mts", startedAt: new Date(t0).toISOString(), durationMs: Date.now() - t0,
   source: source(root), environment: { ...base, gpu: data ? String(pageInfo.renderer) : null },
-  config: { browser: "chrome " + browserVersion, flags: FLAGS.join(" "), headless: !HEADED, viewport: W + "x" + H, dpr: 1, preset: PRESET, res3d: 1, dynres: false, fpsCap: "display refresh", mode: MODE, seed: SEED, ...(ROUTE === "pan" ? { panS: PAN_S } : { route: ROUTE, tourVersion: TOUR_VERSION, segments: SEGS.map((s) => s.id).join(","), software: SOFTWARE }), query: QUERY, cache: "fresh browser profile per run", ...(TRACE ? { traceS: TRACE_S } : {}), ...(SHOTS ? { shots: true } : {}) },
+  config: { browser: "chrome " + browserVersion, flags: FLAGS.join(" "), headless: !HEADED, viewport: W + "x" + H, dpr: 1, preset: PRESET, res3d: 1, dynres: false, fpsCap: "display refresh", mode: MODE, seed: SEED, ...(ROUTE === "pan" ? { panS: PAN_S } : { route: ROUTE, tourVersion: TOUR_VERSION, segments: SEGS.map((s) => s.id).join(","), software: SOFTWARE }), query: QUERY, cache: "fresh browser profile per run", ...(TRACE ? { traceS: TRACE_S } : {}), ...(SHOTS ? { shots: true } : {}), ...(CENSUS ? { census: true } : {}), ...(CPUPROF ? { cpuProfileUs: 200 } : {}) },
   cases, errors: [...errors, ...pageErrors.map((e) => "pageerror: " + e), ...((pageInfo.krErrors as string[] | undefined) ?? []).map((e) => "__kr.errors: " + e.split("\n")[0])], artifacts,
 };
 (result as unknown as Record<string, unknown>).detail = {

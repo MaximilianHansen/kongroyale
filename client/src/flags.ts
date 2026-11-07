@@ -43,6 +43,7 @@ const FLAGS = {
   diag: { kind: text, owner: "ui", purpose: "diagnostics recorder; =0 off, absent = VITE_KR_DIAG" },
   dev: { kind: text, owner: "boot", purpose: "dev tools after ready, and the full title (=annotate opens the world annotator)" },
   dither: { kind: on, owner: "engine", purpose: "LOD fades dither; =0 scales instead (always off under Node)" },
+  drawcensus: { kind: present, owner: "engine", purpose: "__kr.drawCensus: per-draw main-thread cost by pass and class" },
   dpr: { kind: num(0), owner: "engine", purpose: "device pixel ratio instead of the screen's (capped at 2); 0 = the screen's" },
   dside: { kind: present, owner: "pois", purpose: "Mist Falls materials render double-sided" },
   dynres: { kind: text, owner: "engine", purpose: "dynamic resolution: =1 on, =0 forced off, absent = the setting" },

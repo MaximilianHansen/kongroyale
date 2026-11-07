@@ -96,6 +96,7 @@ const engine = (() => {
 })();
 kr.engine = engine;
 if (flag("texprof")) await import("./engine/dev-probes").then((m) => m.installTexProf(engine), (e) => report("texprof", e));
+if (flag("drawcensus")) await import("./engine/draw-census").then((m) => { kr.drawCensus = m.installDrawCensus(engine); }, (e) => report("drawcensus", e));
 // the video settings (engine/display.ts): frame cap / 3D resolution now, the rest once atmos + veg exist
 const display = gameMode && !shot ? new Display(engine) : null;
 kr.display = display;
