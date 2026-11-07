@@ -200,7 +200,7 @@ const FLAGS = {
   wprepass: { kind: present, owner: "water", purpose: "depth pre-pass for water" },
   wripple: { kind: present, owner: "water", purpose: "demo ripples" },
   ws: { kind: text, owner: "game", routing: true, purpose: "game server socket URL (ws:// or wss://) instead of the page's own" },
-  wt: { kind: one, owner: "game", purpose: "WebTransport when the server offers it" },
+  wt: { kind: text, owner: "game", purpose: "WebTransport: =1 on, =0 off, else the A/B arm" },
 } as const satisfies Record<string, Flag>;
 
 export type FlagName = keyof typeof FLAGS;
