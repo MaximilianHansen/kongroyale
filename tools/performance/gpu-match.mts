@@ -12,7 +12,8 @@
 // --angle d3d11|metal|vulkan|default (default: d3d11 on Windows, metal on macOS, vulkan on Linux),
 // --shots <dir> (a screenshot per window), --trace <file> (a Chrome performance trace of the first --trace-s 30 s of
 // the match), --census <file> (the per-draw cost census of each route segment, see below), --query "a=1&b=2" (extra URL
-// flags, e.g. an A/B switch), --cpuprofile <dir> (a V8 CPU profile per route segment). --query, --trace and --shots are recorded in
+// flags, e.g. an A/B switch), --cpuprofile <dir> (a V8 CPU profile per route segment), --drawlab <file> (after the
+// route, the draw-list lab of draw-lab.mts where the player stands: three's per-draw cost against a raw GL replay). --query, --trace and --shots are recorded in
 // config, so runs that differ in them never mix. A software renderer (SwiftShader, llvmpipe, ...) fails the run.
 //
 // Interleave baseline and candidate runs yourself (base, cand, base, cand ...), five or more a side, one at a time:
@@ -56,6 +57,7 @@ import { arg, env, save, source, stats } from "./common.mts";
 import { pathToFileURL } from "node:url";
 import { RESULT_SCHEMA, RESULT_VERSION, type CaseResult, type Metric, type RunResult, type Unit } from "./schema.ts";
 import { TOUR, TOUR_VERSION, steer, tourRunner, type Segment } from "./tour.mts";
+import { drawLab, type LabResult } from "./draw-lab.mts";
 
 const root = path.resolve(arg("--root", "."));
 const out = path.resolve(arg("--out", "reports/performance/gpu-match.json"));
@@ -116,6 +118,13 @@ const CENSUS = arg("--census", "");
 // profiler slows the page: read its shares, never its milliseconds against an unprofiled run)
 const CPUPROF = arg("--cpuprofile", "");
 if ((CPUPROF || CENSUS) && ROUTE === "pan") throw Error("--cpuprofile and --census work per route segment: use them with --route tour or survey");
+// --drawlab <file>: once the route is done, draw-lab.mts captures one frame's static module draws where the player stands
+// and times three against a raw replay of their GL calls (--lab-frames 120 measured frames, --lab-reps 3 passes a frame).
+// The page is cross-origin isolated as for --census; the census would wrap the same calls, so the two never mix.
+const DRAWLAB = arg("--drawlab", "");
+const LAB_FRAMES = Number(arg("--lab-frames", "120")), LAB_REPS = Number(arg("--lab-reps", "3"));
+if (DRAWLAB && CENSUS) throw Error("--drawlab and --census both wrap the GL context: run them separately");
+if (DRAWLAB && ROUTE === "pan") throw Error("--drawlab runs where the route ends: use it with --route tour (--segments walk-town)");
 const QUERY = "seed=" + SEED + "&dynres=0&dpr=1" + (CENSUS ? "&drawcensus" : "") + (EXTRA ? "&" + EXTRA : "");
 
 // ---- server: the measured checkout's production entry point, loopback only
@@ -323,7 +332,7 @@ const ctx = await browser.newContext({ viewport: { width: W, height: H }, device
 // a fetch the local server resets under load is retried once, then left to the browser (a subresource keeps loading
 // without the isolation headers, which only the document needs: a document that lost them fails the run at ready); an
 // unhandled rejection here used to end the run
-if (CENSUS) await ctx.route(ORIGIN + "/**", async (rt) => {
+if (CENSUS || DRAWLAB) await ctx.route(ORIGIN + "/**", async (rt) => {
   for (let i = 0; i < 2; i++) {
     try {
       const res = await rt.fetch(), headers = { ...res.headers(), "cross-origin-opener-policy": "same-origin", "cross-origin-embedder-policy": "require-corp" };
@@ -374,7 +383,7 @@ try {
   });
   log("ready in " + (marks.readyWallMs / 1000).toFixed(1) + " s on " + pageInfo.renderer + "; timer query " + pageInfo.timerQuery);
   if (pageInfo.stage === "failed") throw Error("boot failed");
-  if (CENSUS && !(await page.evaluate(() => globalThis.crossOriginIsolated))) throw Error("--census: the page is not cross-origin isolated (its document lost the COOP/COEP headers), so its timings would be clamped");
+  if ((CENSUS || DRAWLAB) && !(await page.evaluate(() => globalThis.crossOriginIsolated))) throw Error((CENSUS ? "--census" : "--drawlab") + ": the page is not cross-origin isolated (its document lost the COOP/COEP headers), so its timings would be clamped");
   pageInfo.software = /swiftshader|llvmpipe|softpipe|software|microsoft basic/i.test(String(pageInfo.renderer));
   if (pageInfo.software && !SOFTWARE) throw Error("software renderer " + pageInfo.renderer + ": not a real-GPU run (--software checks the route, never the timing)");
   if (CENSUS) await page.evaluate(() => { const dc = (window as any).__kr.drawCensus; if (!dc) throw Error("?drawcensus did not install __kr.drawCensus"); dc.on = false; dc.reset(); });
@@ -453,6 +462,13 @@ try {
     fs.mkdirSync(path.dirname(path.resolve(CENSUS)), { recursive: true });
     fs.writeFileSync(path.resolve(CENSUS), JSON.stringify({ query: QUERY, preset: PRESET, viewport: W + "x" + H, ...named }, null, 1));
     artifacts.push(path.resolve(CENSUS));
+  }
+  if (DRAWLAB) {
+    const lab: LabResult = await page.evaluate(drawLab, { frames: LAB_FRAMES, reps: LAB_REPS });
+    fs.mkdirSync(path.dirname(path.resolve(DRAWLAB)), { recursive: true });
+    fs.writeFileSync(path.resolve(DRAWLAB), JSON.stringify({ query: QUERY, preset: PRESET, viewport: W + "x" + H, renderer: pageInfo.renderer, segments: SEGS.map((s) => s.id).join(","), ...lab }, null, 1));
+    artifacts.push(path.resolve(DRAWLAB));
+    log("draw lab: " + lab.draws.set + " static draws of " + lab.draws.main + (lab.streamed ? "" : " (island still streaming)") + "; us/draw p50 " + Object.entries(lab.variants).map(([k, v]) => k + " " + v.usPerDraw.p50.toFixed(2)).join(", "));
   }
   if (ROUTE !== "pan") tour = await page.evaluate(() => { const r = (window as any).__kr.tourRun; return r ? { results: r.results, log: r.log } : null; });
   pageInfo.krErrors = await page.evaluate(() => (window as any).__kr.errors.slice(0, 20));
@@ -565,7 +581,7 @@ const winInfo = process.platform === "win32" ? {
 const result: RunResult = {
   schema: RESULT_SCHEMA, version: RESULT_VERSION, tool: "tools/performance/gpu-match.mts", startedAt: new Date(t0).toISOString(), durationMs: Date.now() - t0,
   source: source(root), environment: { ...base, gpu: data ? String(pageInfo.renderer) : null },
-  config: { browser: "chrome " + browserVersion, flags: FLAGS.join(" "), headless: !HEADED, viewport: W + "x" + H, dpr: 1, preset: PRESET, res3d: 1, dynres: false, fpsCap: "display refresh", mode: MODE, seed: SEED, ...(ROUTE === "pan" ? { panS: PAN_S } : { route: ROUTE, tourVersion: TOUR_VERSION, segments: SEGS.map((s) => s.id).join(","), software: SOFTWARE }), query: QUERY, cache: "fresh browser profile per run", ...(TRACE ? { traceS: TRACE_S } : {}), ...(SHOTS ? { shots: true } : {}), ...(CENSUS ? { census: true } : {}), ...(CPUPROF ? { cpuProfileUs: 200 } : {}) },
+  config: { browser: "chrome " + browserVersion, flags: FLAGS.join(" "), headless: !HEADED, viewport: W + "x" + H, dpr: 1, preset: PRESET, res3d: 1, dynres: false, fpsCap: "display refresh", mode: MODE, seed: SEED, ...(ROUTE === "pan" ? { panS: PAN_S } : { route: ROUTE, tourVersion: TOUR_VERSION, segments: SEGS.map((s) => s.id).join(","), software: SOFTWARE }), query: QUERY, cache: "fresh browser profile per run", ...(TRACE ? { traceS: TRACE_S } : {}), ...(SHOTS ? { shots: true } : {}), ...(CENSUS ? { census: true } : {}), ...(DRAWLAB ? { drawLab: { frames: LAB_FRAMES, reps: LAB_REPS } } : {}), ...(CPUPROF ? { cpuProfileUs: 200 } : {}) },
   cases, errors: [...errors, ...pageErrors.map((e) => "pageerror: " + e), ...((pageInfo.krErrors as string[] | undefined) ?? []).map((e) => "__kr.errors: " + e.split("\n")[0])], artifacts,
 };
 (result as unknown as Record<string, unknown>).detail = {
