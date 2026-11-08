@@ -57,7 +57,7 @@ export function createControlsGuide(onDismiss?: () => void, onRange?: () => void
 .kr-guide { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; pointer-events: auto; background: var(--kong-scrim);
   color: var(--kong-text); font-family: var(--kong-font-ui); }
 .kr-guide[hidden] { display: none; }
-.kr-guide .guide-card { width: min(${T(760)}, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; box-sizing: border-box; padding: ${T(36)} ${T(40)};
+.kr-guide .guide-card { position: relative; width: min(${T(760)}, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; box-sizing: border-box; padding: ${T(80)} ${T(40)} ${T(36)};
   background: var(--kong-gradient-panel); border: var(--kong-outline-md) solid var(--kong-outline); border-radius: var(--kong-radius-dialog);
   box-shadow: var(--kong-drop-dialog); animation: tn-pop var(--kong-motion-slow) var(--kong-ease-spring) both; }
 .kr-guide h2 { margin: 0 0 ${T(10)}; font-family: var(--kong-font-display); font-weight: 400; font-size: ${T(56)}; line-height: 1; letter-spacing: .01em;
@@ -78,6 +78,13 @@ export function createControlsGuide(onDismiss?: () => void, onRange?: () => void
 .kr-guide nav button { min-height: var(--kong-control-height); padding: 0 ${T(24)}; border-width: var(--kong-outline-md); border-radius: var(--kong-radius-button);
   background: var(--kong-gradient-secondary); box-shadow: var(--kong-drop-button); font-size: var(--kong-fs-tab); }
 .kr-guide nav button.next { background: var(--kong-gradient-primary); color: var(--kong-on-accent); }
+.kr-guide .guide-card > button.back { appearance: none; position: absolute; top: ${T(24)}; right: ${T(24)}; display: inline-flex; align-items: center; gap: ${T(14)};
+  padding: ${T(10)} ${T(18)}; border-radius: ${T(14)}; border: var(--kong-outline-sm) solid var(--kong-outline); background: var(--kong-surface-2);
+  box-shadow: var(--kong-drop-pill); color: var(--kong-text); font-family: var(--kong-font-ui); font-weight: 600; font-size: ${T(17)};
+  line-height: ${T(26.35)}; letter-spacing: .2em; text-transform: uppercase; transition: transform var(--kong-motion-fast) var(--kong-ease-spring); }
+.kr-guide .guide-card > button.back b { font-weight: 900; }
+.kr-guide .guide-card > button.back:hover { background: var(--kong-surface-raised); transform: translateY(${T(-2)}); }
+.kr-guide .guide-card > button.back:active { transform: translateY(${T(3)}); box-shadow: var(--kong-drop-pressed); }
 .kr-guide nav button:hover { transform: translateY(${T(-3)}); box-shadow: var(--kong-drop-hover); }
 .kr-guide nav button:active { transform: translateY(${T(5)}); box-shadow: var(--kong-drop-pressed); }
 .kr-guide nav button.close { background: none; border-color: transparent; box-shadow: none; color: var(--kong-text-muted); }
@@ -99,7 +106,7 @@ html.kr-calm .kr-guide .guide-card { animation: none; }
 `);
   const root = document.createElement("div"); root.className = "kr-guide"; root.hidden = true;
   root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-label", "Learn the controls");
-  root.innerHTML = `<div class="guide-card"><h2>Learn the controls</h2><p class="guide-intro">A quick guide before your first match. Pick any station to replay it, or skip whenever you like.</p><div class="station-list"></div><h3></h3><p class="guide-key"></p><p class="guide-text"></p><nav><button class="next">Next</button><button class="close">Skip guide</button><button class="range">Practice controls in firing range</button></nav></div>`;
+  root.innerHTML = `<div class="guide-card"><button class="back">Back · <b>Esc</b></button><h2>Learn the controls</h2><p class="guide-intro">A quick guide before your first match. Pick any station to replay it, or skip whenever you like.</p><div class="station-list"></div><h3></h3><p class="guide-key"></p><p class="guide-text"></p><nav><button class="next">Next</button><button class="close">Skip guide</button><button class="range">Practice controls in firing range</button></nav></div>`;
   const range = root.querySelector<HTMLButtonElement>(".range")!; range.hidden = !onRange; range.onclick = () => { close(); onRange?.(); };
   let index = 0, previous: HTMLElement | null = null;
   const stations = root.querySelector(".station-list")!;
@@ -112,6 +119,8 @@ html.kr-calm .kr-guide .guide-card { animation: none; }
     root.querySelector(".next")!.textContent = i === CONTROL_LESSONS.length - 1 ? "Done" : "Next";
   }
   function close() { root.hidden = true; onDismiss?.(); try { localStorage.setItem(KEY, "1"); } catch { /* private mode */ } previous?.focus(); }
+  root.addEventListener("click", (e) => { if (e.target === root) close(); });
+  (root.querySelector(".back") as HTMLButtonElement).onclick = close;
   (root.querySelector(".close") as HTMLButtonElement).onclick = close;
   (root.querySelector(".next") as HTMLButtonElement).onclick = () => index === CONTROL_LESSONS.length - 1 ? close() : paint(index + 1);
   root.addEventListener("keydown", (e) => {
