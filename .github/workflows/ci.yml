@@ -73,6 +73,25 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
+  formal:
+    name: TLA+ models
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
+      # tlc.mjs downloads the pinned TLA+ tools jar and refuses it unless its SHA-256 matches; the mutants prove each model
+      # still fails when a guard is removed. npm test's formal check only compares code hashes and never runs TLC.
+      - run: node tools/formal/tlc.mjs --all --mutants
+
   boot:
     name: no-GPU boot smoke
     runs-on: ubuntu-latest
