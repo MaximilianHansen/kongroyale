@@ -22,6 +22,7 @@ const checks = [
   { id: "lint", name: "lint", cmd: "npx", args: ["tsx", "tools/lint/check.mts"] },
   { id: "bundles", name: "playtest bundles (hostile input, caps, rate limit)", cmd: "npx", args: ["tsx", "tools/playtest/bundles.test.mts"] },
   { id: "auto", name: "automatic summaries (hostile rows, dedupe, own limits, folder cap)", cmd: "npx", args: ["tsx", "tools/playtest/diag-auto.test.mts"] },
+  { id: "consent", name: "automatic summaries consent (told first, off, privacy signal)", cmd: "npx", args: ["tsx", "tools/playtest/auto-consent.test.mts"] },
   { id: "triage", name: "playtest triage (fingerprints, clusters, ticker, no private text)", cmd: "npx", args: ["tsx", "tools/playtest/triage.test.mts"] },
   { id: "ab", name: "WebTransport A/B split by arm (playtest bundles, /health)", cmd: "npx", args: ["tsx", "tools/playtest/ab.test.mts"] },
   { id: "gate", name: "verifier flag and empty-input gates", cmd: "npx", args: ["tsx", "tools/gate.test.mts"] },
