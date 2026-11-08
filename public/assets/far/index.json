@@ -2,84 +2,100 @@
   "version": 1,
   "pois": {
     "coconut-cove": {
-      "hash": "b9355e49dcb962e4",
+      "hash": "f78401b6f6d1bef0",
+      "bin": "2d3dca531389066e",
       "tris": 1744,
       "bytes": 24464
     },
     "peel-harbor": {
-      "hash": "a8a9f098739ae900",
+      "hash": "5b44f1c8f5ce487a",
+      "bin": "596c37fae85a3176",
       "tris": 46125,
       "bytes": 654090
     },
     "mango-market": {
-      "hash": "72d0a0fd8932eeec",
+      "hash": "55852957f0e3626d",
+      "bin": "cc6fecdfffb69fa1",
       "tris": 4166,
       "bytes": 61388
     },
     "stilt-town": {
-      "hash": "8598ac5bea3d3dcd",
+      "hash": "d82b974b26b482d9",
+      "bin": "c4c07f692fb7bbdd",
       "tris": 6126,
       "bytes": 79616
     },
     "banana-temple": {
-      "hash": "b69d8e6aef444086",
+      "hash": "bfa8b50c61c4f647",
+      "bin": "1c0e199f88a483e6",
       "tris": 11998,
       "bytes": 206668
     },
     "ripe-peak": {
-      "hash": "5c4a57cb98b9c6ce",
-      "tris": 11994,
-      "bytes": 275776
+      "hash": "231a1a67048559b3",
+      "bin": "b4d36d06331595bd",
+      "tris": 11999,
+      "bytes": 190586
     },
     "mist-falls": {
-      "hash": "752a9c89275fa805",
-      "tris": 11998,
-      "bytes": 156840
+      "hash": "5de7fd2997135538",
+      "bin": "e378893ad5564c25",
+      "tris": 11997,
+      "bytes": 157774
     },
     "cnvs-lab": {
-      "hash": "9dc81f7c5a1a18a7",
+      "hash": "8bbae979b947a241",
+      "bin": "e2e2378804f14982",
       "tris": 11954,
       "bytes": 158404
     },
     "canopy-line": {
-      "hash": "28804db65a9a9f02",
+      "hash": "1af52fadb16026e3",
+      "bin": "b80d9849eb128597",
       "tris": 15981,
       "bytes": 307846
     },
     "peel-strip": {
-      "hash": "94541db97360aec7",
+      "hash": "d1446ef770522737",
+      "bin": "ca3a9583f820a795",
       "tris": 12000,
       "bytes": 172800
     },
     "the-plantation": {
-      "hash": "b42f5e48107c5cad",
+      "hash": "b6e0bb7dff1a16a1",
+      "bin": "ed0bdbfa0a27dc60",
       "tris": 11999,
       "bytes": 179966
     },
     "lookout-point": {
-      "hash": "6b03dce1c2da332c",
+      "hash": "c698d3f35ec8f2e0",
+      "bin": "253dc551cd18cbfe",
       "tris": 15150,
       "bytes": 241252
     },
     "the-wreck": {
-      "hash": "76f62a431077a1cd",
+      "hash": "8daaa712e433c053",
+      "bin": "0abdc315fb53492f",
       "tris": 11955,
       "bytes": 151710
     },
     "coco-caves": {
-      "hash": "4b8fa0ee4de0e891",
+      "hash": "522b272191b727ff",
+      "bin": "d5da0bfd3a768dcc",
       "tris": 12000,
       "bytes": 218940
     },
     "wreck-bay": {
-      "hash": "9a04deda42892c28",
+      "hash": "3f89ee0dd7ae8b70",
+      "bin": "64ff91429ea55987",
       "tris": 2719,
       "bytes": 32086
     },
     "the-murk": {
-      "hash": "44591b0ca5376384",
-      "tris": 12245,
-      "bytes": 281270
+      "hash": "5e92133e41741a04",
+      "bin": "41ba13e640f4640f",
+      "tris": 12343,
+      "bytes": 282030
     }
   }
 }

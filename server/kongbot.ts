@@ -186,7 +186,7 @@ export function kongbotDb(root: string) {
       build: gitInfo(), ua: str(req.headers["user-agent"], 400),
       ctx: clean(b.ctx ?? null), logs: Array.isArray(b.logs) ? (clean(b.logs.slice(-1500)) as unknown[]) : [], trail: Array.isArray(b.trail) ? (clean(b.trail.slice(-400)) as unknown[]) : [],
       shot: shot ? new Binary(shot) : null, shotMime, shotSize: Array.isArray(b.shotSize) ? (b.shotSize as number[]).slice(0, 2) : null,
-      bundle: bundle ? { mark: bundle.mark, timeline: clean(bundle.timeline) as Bundle["timeline"], flags: bundle.flags } : null,
+      bundle: bundle ? { mark: bundle.mark, timeline: clean(bundle.timeline) as Bundle["timeline"], flags: bundle.flags, diag: bundle.diag } : null,
       notes: [], history: [{ at, by: "reporter", status: "new" }],
     };
     const saveBundle = (id: string) => {
