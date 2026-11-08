@@ -3,7 +3,7 @@ import path from "node:path";
 
 export const BUNDLE_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_FIELDS = 32, MAX_ROWS = 7200, MAX_FLAGS = 200, MAX_REPLAY_EVENTS = 200_000, MAX_EVENT_LEN = 16, MAX_OPTS_BYTES = 4096;
-const FIELD = /^[A-Za-z][A-Za-z0-9]{0,31}$/, FLAG_NAME = /^[A-Za-z0-9_-]{1,40}$/;
+const FIELD = /^[A-Za-z][A-Za-z0-9]{0,31}$/, FLAG_NAME = /^[A-Za-z0-9_-]{1,40}$/, SHA = /^(?:[0-9a-f]{7,40}|unknown)$/;
 /** player diagnostics (client/src/playtest/diag.ts snapshot() plus what report.ts adds): the event ring holds 500 and
  *  the path an hour at 1 Hz on the client, so anything longer did not come from it */
 const MAX_DIAG_EVENTS = 500, MAX_PATH_ROWS = 3600, MAX_PATH_FIELDS = 16, MAX_EVENT_TEXT = 200, MAX_DROPPED = 8;
@@ -22,6 +22,7 @@ export interface Bundle { mark: boolean; timeline: Timeline | null; flags: Recor
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 const bad = (error: string): { ok: false; error: string } => ({ ok: false, error });
+const optStr = (v: unknown, re: RegExp): v is string | null => v === null || (typeof v === "string" && re.test(v));
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
