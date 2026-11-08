@@ -488,9 +488,9 @@ async function run() {
     }, () => undefined);
   }, 5000);
   const hold = async (ms: number) => { const end = Date.now() + ms; while (Date.now() < end && !overCap) { await trace(); await sleep(Math.min(1000, Math.max(0, end - Date.now()))); } };
-  const waitFor = async (what: string, fn: string, secs: number, optional = false) => {
+  const waitFor = async (what: string, fn: string, secs: number, optional = false, pollMs = 5000) => {
     const end = Date.now() + secs * 1000;
-    while (Date.now() < end && !overCap) { if (await evalIn<boolean>(pageCdp, fn).catch(() => false)) return true; await trace(); await sleep(5000); }
+    while (Date.now() < end && !overCap) { if (await evalIn<boolean>(pageCdp, fn).catch(() => false)) return true; await trace(); await sleep(pollMs); }
     if (!overCap) (optional ? notes : errors).push(`timed out after ${secs} s waiting for ${what}`);
     return false;
   };
@@ -498,9 +498,14 @@ async function run() {
   try {
     console.log(`memory: ${url} profile ${profile} viewport ${vw}x${vh}@${dpr} -> ${out}`);
     await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 120_000 });
-    if (!await waitFor("the title (__kr.ready)", "!!(window.__kr && window.__kr.ready)", waitS)) throw Error("the title never became ready");
+    // the title sample is taken as soon as the title is ready (polled every 250 ms here, not 5 s). Everything after ready
+    // races a fixed delay: the island keeps streaming (Peel Harbor's build alone is ~70 MB of WebGL and ~40 textures), the
+    // HUD map paints in a worker and the prefab warm-up starts 3-4 s in. With a 5 s hold after a poll 5 s apart, the
+    // sample landed 5-20 s after ready on SwiftShader, and whichever of those had finished decided the budget check
+    if (!await waitFor("the title (__kr.ready)", "!!(window.__kr && window.__kr.ready)", waitS, false, 250)) throw Error("the title never became ready");
+    const sinceReady = await evalIn<number>(pageCdp, "performance.now() - (window.__kr.readyAt ?? performance.now())");
+    if (sinceReady > 2000) notes.push(`the title sample came ${Math.round(sinceReady / 100) / 10} s after ready: the page was busy, so it may include work that starts after ready`);
     gpu = await evalIn<string>(pageCdp, "(() => { const c = window.__kr.engine.renderer.getContext(), d = c.getExtension('WEBGL_debug_renderer_info'); return String(d ? c.getParameter(d.UNMASKED_RENDERER_WEBGL) : c.getParameter(c.RENDERER)); })()");
-    await hold(5000);
     samples.push(await takeSample("title", browserCdp, pageCdp, t0));
     if (flag("--heap")) { samples[0].heap = await heapSnapshot(pageCdp, path.join(out, "title.heapsnapshot")); console.log(`  heap snapshot: ${samples[0].heap.totalMB} MB in ${samples[0].heap.nodes} nodes`); }
     for (let m = 1; m <= matches; m++) {
