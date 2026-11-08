@@ -5,35 +5,41 @@ const POST_BUILD_STORE_KEY = "kr-boot-post-v1";
 const POST_BUILD_STORED_MIN_MS = 2000, POST_BUILD_STORED_MAX_MS = 90_000;
 const POST_BUILD_TICK_MS = 250, POST_BUILD_TICK_LATE_MS = 1000, POST_BUILD_NO_FRAME_MS = 2000;
 
-function storedPostBuildMs(): number | null {
+function storedPostBuild(): { baseMs: number | null; readyMs: number | null } {
+  const inRange = (v: unknown) => { const ms = Number(v); return Number.isFinite(ms) && ms >= POST_BUILD_STORED_MIN_MS && ms <= POST_BUILD_STORED_MAX_MS ? ms : null; };
   try {
-    const ms = Number((JSON.parse(localStorage.getItem(POST_BUILD_STORE_KEY) ?? "null") as { baseMs?: unknown } | null)?.baseMs);
-    return Number.isFinite(ms) && ms >= POST_BUILD_STORED_MIN_MS && ms <= POST_BUILD_STORED_MAX_MS ? ms : null;
-  } catch { return null; }
+    const s = JSON.parse(localStorage.getItem(POST_BUILD_STORE_KEY) ?? "null") as { baseMs?: unknown; readyMs?: unknown } | null;
+    return { baseMs: inRange(s?.baseMs), readyMs: inRange(s?.readyMs) };
+  } catch { return { baseMs: null, readyMs: null }; }
 }
 
 function postBuildEstimate(factor: number) {
-  const stored = storedPostBuildMs();
+  const stored = storedPostBuild().baseMs;
   const ms = stored ?? (POST_BUILD_EXPECT_MS.afterBuild + POST_BUILD_EXPECT_MS.game + POST_BUILD_EXPECT_MS.settle) * factor;
   return { ms, stored: stored !== null, rest: (preMs: number) => ms + POST_MS_PER_PRE_READY_BUILD_MS * preMs };
 }
 
-export function preReadyPlanner(est: (id: string) => number, factor: number, readyBy: number, fixedMs: number, measured: boolean) {
+export function preReadyPlanner(est: (id: string) => number, factor: number, readyByMs: number, fixedMs: number, measured: boolean) {
   const post = postBuildEstimate(factor);
+  // (measured: never later than this device's last ready title. A warm load runs its cheaper measured post-build under
+  // the same target and filled it with pre-ready builds the match did not start any sooner for; what the fixed plan
+  // would have built is still owed before the match)
+  const lastReadyMs = measured ? storedPostBuild().readyMs : null;
+  const readyBy = lastReadyMs === null ? readyByMs : Math.min(readyByMs, lastReadyMs);
   const fixedRest = (n: number) => (fixedMs + 120 * n) * factor;
   const rest = measured ? (_n: number, preMs: number) => post.rest(preMs) : fixedRest;
-  const plan = (ids: string[], restMs: (n: number, preMs: number) => number) => {
+  const plan = (ids: string[], restMs: (n: number, preMs: number) => number, by: number) => {
     const out: string[] = [];
     let t = performance.now(), preMs = 0;
-    for (const id of [...ids].sort((a, b) => est(b) - est(a))) if (t + est(id) * factor + restMs(out.length + 1, preMs + est(id) * factor) <= readyBy) { out.push(id); t += est(id) * factor; preMs += est(id) * factor; }
+    for (const id of [...ids].sort((a, b) => est(b) - est(a))) if (t + est(id) * factor + restMs(out.length + 1, preMs + est(id) * factor) <= by) { out.push(id); t += est(id) * factor; preMs += est(id) * factor; }
     return out;
   };
   let fixed: string[] = [];
   return {
-    estimate: { ms: Math.round(post.ms), stored: post.stored },
-    plan: (ids: string[]) => { fixed = measured ? plan(ids, fixedRest) : []; return plan(ids, rest); },
+    estimate: { ms: Math.round(post.ms), stored: post.stored, readyBy: Math.round(readyBy) },
+    plan: (ids: string[]) => { fixed = measured ? plan(ids, fixedRest, readyByMs) : []; return plan(ids, rest, readyBy); },
     fits: (id: string, pre: number, preMs: number) => performance.now() + est(id) * factor + rest(pre + 1, preMs + est(id) * factor) <= readyBy,
-    owed: (ids: string[], pre: number) => plan(ids.filter((id) => fixed.includes(id)), (n) => fixedRest(pre + n)),
+    owed: (ids: string[], pre: number) => plan(ids.filter((id) => fixed.includes(id)), (n) => fixedRest(pre + n), readyByMs),
   };
 }
 
@@ -69,8 +75,11 @@ export function measurePostBuild(noFrameWaitCount: () => number) {
       const baseMs = postMs - POST_MS_PER_PRE_READY_BUILD_MS * preMs;
       kr.postBuildMs = Math.round(postMs);
       if (baseMs < POST_BUILD_STORED_MIN_MS || baseMs > POST_BUILD_STORED_MAX_MS) return;
-      const prev = storedPostBuildMs();
-      try { localStorage.setItem(POST_BUILD_STORE_KEY, JSON.stringify({ baseMs: Math.round(prev === null ? baseMs : (prev + baseMs) / 2) })); } catch { kr.postBuildStoreFailed = true; }
+      const prev = storedPostBuild();
+      // (only a load the pre-ready planner ran on sets the ready time the next one plans against: ?readyby=0 or low memory
+      // plan nothing, and their earlier title would cap a normal load below what it can reach)
+      const readyMs = kr.preReadyPlan ? kr.readyAt : prev.readyMs ?? undefined;
+      try { localStorage.setItem(POST_BUILD_STORE_KEY, JSON.stringify({ baseMs: Math.round(prev.baseMs === null ? baseMs : (prev.baseMs + baseMs) / 2), readyMs })); } catch { kr.postBuildStoreFailed = true; }
     },
   };
 }
