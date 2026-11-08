@@ -16,6 +16,7 @@ import type { KongActor, KongPose } from "../actors/api";
 import type { GliderProps } from "../actors/glider";
 import type { PlaneProps } from "../actors/plane";
 import { resources } from "../engine/res/scope";
+import { flag } from "../flags";
 
 export interface TitleScene { update(dt: number, t: number): void; setVisible(v: boolean): void; group: THREE.Group; /** prewarm owns the camera */ freeze: boolean }
 export interface TitleKits {
@@ -32,6 +33,9 @@ export const TITLE_LAYER = 7;
 const FRAME = { fov: 30, eye: 1.05, dist: 3.2, right: 0.64, lookUp: 0.12, turn: 0.32, pitch: -0.06, art: "keyart.webp", artX: 0.5 };
 
 const NAVY = new THREE.Color(0x071422);
+/** ?deferkong=1: the kong batches no title frame draws (userData.krMatchOnly) stay out of the boot
+ *  compile and this warm-up; game/index.ts prewarmMatch compiles them after ready, a few per frame */
+export const DEFER_KONG = !!flag("deferkong") && flag("prewarm") !== "full";
 
 export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleKits): TitleScene {
   const group = new THREE.Group(); group.name = "title-scene"; engine.scene.add(group);
@@ -112,7 +116,8 @@ export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleK
     const r = engine.renderer, cam = engine.camera, mask = cam.layers.mask;
     cam.layers.set(TITLE_LAYER); r.setRenderTarget(kt);
     const done = () => { warm = "yes"; };
-    try { void Promise.all([r.compileAsync(group, cam, engine.scene), kongs && r.compileAsync(kongs, cam, engine.scene), (r.setRenderTarget(null), r.compileAsync(compScene, compCam))]).then(done, done); }
+    const heroKongs = kongs && (DEFER_KONG ? { traverse(fn: (o: THREE.Object3D) => void) { kongs!.traverse((o) => { if (!o.userData.krMatchOnly) fn(o); }); }, traverseVisible() { /* lights: the scene's */ } } as unknown as THREE.Object3D : kongs);
+    try { void Promise.all([r.compileAsync(group, cam, engine.scene), heroKongs && r.compileAsync(heroKongs, cam, engine.scene), (r.setRenderTarget(null), r.compileAsync(compScene, compCam))]).then(done, done); }
     catch { done(); } finally { cam.layers.mask = mask; }
   }
   function setDraw(on: boolean) {

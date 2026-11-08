@@ -1,7 +1,7 @@
 // The playtest chunk, loaded after boot on every game page. When the perf HUD (?perfhud) or player diagnostics (?diag,
 // or a build made with VITE_KR_DIAG=1) is on, it starts the metrics recorder, has the match record its input replay
 // (__kr.recordReplay, read by game/net.ts, which hands it over packed) and gives KONGBOT reports a bundle. Under
-// diagnostics, report.ts adds the player's send sheet. F8 marks a moment under ?perfhud.
+// diagnostics, report.ts adds the player's send sheet and auto.ts the automatic summaries. F8 marks a moment under ?perfhud.
 import type { Engine } from "../engine/engine";
 import { flag, flagQuery } from "../flags";
 import { diagOn } from "./beat";
@@ -43,10 +43,10 @@ export function installPlaytest(engine: Engine, game: boolean): void {
   if (!flag("notimer")) engine.timeGpu();
   kr().recordReplay = true;
   kr().playtestBundle = bundle;
-  void Promise.all([import("./recorder"), hud ? import("./perf-hud") : null, diag ? import("./diag") : null, diag ? import("./report") : null]).then(([rec, hudMod, diagMod, reportMod]) => {
-    const draw = hudMod?.installPerfHud(rec.ring), sample = diagMod?.installDiag(engine, rec.ring);
+  void Promise.all([import("./recorder"), hud ? import("./perf-hud") : null, diag ? import("./diag") : null, diag ? import("./report") : null, diag ? import("./auto") : null]).then(([rec, hudMod, diagMod, reportMod, autoMod]) => {
+    const draw = hudMod?.installPerfHud(rec.ring), sample = diagMod?.installDiag(engine, rec.ring), auto = autoMod?.installAuto(engine, rec.ring);
     if (diagMod) kr().diag = { snapshot: diagMod.snapshot };
-    rec.startRecorder(engine, (at) => { draw?.(at); sample?.(at); });
+    rec.startRecorder(engine, (at) => { draw?.(at); sample?.(at); auto?.(at); });
     reportMod?.installReport();
   });
   if (!hud) return;

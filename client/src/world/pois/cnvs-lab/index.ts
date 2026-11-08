@@ -156,7 +156,7 @@ const mod: WorldModule = {
     await Y();
     const tris = S.shell.tris + S.interior.tris + S.glass.tris;
     const triK = { shell: Math.round(S.shell.tris / 1000), interior: Math.round(S.interior.tris / 1000), glass: Math.round(S.glass.tris / 1000) };
-    { const r = resolveCoplanar(); tm.coplanarPairs = r.pairs; tm.coplanarFixed = r.moved; mark("coplanar"); await Y(); }
+    { const r = await resolveCoplanar(Y); tm.coplanarPairs = r.pairs; tm.coplanarFixed = r.moved; mark("coplanar"); await Y(); }
     const shell = await S.shell.buildAsync("lab:shell", { cast: true }, Y); await Y();
     // per-pod interiors (RoutedBins): one group per module id, each shown within POD_INT m of its pod's footprint
     const interior = new THREE.Group(); interior.name = "lab:interior";
@@ -294,8 +294,8 @@ const mod: WorldModule = {
           put("fern", CX + u, G, CZ + v, 0.6 + rnd() * 0.3, rnd() * 6.28);
         }
       }
-      // (≤ 120 plants per veg.plant call, a yield between — one 500-fern call was a > 50 ms task)
-      for (const [k, a] of q) for (let i = 0; i < a.length; i += 120) { try { veg.plant(k, a.slice(i, i + 120)); } catch (e) { console.warn("[cnvs-lab] veg.plant failed", k, e); } await Y(); }
+      // (≤ 40 plants per veg.plant call, a yield between — one 500-fern call was a > 50 ms task, and 120 still took ~66 ms on SwiftShader)
+      for (const [k, a] of q) for (let i = 0; i < a.length; i += 40) { try { veg.plant(k, a.slice(i, i + 40)); } catch (e) { console.warn("[cnvs-lab] veg.plant failed", k, e); } await Y(); }
     }
 
     else {
