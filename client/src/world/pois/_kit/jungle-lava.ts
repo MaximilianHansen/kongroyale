@@ -19,6 +19,8 @@ float lvN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
 export function lavaMeltMaterial(o: { crust?: number; /** poi-caves: a lava FALL down a wall — the noise runs in (x + z, y + t) instead of the ground plane */ vertical?: boolean } = {}): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ color: "#0b0807", roughness: 0.4, metalness: 0, fog: false });
   m.defines = { USE_UV: "" };
+  // (the shader below draws the glowing melt over a near-black base: the far impostor bake reads this linear colour instead)
+  m.userData.farColor = [1, 0.22, 0.02];
   const uCrust = { value: o.crust ?? 0 };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = waterTime; sh.uniforms.uCrust = uCrust;
