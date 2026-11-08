@@ -52,7 +52,8 @@ still must not claim a win until their scenario produces repeatable baseline/can
 | Bytes allocated per tick and GC | `tools/performance/alloc.mts` |
 | Private server/socket workload | `tools/performance/server-bench.mjs`, `tools/performance/sockets.mts` |
 | Latency/jitter hit-registration checks | `tools/netlab.mts` |
-| Simulated network tails | `tools/performance/net-tail.mts` against `tools/performance/net-budgets.json` |
+| Simulated network tails, per transport (`ws`, `wt`) | `tools/performance/net-tail.mts` against `tools/performance/net-budgets.json` |
+| Real server over an emulated WAN path, every RTT x loss x transport arm | `tools/performance/netpath-matrix.mts`, `tools/performance/netpath.py` |
 | Wire, matrix, geometry and splat coverage checks | `npm run bench:verify` |
 | Real-GPU view captures and synchronous render benchmark | `tools/shot.mjs`, `await __kr.bench(n)` (`bench()` in `client/src/engine/dev-probes.ts`) |
 | Whole-browser memory and what holds it | `tools/performance/memory.mts` |
@@ -74,8 +75,10 @@ still must not claim a win until their scenario produces repeatable baseline/can
    and the `inputLoadAchieved` and `serverKeptTickRate` gates in `tools/performance/sockets.mts` reject an under-driven run.
 4. **Gate relevant network tails.** **Done:** `tools/performance/net-tail.mts` reports RTT, input ack, snapshot gaps,
    corrections, remote holds and hit confirm/ghost rates at 50, 150 and 250 ms RTT with jitter and loss profiles,
-   against `net-budgets.json`; `npm test` fails when a row breaks one (check `nettail`). **Open:** real-socket and WAN
-   numbers still need runs over `tools/performance/netpath.py` or a real network.
+   against `net-budgets.json`, on each transport (`ws` is the game's two WebSockets, `wt` is WebTransport with
+   input windows and snapshots as datagrams; a budget with `transports` holds only on those); `npm test` fails when a
+   row breaks one (check `nettail`). **Open:** real-socket and WAN numbers still need runs over
+   `tools/performance/netpath.py` or a real network; `netpath-matrix.mts` automates those runs (section 6).
 5. **Keep platform prerequisites explicit.** The server wrapper sets `KR_EVENT_MODE=0` for private room creation.
    **Open:** it spawns the extensionless `node_modules/.bin/tsx`, which works on Linux and macOS; Windows compatibility
    is not established.
@@ -360,6 +363,27 @@ npm run bench:server -- --seconds 60 --out reports/performance/sockets-base.json
 
 The wrapper sets `KR_EVENT_MODE=0` itself, but its process spawning is not Windows-compatible. Do not work around a
 failed launch by pointing tests at a public host.
+
+`bench:server -- --transport wt` starts the server with `KR_WT=1` and gives every player a WebTransport session (the
+QUIC module's Node client) instead of the aux socket: input windows and pings as datagrams, as a browser on `?wt=1`
+sends them, and a gate that `/health` counts every player on `wt`. Its default output is `sockets-final-wt.json`.
+
+**Netpath matrix.** `tools/performance/netpath-matrix.mts` runs the real server and `sockets.mts` over the emulated
+path of `netpath.py` for every RTT x loss x transport arm, n runs per arm, interleaved: each repetition walks every
+cell once and runs the transports back to back in an order that alternates by repetition. Every run gets a fresh
+server (`KR_WT=1` for both transports) and its own `sockets.mts` result; each arm's metrics are summarised over the
+runs that passed `sockets.mts`'s gates (`noDeathsInWindow` excepted: with two players the match is mostly bots, and
+bots die), with the median run as p50. It writes a `kong-perf-result`, a Markdown table and every run's result. The
+defaults (0/50/150/250 ms x 0/1% loss x ws/wt, n = 10, 30 s) take about 4 hours, so it is never part of CI or
+`npm test`. It needs Linux with passwordless sudo, and its results are labelled "emulated path":
+
+```sh
+npx tsx tools/performance/netpath-matrix.mts                                         # the whole matrix, about 4 h
+npx tsx tools/performance/netpath-matrix.mts --rtts 150 --losses 1 --n 3 --secs 20   # one cell, both transports
+```
+
+For a single WebTransport run over the same path, start the server with `KR_WT=1` and run `sockets.mts` with
+`--transport wt` instead of `--aux` (QUIC rides UDP through the relay like any other IP packet).
 
 Before every PR, run `npm run build` then `npm test`, plus the narrow scenario/correctness gates.
 Visible changes also need a real-GPU local play check and screenshot or clip. Record unavailable checks as blocked,

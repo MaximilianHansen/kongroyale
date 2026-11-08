@@ -93,7 +93,7 @@ const FLAGS = {
   lowmemview: { kind: num(2), owner: "boot", purpose: "lowmem: at most this many far POIs build because they are in view during the plane; the rest stay terrain until landing" },
   lowmemcap: { kind: num(3), owner: "boot", purpose: "lowmem: at most this many streamed POIs stay built; past it the farthest is evicted, never the nearest or the one the player is in" },
   lowmembudget: { kind: num(1500), owner: "boot", purpose: "lowmem: estimated MB (vertex arrays + textures) the streamed POIs may hold; past it the farthest is evicted like lowmemcap" },
-  farimp: { kind: present, owner: "boot", purpose: "lowmem: draw a baked far impostor (public/assets/far) for every streamed POI that is not built" },
+  farimp: { kind: on, owner: "boot", purpose: "lowmem: draw a baked far impostor (public/assets/far) for every streamed POI that is not built" },
   lowmemhyst: { kind: num(100), owner: "boot", purpose: "lowmem: at the cap or budget, a pending POI builds only if it is this much nearer (m) than the POI it would evict" },
   manual: { kind: present, owner: "caster", purpose: "caster camera starts in manual instead of autopilot" },
   map: { kind: one, owner: "ui", purpose: "open the full-screen map (view-camera captures)" },
