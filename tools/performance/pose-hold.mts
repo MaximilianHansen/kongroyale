@@ -24,7 +24,10 @@
 // measured; attribute it with arms that remove one cost (?dpr=1 for pixels, ?vegsplat=0 for the far-tree splats).
 // After the hold the engine is suspended for 180 frames (3 s at 60 Hz) and bare rAF intervals are recorded: the
 // display's refresh as the browser paces it right now (a capture running or not), next to what engine.refreshHz
-// measured.
+// measured. From the match
+// start every frame also counts toward its match phase (fpsPhaseN, framesOver33msPhaseN), and the half-rate guard's
+// steps (__kr.resLog, engine/res-guard.ts; add --query resguard=1, it is off under automation) are kept in
+// detail.page.resLog and counted as resSteps.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -78,12 +81,15 @@ const STATUS = `JSON.stringify((() => { const k = window.__kr; if (!k) return { 
     stream: String(k.streamStage || ""), streamed: !!k.streamed }; })())`;
 const INSTALL = `(() => {
   const k = window.__kr, e = k.engine, info = e.renderer.info, N = 20000;
-  const c = { on: false, n: 0, T: new Float64Array(N), CPU: new Float32Array(N), CALLS: new Float32Array(N), TRIS: new Float32Array(N), PTS: new Float32Array(N), PROG: new Float32Array(N) };
+  const c = { on: false, n: 0, T: new Float64Array(N), CPU: new Float32Array(N), CALLS: new Float32Array(N), TRIS: new Float32Array(N), PTS: new Float32Array(N), PROG: new Float32Array(N), last: 0, phaseOn: true, phases: {} };
   e.hitchLog = [];
   const step = e.step;
   e.step = function (dt) {
     // renderer.info resets on every render() call (the post chain makes many): count the whole frame instead
-    const s0 = performance.now(), ar = info.autoReset;
+    const s0 = performance.now(), ar = info.autoReset, g = k.game, ph = g && g.inMatch && g.cm ? g.cm.phase : -1;
+    // every frame from the match start on, by match phase: [frames, ms, frames over 33 ms]
+    if (c.phaseOn && c.last && ph >= 0) { const d = s0 - c.last, a = c.phases[ph] || (c.phases[ph] = [0, 0, 0]); a[0]++; a[1] += d; if (d > 1000 / 30) a[2]++; }
+    c.last = s0;
     if (c.on) { info.autoReset = false; info.reset(); }
     try { step.call(this, dt); }
     finally {
@@ -106,7 +112,8 @@ const PLACE = (x: number, z: number, yaw: number, pitch: number) => `(() => {
   return "ok";
 })()`;
 const KEEP = (yaw: number, pitch: number) => "(() => { const g = window.__kr.game, m = g.link && g.link.match; if (!m) return 'no host'; const q = m.players[g.cm.me]; q.hp = Math.max(q.hp, 90); g.input.yaw = " + yaw + "; g.input.pitch = " + pitch + "; return 'ok'; })()";
-const COLLECT = (on: boolean) => "(() => { const c = window.__kr.holdC; c.on = " + on + "; return String(c.n); })()";
+// the phase counters stop with the hold, so the rAF probe's suspended frames after it count toward no phase
+const COLLECT = (on: boolean) => "(() => { const c = window.__kr.holdC; c.on = " + on + "; " + (on ? "" : "c.phaseOn = false; ") + "return String(c.n); })()";
 const RAF_PROBE = "(() => { const e = window.__kr.engine; e.suspended = true; const d = []; let last = 0; const f = (t) => { if (last) d.push(t - last); last = t; if (d.length < 180) requestAnimationFrame(f); else { e.suspended = false; window.__kr.rafProbe = d; } }; requestAnimationFrame(f); return 'ok'; })()";
 const READ = `JSON.stringify((() => {
   const k = window.__kr, c = k.holdC, e = k.engine, r = e.renderer, gl = r.getContext(), n = c.n, a = (x) => Array.from(x).slice(0, n);
@@ -119,7 +126,7 @@ const READ = `JSON.stringify((() => {
     gpuScore: (() => { try { return JSON.parse(localStorage.getItem("kr-gpu-score") || "null"); } catch (x) { return null; } })(),
     programsAtReady: k.programsAtReady ?? null, programs: (r.info.programs || []).length, programNames: (r.info.programs || []).map((p) => p.name + "|" + String(p.cacheKey || "").slice(0, 80)),
     geometries: r.info.memory.geometries, textures: r.info.memory.textures,
-    newPrograms: e.newPrograms.map((p) => ({ at: p.at, ms: p.ms, stream: p.stream, programs: p.programs })), hitches: (e.hitchLog || []).slice(-200), rafProbe: k.rafProbe || null,
+    newPrograms: e.newPrograms.map((p) => ({ at: p.at, ms: p.ms, stream: p.stream, programs: p.programs })), hitches: (e.hitchLog || []).slice(-200), rafProbe: k.rafProbe || null, phases: c.phases, resLog: k.resLog || null,
     veg, errors: (k.errors || []).slice(0, 20).map(String), ua: navigator.userAgent, inner: [innerWidth, innerHeight], pos: k.game.cm ? [k.game.cm.pred.x, k.game.cm.pred.y, k.game.cm.pred.z] : null };
 })())`;
 
@@ -245,6 +252,11 @@ if (page && page.n > 1) {
       drawCalls: dist(page.CALLS.slice(1), "count"), triangles: dist(page.TRIS.slice(1), "count"), points: dist(page.PTS.slice(1), "count"),
       newPrograms: { status: "ok", unit: "count", better: "lower", value: page.PROG[page.n - 1] - page.PROG[0] },
       rafProbeMs: rp.length ? { status: "ok", unit: "ms", better: "lower", summary: stats(rp) } : { status: "invalid", unit: "ms", reason: "no probe" },
+      ...Object.fromEntries(Object.entries(page.phases as Record<string, number[]>).flatMap(([p, [frames, ms, over]]): Array<[string, Metric]> => [
+        ["fpsPhase" + p, { status: "ok", unit: "1/s", better: "higher", value: (frames * 1000) / Math.max(ms, 1) }],
+        ["framesOver33msPhase" + p, { status: "ok", unit: "count", better: "lower", value: over }],
+      ])),
+      resSteps: { status: "ok", unit: "count", better: "lower", value: (page.resLog ?? []).filter((s: { why: string }) => s.why !== "floor").length },
     },
     gates: [
       { id: "hardwareGpu", pass: SOFTWARE || !software, detail: page.renderer },

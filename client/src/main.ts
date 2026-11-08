@@ -488,6 +488,7 @@ if (display && bootReady) void import("./ui/settings").then(({ createVideoMenu, 
   const bot = !!navigator.webdriver;
   void display.firstVisitBench().then(() => { if (first && !flag("noannounce") && (!bot || flag("announce"))) ui.announceAuto(); }).catch((e) => report("display-bench", e));
   if (!bot || flag("guard")) display.startGuard(inMatch);
+  void import("./engine/res-guard").then((m) => m.startResGuard(engine), (e) => report("res-guard", e));
 }).catch((e) => report("settings-ui", e));
 
 // ---- stream the rest of the island in (game page)
