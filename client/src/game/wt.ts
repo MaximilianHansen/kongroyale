@@ -1,5 +1,5 @@
-// The client's WebTransport transport (shared/net/transport.ts), loaded only when ?wt=1 and the server's "welcome"
-// offers an endpoint (client/src/game/net.ts imports this chunk lazily). Unreliable frames ride QUIC datagrams, reliable
+// The client's WebTransport transport (shared/net/transport.ts), loaded when the server's "welcome" offers an endpoint
+// and the link is in the WebTransport arm, or the page has ?wt=1 (client/src/game/net.ts imports this chunk lazily). Unreliable frames ride QUIC datagrams, reliable
 // ones the session's one bidirectional stream (shared/net/frames.ts); a frame too big for a datagram rides the stream.
 // The session authenticates with the aux token as its first stream frame and is up once the server answers
 // { t: "wt-ok" }. Anything else (no session within WT_DIAL_MS, refused, closed) is a fallback reason, and net.ts keeps
@@ -23,7 +23,11 @@ const MAX_FRAME = 16384;
 const SERVER_PATH: Path = { reply: () => {}, strike: () => {} };
 
 /** what "welcome" says about the server's endpoint (server/wt.ts WtWelcome) */
-export interface WtOffer { port: number; hashes?: string[]; url?: string }
+export interface WtOffer {
+  port: number; hashes?: string[]; url?: string;
+  /** the server put this session in the WebTransport arm of its A/B (KR_WT_SHARE) */
+  use?: boolean;
+}
 export interface WtLink extends Transport {
   /** settles when the session ends: "no-datagrams" when this side gave up on datagrams that stopped arriving, else
    *  "closed" */
