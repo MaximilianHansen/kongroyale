@@ -2,6 +2,7 @@
 // garbage collections that costs. Writes a kong-perf-result (schema.ts) that compare.mts and run.mts read.
 //   npx tsx tools/performance/alloc.mts --out reports/performance/alloc.json
 //   npx tsx tools/performance/run.mts --runner alloc --base ../kong-base --cand . --metrics allocBytesPerTick
+//   npx tsx tools/performance/alloc.mts --budgets tools/alloc-budgets.json   (what npm test runs: exit 1 over a ceiling)
 // The match is host.mts's real-play (scenarios/real-play.mts): the same seed, setup and timed window, ticked through
 // MatchHost with one fake peer per seat, so snapshot fan-out counts as it does on the server. Its state digest equals
 // host.mts's, so run.mts can check that a change replays the same match.
@@ -17,8 +18,11 @@ import { pathToFileURL } from "node:url";
 import { arg, env, save, source, stateDigest } from "./common.mts";
 import { RESULT_SCHEMA, RESULT_VERSION, type CaseResult, type RunResult } from "./schema.ts";
 import { REAL_PLAY } from "./scenarios/real-play.mts";
+import { checkBudgets } from "./budget-check.mts";
 
 const root = path.resolve(arg("--root", ".")), out = arg("--out", "reports/performance/alloc.json"), sample = process.argv.includes("--sample");
+const budgets = arg("--budgets", "");
+if (budgets && sample) throw Error("--budgets judges unsampled runs only: --sample perturbs the JIT");
 const scenario = arg("--scenario", "real-play");
 if (scenario !== "real-play") throw Error(`alloc.mts measures --scenario real-play only, not ${scenario}`);
 const mod = (p: string) => import(pathToFileURL(path.join(root, p)).href);
@@ -88,3 +92,4 @@ console.log(`${c.scenario.id}: ${Math.round(allocated / ticks)} B/tick allocated
 if (topAllocators) for (const [k, v] of topAllocators) console.log(`${String(v).padStart(9)} B/tick  ${k}`);
 console.log("wrote", out);
 for (const g of c.gates) if (!g.pass) { console.error(`FAIL: ${c.scenario.id} ${g.id}: ${g.detail}`); process.exitCode = 1; }
+if (budgets && !checkBudgets(result, budgets)) process.exitCode = 1;

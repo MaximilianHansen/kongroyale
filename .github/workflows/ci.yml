@@ -32,7 +32,19 @@ jobs:
       # run that one package's script so npm test's wt checks run (tools/net/wt-endpoint.test.mts fails without it)
       - run: npm rebuild @fails-components/webtransport-transport-http3-quiche
       - run: npm run build
+      # KR_REPORT_DIR keeps npm test's reports (size, allocation) for the PR metrics comment (.github/workflows/pr-metrics.yml)
       - run: npm test
+        env:
+          KR_REPORT_DIR: ci-metrics
+      - name: keep the budgets beside the reports
+        if: always()
+        run: mkdir -p ci-metrics/budgets && cp tools/*budgets*.json ci-metrics/budgets/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ci-metrics-test
+          path: ci-metrics/
+          retention-days: 30
 
   secrets:
     name: no secrets
@@ -88,6 +100,12 @@ jobs:
         if: always()
         run: node tools/kr-verify.mjs down
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ci-metrics-boot
+          path: shots/memory/ci/result.json
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: boot-smoke-evidence
@@ -113,11 +131,11 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # three practice matches entered and left in their warm-up, title modules only: past the warm-up, or with every POI
       # streamed, SwiftShader needs more memory than the runner has
-      - name: three warm-ups back to back, what grows between the last two and what the renderer holds outside a scope
+      - name: three warm-ups back to back, what the first holds, what grows between the last two and what the renderer holds outside a scope
         timeout-minutes: 30
         run: |
           node tools/kr-verify.mjs up --prod --port 3140
-          npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?resaudit&modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage" --warmup --matches 3 --max-mb 9000 --budgets tools/memory-leak-budgets.json --out shots/memory/ci
+          npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?resaudit&modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage" --warmup --matches 3 --max-mb 9000 --budgets tools/memory-warmup-budgets.json --budgets tools/memory-leak-budgets.json --out shots/memory/ci
       - name: stop the server
         if: always()
         run: node tools/kr-verify.mjs down
@@ -126,7 +144,40 @@ jobs:
         with:
           name: memory-result
           path: shots/memory/ci/
-          retention-days: 7
+          retention-days: 30
+
+  lowmem-memory:
+    name: no-GPU low-memory memory
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      # the whole island under the low-memory setup: POIs stream in near the player and past the cap the farthest is
+      # evicted, so it fits the runner through the plane and on foot. Its own job (about 10 min) so it runs beside the
+      # others and the workflow takes no longer
+      - name: low-memory setup at the title, in the plane and 60 s into the play phase
+        timeout-minutes: 30
+        run: |
+          node tools/kr-verify.mjs up --prod --port 3140
+          npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?lowmem=1&geofree=1&farimp=1" --matches 1 --max-mb 9000 --budgets tools/memory-lowmem-budgets.json --out shots/memory/ci
+      - name: stop the server
+        if: always()
+        run: node tools/kr-verify.mjs down
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: memory-lowmem-result
+          path: shots/memory/ci/
+          retention-days: 30
 
   context-restore:
     name: no-GPU context restore
@@ -151,3 +202,49 @@ jobs:
       - name: stop the server
         if: always()
         run: node tools/kr-verify.mjs down
+
+  invariants:
+    name: no-GPU invariants (${{ matrix.arm }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # the low-memory setup: the stream builds what the plane sees, impostors stand in for the rest
+          - arm: lowmem
+            query: lowmem=1&geofree=1&farimp=1
+            args: ""
+          # the default: every POI built, HLOD proxies far away (title modules plus the route POI: SwiftShader runs out of
+          # memory with the whole island past the warm-up). HLOD does not build the plantation's proxy, so its
+          # far stop warns instead of failing; drop --far-warn once it does
+          - arm: default
+            query: modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage,poi:the-plantation
+            args: --far-warn plantation-hlod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      # a location is never invisible (client/src/engine/invariants.hot.ts): a practice match through the warm-up and the
+      # plane, then teleported through the route POI's swap ranges
+      - name: no POI vanishes in a hand-over (?invariants)
+        timeout-minutes: 20
+        run: |
+          node tools/kr-verify.mjs up --prod --port 3140
+          npx tsx tools/verify-invariants.mts --url http://127.0.0.1:3140 --query "${{ matrix.query }}" ${{ matrix.args }} --out shots/invariants/${{ matrix.arm }}.json
+      - name: stop the server
+        if: always()
+        run: node tools/kr-verify.mjs down
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: invariants-${{ matrix.arm }}
+          path: shots/invariants/
+          retention-days: 7
