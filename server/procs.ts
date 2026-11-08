@@ -30,15 +30,19 @@ export interface ProcHealth {
   made: number;
   /** rooms each address owns here, for the per-address room cap across processes */
   owners: Record<string, number>;
+  /** WebTransport sessions each address holds here: the front tells the other processes, so the total and per-address
+   *  caps count sessions on every process */
+  wt: Record<string, number>;
   transports: Record<string, unknown>; inputs: unknown[]; performance?: unknown;
 }
 export const PUSH_MS = 500;
 /** front → match process. "conn": a game WebSocket's TCP socket rides along as the handle, with the upgrade request it
  *  already read (base64) and the address the front counted it under. "owners": the rooms each address owns on the other
- *  processes, as they last reported */
+ *  processes, as they last reported, with their connections in total ("conns") and per address ("ips"): WebSockets and
+ *  WebTransport sessions */
 export type ToProc =
   | { t: "conn"; ip: string; raw: string }
-  | { t: "owners"; n: Record<string, number> };
+  | { t: "owners"; n: Record<string, number>; conns: number; ips: Record<string, number> };
 /** match process → front. "gone": a socket the front handed over has closed (the front's per-address count drops) */
 export type ToFront =
   | { t: "health"; h: ProcHealth }

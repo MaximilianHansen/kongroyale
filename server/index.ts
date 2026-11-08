@@ -461,6 +461,8 @@ function leaveLobby(c: Client) { if (c.seat >= 0) c.lobby?.castLeave(c); else c.
 const helloAt = new WeakMap<Client, number>(), helloLater = new WeakMap<Client, NodeJS.Timeout>();
 /** rooms each address owns on this server's other match processes (KR_PROCS), as the front last told this one */
 let ownedElsewhere: Record<string, number> = {};
+/** (KR_PROCS) the other processes' connections, WebSockets and sessions, in total and by address, as the front last told us */
+let connsElsewhere = 0, ipsElsewhere: Record<string, number> = {};
 const ownedLobbies = (ip: string) => { let n = ownedElsewhere[ip] ?? 0; for (const l of lobbies.values()) if (!l.event && l.owner && l.owner.sock?.ip === ip) n++; return n; };
 function onJSON(c: Client, msg: { t?: unknown; [k: string]: unknown }) {
   switch (msg.t) {
@@ -629,7 +631,7 @@ if (!wtOff) {
       // under a front the per-address cap here sees only this process's sockets (the front counts the WebSockets of all
       // of them), so sessions from an address, the ones still showing their token included, stay within its WebSockets
       // here plus WT_SESSION_SLACK: an address can't fill every process's UDP port without sockets the front counted
-      admit: (ip) => socks.size + wt!.counts.open < MAX_CONNS && (perIp.get(ip) ?? 0) < MAX_CONNS_PER_IP
+      admit: (ip) => socks.size + wt!.counts.open + connsElsewhere < MAX_CONNS && (perIp.get(ip) ?? 0) + (ipsElsewhere[ip] ?? 0) < MAX_CONNS_PER_IP
         && (PROC < 0 || (wtPerIp.get(ip) ?? 0) < (perIp.get(ip) ?? 0) - (wtPerIp.get(ip) ?? 0) + WT_SESSION_SLACK),
       opened: (ip) => { addIp(ip); wtPerIp.set(ip, (wtPerIp.get(ip) ?? 0) + 1); },
       closed: (ip) => { dropIp(ip); const n = (wtPerIp.get(ip) ?? 1) - 1; if (n > 0) wtPerIp.set(ip, n); else wtPerIp.delete(ip); },
@@ -649,13 +651,13 @@ else {
   // and the front hears this process's health
   const toFront = (m: ToFront) => { if (process.connected) process.send?.(m); };
   process.on("message", (m: ToProc, handle?: net.Socket) => {
-    if (m.t === "owners") { ownedElsewhere = m.n; return; }
+    if (m.t === "owners") { ownedElsewhere = m.n; connsElsewhere = m.conns; ipsElsewhere = m.ips; return; }
     if (!handle) return;
     handle.once("close", () => toFront({ t: "gone", ip: m.ip }));
     server.emit("connection", handle); handle.emit("data", Buffer.from(m.raw, "base64")); handle.resume();
   });
   const ownersHere = () => { const n: Record<string, number> = {}; for (const l of lobbies.values()) { const ip = !l.event && l.owner?.sock?.ip; if (ip) n[ip] = (n[ip] ?? 0) + 1; } return n; };
-  const push = () => toFront({ t: "health", h: { ...health(), made: roomsMade, owners: ownersHere() } });
+  const push = () => toFront({ t: "health", h: { ...health(), made: roomsMade, owners: ownersHere(), wt: Object.fromEntries(wtPerIp) } });
   setInterval(push, PUSH_MS); push();
   // the front is gone: nothing can reach this process any more
   process.on("disconnect", () => shutdown("front gone"));

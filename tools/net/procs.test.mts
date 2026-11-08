@@ -10,7 +10,8 @@
 // while one is down /health answers 503; with KR_WT=1 each process listens for WebTransport on KR_WT_PORT + its index
 // and tells its players so (and KR_WT_URL with the same port offset), and an address's sessions on a process stay
 // within its WebSockets there plus a slack, so it can't fill every process's UDP port without sockets the front counted;
-// the front refuses to start with KR_EVENT_MODE on, since players make their own rooms behind it.
+// the front refuses to start with KR_EVENT_MODE on, since players make their own rooms behind it; and the total and
+// per-address caps count WebTransport sessions on every process (the front tells each process what the others hold).
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
@@ -168,6 +169,57 @@ async function player(port: number, query = "", from?: string) {
   proc.stdout!.on("data", (d) => { out += d; }); proc.stderr!.on("data", (d) => { out += d; });
   const code = await new Promise<number | null>((r) => { proc.on("exit", r); setTimeout(() => { proc.kill("SIGKILL"); r(null); }, 30_000); });
   check(code === 1 && /KR_PROCS needs KR_EVENT_MODE=0/.test(out), "KR_PROCS=2 with KR_EVENT_MODE on: the server refuses to start and says why");
+}
+
+// ---- 5. the total and per-address caps count WebTransport sessions on every process, as one process does
+{
+  const s = await startServer({ KR_PROCS: "2", KR_WT: "1", KR_MAX_PER_IP: "6" });
+  try {
+    type Lib = { WebTransport: new (url: string, o: unknown) => { ready: Promise<unknown>; close(): void } };
+    let lib: Lib | null = null;
+    try { await import("@fails-components/webtransport-transport-http3-quiche" as string); lib = await import("@fails-components/webtransport" as string) as Lib; await (lib as unknown as { quicheLoaded: Promise<unknown> }).quicheLoaded; } catch { console.log("SKIP  WebTransport caps: no QUIC module"); }
+    if (lib) {
+      const codes: string[] = [], keep: Awaited<ReturnType<typeof player>>[] = [];
+      for (let i = 2; i < 10 && codes.length < 2; i++) {
+        const m = await player(s.port, "", `127.0.0.${i}`); m.send({ t: "create", mode: "solo" });
+        await waitFor(() => !!m.last("lobby"), 3000); keep.push(m);
+        const code = m.last("lobby")?.code as string | undefined;
+        if (code && !codes.some((c) => procOf(c, 2) === procOf(code, 2))) codes.push(code);
+      }
+      const mine = [];
+      for (const code of codes) for (let i = 0; i < 3; i++) mine.push(await player(s.port, `?room=${code}`));
+      await sleep(1200);
+      const open = async (proc: number, n: number) => {
+        const w = mine.find((c) => c.last("welcome")!.proc === proc)!.last("welcome")!.wt as { port: number; hashes: string[] };
+        const hashes = w.hashes.map((h) => ({ algorithm: "sha-256", value: new Uint8Array(Buffer.from(h, "base64")) }));
+        for (let i = 0; i < n; i++) { const t = new lib!.WebTransport(`https://127.0.0.1:${w.port}/wt`, { serverCertificateHashes: hashes }); sessions.push(t); await t.ready.catch(() => {}); await sleep(100); }
+      };
+      const sessions: { ready: Promise<unknown>; close(): void }[] = [];
+      const counts = async () => ((await health(s.port)) as unknown as { transports: { webtransport: { open?: number; refused?: { limit?: number } } } }).transports.webtransport;
+      const settle = async (n: number) => { await waitFor(async () => ((await counts()).open ?? 0) + ((await counts()).refused?.limit ?? 0) >= n, 3000); return (await counts()).open ?? 0; };
+      await sleep(1200);
+      await open(1, 3);
+      const held = await settle(3);
+      check(codes.length === 2 && mine.length === 6 && held === 0, `an address holding KR_MAX_PER_IP=6 WebSockets across two processes is refused every WebTransport session (${held} open)`);
+      for (const x of sessions.splice(0)) try { x.close(); } catch { /* refused */ }
+      // 2 + 2 WebSockets, then 2 sessions on process 0: process 1 sees 2 + 2 more of the address's connections and 2 of its own
+      for (const c of mine.splice(0)) c.ws.close();
+      await sleep(1200);
+      for (const code of codes) for (let i = 0; i < 2; i++) mine.push(await player(s.port, `?room=${code}`));
+      await sleep(1200);
+      await open(0, 2);
+      await waitFor(async () => ((await counts()).open ?? 0) >= 2, 3000);
+      const on0 = (await counts()).open ?? 0;
+      await sleep(900);
+      const before = (await counts()).refused?.limit ?? 0;
+      await open(1, 2);
+      await waitFor(async () => ((await counts()).refused?.limit ?? 0) >= before + 2, 3000);
+      const refusedNow = ((await counts()).refused?.limit ?? 0) - before;
+      check(on0 === 2 && refusedNow === 2, `sessions on one process count against the address on the other: 2 + 2 WebSockets and 2 sessions on process 0 leave no room for 2 more on process 1 (${refusedNow} refused)`);
+      for (const x of sessions) try { x.close(); } catch { /* refused */ }
+      for (const c of [...keep, ...mine]) c.ws.close();
+    }
+  } finally { s.proc.kill("SIGTERM"); }
 }
 
 if (failed) { console.log(`procs: ${failed} check(s) failed`); process.exit(1); }

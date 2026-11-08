@@ -67,10 +67,16 @@ export async function runFront(o: { root: string; port: number; host: string; se
   function shareOwners() {
     for (const q of procs) {
       if (!q.child?.connected) continue;
-      const n: Record<string, number> = {};
-      for (const p of procs) if (p !== q && p.health) for (const [ip, k] of Object.entries(p.health.owners)) n[ip] = (n[ip] ?? 0) + k;
-      const s = JSON.stringify(n);
-      if (s !== q.ownersSent) { q.ownersSent = s; q.child.send({ t: "owners", n } satisfies ToProc); }
+      const n: Record<string, number> = {}, ips: Record<string, number> = {};
+      let conns = 0;
+      for (const p of procs) {
+        if (p === q || !p.health) continue;
+        for (const [ip, k] of Object.entries(p.health.owners)) n[ip] = (n[ip] ?? 0) + k;
+        for (const [ip, k] of Object.entries(p.health.wt)) { ips[ip] = (ips[ip] ?? 0) + k; conns += k; }
+        for (const [ip, k] of p.held) { ips[ip] = (ips[ip] ?? 0) + k; conns += k; }
+      }
+      const s = JSON.stringify([n, conns, ips]);
+      if (s !== q.ownersSent) { q.ownersSent = s; q.child.send({ t: "owners", n, conns, ips } satisfies ToProc); }
     }
   }
 
