@@ -36,6 +36,7 @@ const checks = [
   { id: "anim", name: "kong animation", cmd: "npx", args: ["tsx", "tools/actors/anim-test.mts"] },
   { id: "walkgraph", name: "building walk graph", cmd: "npx", args: ["tsx", "tools/buildings/walkgraph.test.mts"] },
   { id: "flags", name: "feature flags", cmd: "npx", args: ["tsx", "tools/flags/test.mts"] },
+  { id: "fuzz", name: "protocol fuzz (seeded malformed packets: decoders, MatchHost, the real server)", cmd: "npx", args: ["tsx", "tools/net/fuzz.test.mts"] },
   { id: "solver", name: "path solver", slow: true, cmd: "npx", args: ["tsx", "tools/play/solver-tests.mts", "--json", tmp("solver-tests.json")] },
   { id: "glass", name: "glass", slow: true, cmd: "npx", args: ["tsx", "tools/glass/test.mts"] },
   { id: "planeview", name: "low-memory plane queues the POIs in view", slow: true, cmd: "npx", args: ["tsx", "tools/world/plane-view.test.mts"] },
