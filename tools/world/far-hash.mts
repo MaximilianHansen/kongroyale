@@ -5,7 +5,10 @@ import path from "node:path";
 export const FAR_DIR = "public/assets/far";
 export const FAR_INDEX = path.join(FAR_DIR, "index.json");
 
-export interface FarIndex { version: number; pois: Record<string, { hash: string; tris: number; bytes: number }> }
+/** `hash`: the POI sources the bake read (poiSourceHash); `bin`: the baked file itself (binHash), what the client loads. */
+export interface FarIndex { version: number; pois: Record<string, { hash: string; bin: string; tris: number; bytes: number }> }
+
+export const binHash = (buf: Uint8Array) => crypto.createHash("sha256").update(buf).digest("hex").slice(0, 16);
 
 const SOURCE_ROOTS = ["client/src/world/pois/", "shared/pois/"];
 const BAKE_TOOL = "tools/world/bake-far.mts";
