@@ -272,6 +272,9 @@ function startTour(cfg: { segs: Segment[]; maxHp: number; ar: number; arMag: num
   // view is a copy a few ticks old
   const tool = (t: Record<string, unknown>) => g.link.hostTool({ ...t, pid: g.cm.me }), view = () => g.link.hostView();
   const me = () => view().players[g.cm.me];
+  // the worker streams its view only once something has read it, and the first read answers an empty copy: read it now
+  // so the view is live by the time a segment counts bots or looks for a vehicle
+  view();
   const alive = (q: Record<string, number>) => q.st !== 3 && q.st !== 5;
   const api = {
     pose() {
