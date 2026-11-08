@@ -31,6 +31,9 @@ export interface Link {
   readonly transport?: Transport;
   /** why an online link is not on WebTransport (null: it is, or it hasn't decided yet) */
   readonly fallback?: FallbackReason | null;
+  /** the match process an online link reached behind a multi-process server's front (server/front.ts), from its
+   *  "welcome"; undefined from a single-process server, where any link reaches every room */
+  readonly proc?: number;
   /** an online link's transport now, its fallback and a copy of its counters, for KONGBOT reports. It lives here, in
    *  the lazy game chunk, so the entry (where the KONGBOT context is gathered) doesn't carry it */
   report?(): LinkReport;
@@ -68,6 +71,12 @@ export interface LinkReport {
 }
 
 const auxWanted = () => flag("aux");
+/** a link for room `code` (empty: a new room): a multi-process server's front sends it to the process that holds the
+ *  room (server/front.ts); a single process ignores the parameter */
+export function roomUrl(url: string, code: string) {
+  if (!code) return url;
+  const u = new URL(url); u.searchParams.set("room", code); return u.href;
+}
 /** input→ack histogram bins: ACK_BIN_MS wide, the last one holds everything slower */
 const ACK_BIN_MS = 5, ACK_BINS = 200;
 const ARM_KEY = "kr.wt-arm";
@@ -109,13 +118,13 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
     };
     const bin: Transport = { kind: "ws", stats, sendReliable: (u8) => send(u8, 0), sendUnreliable: (u8) => send(u8, 1), onMessage: () => {}, close: () => aux?.close() };
     const receive = (e: MessageEvent) => { const u8 = new Uint8Array(e.data as ArrayBuffer); stats.recv++; stats.recvBytes += u8.length; bin.onMessage(u8, e.timeStamp, SERVER_PATH); };
-    let active: Transport = bin, fallback: FallbackReason | null = null, arm: WtArm = "off", deferred = 0, playS = 0;
+    let active: Transport = bin, fallback: FallbackReason | null = null, arm: WtArm = "off", deferred = 0, playS = 0, proc: number | undefined;
     const since = performance.now() / 1000;
     const ack = new Uint32Array(ACK_BINS);
     const ackAt = (p: number, n: number) => { let k = 0, i = 0; for (; i < ACK_BINS - 1; i++) { k += ack[i]; if (k >= p * n) break; } return i * ACK_BIN_MS + ACK_BIN_MS / 2; };
     const link: Link = {
       offline: false, onJSON: () => {}, onBinary: () => {}, onClose: () => {},
-      get transport() { return active; }, get fallback() { return fallback; },
+      get transport() { return active; }, get fallback() { return fallback; }, get proc() { return proc; },
       report: () => {
         let n = 0; for (const c of ack) n += c;
         return { transport: active.kind, fallback, arm, stats: structuredClone(active.stats), ackMs: { n, p50: n ? ackAt(0.5, n) : null, p95: n ? ackAt(0.95, n) : null, p99: n ? ackAt(0.99, n) : null }, deferred, playS: Math.round(playS), since };
@@ -147,6 +156,8 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
       if (aux || closed || !auxWanted()) return;
       // (admin lobby) the token is the aux socket's FIRST message, never in its URL (URLs reach access logs)
       const u = new URL(url, location.href); u.searchParams.set("attach", "1");
+      // behind a front, the aux socket must reach the process the primary did
+      if (proc !== undefined) u.searchParams.set("p", String(proc));
       const a = new WebSocket(u.toString()); a.binaryType = "arraybuffer";
       a.onopen = () => a.send(JSON.stringify({ t: "aux", token }));
       a.onmessage = (e) => { lastRx = performance.now(); if (typeof e.data !== "string") receive(e); };
@@ -162,7 +173,7 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
       lastRx = performance.now();
       if (typeof e.data === "string") {
         let m: Record<string, unknown>; try { m = JSON.parse(e.data); } catch { return; }
-        if (m.t === "welcome" && typeof m.aux === "string") tryWt(m.aux, m.wt as WtOffer | undefined);
+        if (m.t === "welcome" && typeof m.aux === "string") { if (typeof m.proc === "number") proc = m.proc; tryWt(m.aux, m.wt as WtOffer | undefined); }
         link.onJSON(m);
       } else receive(e);
     };

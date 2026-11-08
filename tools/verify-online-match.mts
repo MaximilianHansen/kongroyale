@@ -47,7 +47,7 @@ import { B, PS } from "../shared/sim/player";
 import { ANN, NET_VERSION } from "../shared/net/proto";
 import type { OutcomeState } from "../shared/net/host";
 import { ClientMatch, type EventSink } from "../client/src/game/client";
-import { connectWs, type Link } from "../client/src/game/net";
+import { connectWs, roomUrl, type Link } from "../client/src/game/net";
 
 const argv = process.argv.slice(2);
 const opt = (k: string, d: string) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d; };
@@ -91,7 +91,7 @@ const onServerLine = (line: string, stream: string) => {
   if (!line.trim()) return;
   serverLog.push(`${stream}: ${line}`);
   if (/KONG ROYALE server on/.test(line)) serverReady();
-  if (/^\S+ disconnect: /.test(line) && !tearingDown) primaryDisconnects++;
+  if (/^\S+ (\[\d+\] )?disconnect: /.test(line) && !tearingDown) primaryDisconnects++;   // [N]: a match process's line (KR_PROCS)
   if (BAD_LOG.test(line) || (stream === "stderr" && /error/i.test(line))) fail(`server log: ${line.trim()}`);
 };
 for (const [stream, src] of [["stdout", server.stdout!], ["stderr", server.stderr!]] as const) {
@@ -147,9 +147,11 @@ function retireMatch(c: Client) {
   c.cm = null; c.seated = false;
 }
 
-async function connect(c: Client): Promise<void> {
+/** connect for room `room` (empty: to make one), dialled like the client does (index.ts online), so a server with
+ *  KR_PROCS above 1 sends the player to the room's process */
+async function connect(c: Client, room = ""): Promise<void> {
   let link: Link;
-  try { link = await connectWs(wsUrl, 4000); } catch (e) { fail(`${c.name}: connect failed: ${String(e)}`); return; }
+  try { link = await connectWs(roomUrl(wsUrl, room), 4000); } catch (e) { fail(`${c.name}: connect failed: ${String(e)}`); return; }
   c.link = link;
   const welcomed = new Promise<void>((res) => {
     link.onJSON = (m) => { try { onJSON(c, link, m); } catch (e) { fail(`${c.name}: exception handling "${String(m.t)}": ${(e as Error).stack ?? e}`); } if (m.t === "welcome") res(); };
@@ -253,7 +255,7 @@ function dropAndRejoin(c: Client, why: string, expectError: RegExp | null) {
   say(`${c.name}: dropping its link ${why} (seat ${c.cm?.me})`);
   const old = c.link!; retireMatch(c); c.link = null; c.room = null; old.close();
   c.expectError = expectError;
-  void (async () => { await connect(c); c.link?.sendJSON({ t: "join", code: clients[0].code }); c.rejoined = true; })();
+  void (async () => { await connect(c, clients[0].code); c.link?.sendJSON({ t: "join", code: clients[0].code }); c.rejoined = true; })();
 }
 
 let outcome: unknown = null;
@@ -272,7 +274,7 @@ async function main() {
   await connect(host); if (failures.length) return;
   host.link!.sendJSON({ t: "create", mode: MODE });
   if (!await until("the lobby to be created", () => !!host.code, 10)) return;
-  for (const c of clients.slice(1)) { await connect(c); c.link?.sendJSON({ t: "join", code: host.code }); }
+  for (const c of clients.slice(1)) { await connect(c, host.code); c.link?.sendJSON({ t: "join", code: host.code }); }
   if (!await until("every client in the room", () => clients.every((c) => c.code === host.code && c.room !== null && c.room.myPid !== null), 10)) return;
   say(`lobby ${host.code}: ${CLIENTS} clients in the room, START`);
   host.link!.sendJSON({ t: "start" });

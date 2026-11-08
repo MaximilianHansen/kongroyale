@@ -49,9 +49,9 @@
     }
   ],
   "verified": {
-    "model": "f10213573b7d9c59",
+    "model": "e4526f9a56a63938",
     "regions": {
-      "client/src/game/index.ts#startGame.online": "1527455257c5daee",
+      "client/src/game/index.ts#startGame.online": "091198e6ed89cd08",
       "client/src/game/index.ts#startGame.prepareIsland": "a60414b7ba8c24b5",
       "client/src/game/index.ts#startGame.offline": "bd6d0167112b477f",
       "client/src/game/index.ts#startGame.wire": "7b7861aa561871a9",

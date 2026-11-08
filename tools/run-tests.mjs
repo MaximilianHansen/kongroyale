@@ -51,6 +51,7 @@ const checks = [
   { id: "afk", name: "AFK removal returns the player to the room (real server)", slow: true, cmd: "npx", args: ["tsx", "tools/verify-afk.mts"] },
   { id: "redteam", name: "admin lobby red team", slow: true, cmd: "node", args: ["tools/admin-lobby/redteam.mjs", "--md", tmp("redteam.md")] },
   { id: "wt", name: "WebTransport endpoint (loopback, Node client)", slow: true, cmd: "npx", args: ["tsx", "tools/net/wt-endpoint.test.mts"] },
+  { id: "procs", name: "one process per core: front, routing, limits (real server, two processes)", slow: true, cmd: "npx", args: ["tsx", "tools/net/procs.test.mts"] },
   { id: "wtbrowser", name: "WebTransport in a browser (loopback, headless Chromium; SKIP without one)", slow: true, cmd: "npx", args: ["tsx", "tools/net/wt-browser.test.mts"] },
 ];
 

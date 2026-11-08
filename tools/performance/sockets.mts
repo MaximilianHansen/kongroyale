@@ -33,10 +33,10 @@ const phaseSeen:Record<number,number>={};
 const wait=async(f:()=>boolean,label:string,ms=60000)=>{const end=performance.now()+ms;while(!f()){if(performance.now()>end)throw Error('timeout '+label);await sleep(10);}};
 try{
   for(let i=0;i<count;i++){
-    const p:any={ws:new WebSocket(base.replace(/^http/,'ws')+'/ws',wsOpts),uid:0,token:'',wtw:null,code:'',pid:-1,seq:0,last:0,lastTick:-1,w:new Writer(new ArrayBuffer(64)),iw:new Writer(new ArrayBuffer(INPUTS_HEAD_BYTES+INPUT_WINDOW*INPUT_BODY_BYTES)),ring:Array.from({length:RING},makeInput),sent:new Float64Array(4096),snaps:0,acked:0,lastPong:0};peers.push(p);
+    const p:any={ws:new WebSocket(base.replace(/^http/,'ws')+'/ws'+(i>0?'?room='+peers[0].code:''),wsOpts),uid:0,token:'',wtw:null,code:'',pid:-1,seq:0,last:0,lastTick:-1,w:new Writer(new ArrayBuffer(64)),iw:new Writer(new ArrayBuffer(INPUTS_HEAD_BYTES+INPUT_WINDOW*INPUT_BODY_BYTES)),ring:Array.from({length:RING},makeInput),sent:new Float64Array(4096),snaps:0,acked:0,lastPong:0};peers.push(p);
     const onMessage=(data:any,binary:boolean)=>{
       if(active){bytes+=data.length;packets++;}
-      if(!binary){const j=JSON.parse(String(data));if(j.t==='welcome'){p.uid=j.uid;p.token=j.aux;p.wtw=j.wt??null;}if(j.t==='lobby')p.code=j.code;if(j.t==='match'){p.pid=j.pids[p.uid];matchSeed=j.seed;}if(j.t==='error')errors.push(j.msg);return;}
+      if(!binary){const j=JSON.parse(String(data));if(j.t==='welcome'){p.uid=j.uid;p.token=j.aux;p.wtw=j.wt??null;p.proc=j.proc;}if(j.t==='lobby')p.code=j.code;if(j.t==='match'){p.pid=j.pids[p.uid];matchSeed=j.seed;}if(j.t==='error')errors.push(j.msg);return;}
       const r=new Reader(new Uint8Array(data.buffer,data.byteOffset,data.byteLength));const kind=r.u8(),now=performance.now();
       if(kind===0x7b){if(new TextDecoder().decode(data)==='{"t":"wt-ok"}')p.wtOk=true;return;}
       // The main and aux sockets both carry snapshots: only the first copy of each tick counts, stale copies are dropped.
@@ -50,7 +50,7 @@ try{
     };
     p.ws.on('message',onMessage);p.ws.on('error',(e:Error)=>errors.push(e.message));p.ws.on('close',()=>{if(active)disconnects++;});
     await wait(()=>!!p.uid,'welcome');p.ws.send(JSON.stringify({t:'hello',name:'BENCH '+i}));
-    if(aux){p.aux=new WebSocket(base.replace(/^http/,'ws')+'/ws?attach=1',wsOpts);p.aux.on('open',()=>p.aux.send(JSON.stringify({t:'aux',token:p.token})));p.aux.on('message',onMessage);p.aux.on('error',(e:Error)=>errors.push(e.message));p.aux.on('close',()=>{if(active)disconnects++;});await wait(()=>p.aux.readyState===WebSocket.OPEN,'aux');}
+    if(aux){p.aux=new WebSocket(base.replace(/^http/,'ws')+'/ws?attach=1'+(p.proc===undefined?'':'&p='+p.proc),wsOpts);p.aux.on('open',()=>p.aux.send(JSON.stringify({t:'aux',token:p.token})));p.aux.on('message',onMessage);p.aux.on('error',(e:Error)=>errors.push(e.message));p.aux.on('close',()=>{if(active)disconnects++;});await wait(()=>p.aux.readyState===WebSocket.OPEN,'aux');}
     if(wt){
       if(!p.wtw)throw Error('welcome has no wt field: start the server with KR_WT=1');
       const hashes=(p.wtw.hashes??[]).map((h:string)=>({algorithm:'sha-256',value:new Uint8Array(Buffer.from(h,'base64'))}));
@@ -94,7 +94,8 @@ try{
   let health:any=null,healthAt=0;fetch(base+'/health').then(r=>r.json()).then(j=>{health=j;healthAt=performance.now();},e=>errors.push(String(e)));
   while(health===null){if(errors.length)throw Error(errors[0]);drive(performance.now());await sleep(2);}
   await assetRequest;
-  const perf0=(health0 as any).performance,perf1=(health as any).performance;
+  // a front (KR_PROCS) reports each match process under procs: the match's own process is the one to read
+  const perfOf=(h:any)=>h.procs?h.procs[peers[0].proc]?.performance:h.performance,perf0=perfOf(health0),perf1=perfOf(health);
   // the server's input pacing (shared/net/input-gaps.ts, one match): the change between the two /health reads, which spans
   // the window plus the reads themselves (spanMs), so the metrics are shares of the live ticks in that span
   const in0=(health0 as any).inputs?.[0],in1=(health as any).inputs?.[0],inputs=in0&&in1?{liveTicks:in1.liveTicks-in0.liveTicks,inputGapTicks:in1.inputGapTicks-in0.inputGapTicks,catchupBursts:in1.catchupBursts-in0.catchupBursts,catchupBurstMaxMatch:in1.catchupBurstMax,spanMs:Math.round(healthAt-health0At)}:null;

@@ -53,8 +53,10 @@ Play ==
   /\ silent' = ~WireOk
   /\ UNCHANGED <<boot, prefabs, seated, err, why, ctx, restores>>
 
-(* CREATE/JOIN: online() (index.ts:234-247) reuses the online link it has (235); one that closed at the title is
-   already gone (SocketClosesAtTitle). Like PLAY,
+(* CREATE/JOIN: online() (index.ts:240-256) reuses the online link it has (241) unless a multi-process server's front
+   put it on another process than the room's (KR_PROCS, net.ts roomUrl): then it silences and closes that link and
+   connects again, the same wire as a first connect. One that closed at the title is already gone
+   (SocketClosesAtTitle). Like PLAY,
    create and join await prepareIsland(), which waits for the prefabs after ready and resolves at once before it;
    before ready they wait there for dataset.ready, invite links included *)
 Connect ==

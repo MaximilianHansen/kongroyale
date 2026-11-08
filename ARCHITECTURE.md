@@ -35,6 +35,12 @@ elapsed time to an accumulator and steps the match once per 1/60 s it owes, at m
 throws errors more than five times, the server ends that match and sends its players back to the lobby. One broken
 match never takes the process down.
 
+All of that runs on one thread, so one process uses one CPU core. With `KR_PROCS` above 1 (HOSTING.md "One process
+per core"), `server/front.ts` starts that many match processes, each `server/index.ts` running the loop above for its
+own rooms. The front serves the page, the API and `/health`, and hands each game WebSocket to the
+process that holds its room: a room's code says which (`server/procs.ts`), and new rooms go to the process with the
+fewest. After the hand-off the front never sees the socket's traffic.
+
 `MatchHost.tick()` (`shared/net/host.ts`) does one step and sends what came out of it:
 
 1. `Match.step()` (`shared/sim/match.ts`) advances the phase clock, the storm, every player (humans and bots), the

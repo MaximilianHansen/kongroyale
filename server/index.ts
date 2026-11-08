@@ -1,12 +1,14 @@
 // KONG ROYALE authoritative server: lobbies, 60 Hz match loops, binary snapshots with interest management.
 //   npm run server   → ws on :3020 (vite proxies /ws → here), dev
 //   npm run start    → production: serves the built client (dist/) + ws on ONE port (KR_PORT or PORT, default 3020)
+//   KR_PROCS=N       → N match processes behind a front (server/front.ts) on that port; each is this file with KR_PROC set
 // Hardening: every frame is size-checked and decoded through the sanitising readers (shared/net/proto.ts); per-socket
 // token-bucket rate limit; ws heartbeat + idle timeouts; connection caps (total / per IP); one misbehaving lobby can never
 // take the process down (tick errors are contained). Each client may attach ONE redundant "aux" socket (see net.ts), and
 // with KR_WT=1 one WebTransport session (server/wt.ts), which then carries its binary frames.
-import { addrKey } from "./addr";
+import { TRUST_PROXY, ipOf, isLoop } from "./addr";
 import http from "node:http";
+import type net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -28,11 +30,11 @@ import { FALLBACK_REASONS, WT_ARMS, sendFrame, type FallbackReason, type Path, t
 import { WsTransport } from "./transport-ws";
 import type { WtTransport } from "./transport-wt";
 import { startWt, type WtEndpoint } from "./wt";
-import { makeBucket, struck, take, type Bucket } from "./limits";
-import { kongbotDb } from "./kongbot";
-import { annotationsApi } from "./annotations";
-import { autoCapBytes, autoDir, diagAutoApi } from "./diag-auto";
-import { serveStatic } from "./static";
+import { MAX_CONNS, MAX_CONNS_PER_IP, makeBucket, struck, take, type Bucket } from "./limits";
+import { createSite } from "./site";
+// (one process per core) the front, and which process owns a code
+import { runFront } from "./front";
+import { CODE_CHARS, PROC, PROCS, PUSH_MS, lobbyCode, procOf, procWtUrl, type ToFront, type ToProc } from "./procs";
 import { performanceMetrics } from "./perf";
 // (voice) squad comms + caster listen-in: the WebRTC handshake relay (the audio is peer to peer)
 import { onVoiceJSON, voiceReset, voiceRosters, voiceSeatLeft } from "./voice";
@@ -43,15 +45,23 @@ import { createAdminHttp } from "./admin/http";
 
 const PORT = Number(process.env.KR_PORT || process.env.PORT || 3020);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
+const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...(PROC >= 0 ? [`[${PROC}]`] : []), ...a);
+const serve = process.env.KR_SERVE === "1" || process.argv.includes("--serve");
+const HOST = process.env.KR_HOST || (serve ? "0.0.0.0" : "127.0.0.1");
+// KR_PROCS > 1: this process is the front (server/front.ts), which forks the match processes; it never runs the code below
+if (PROCS > 1 && PROC < 0) {
+  if (EVENT_MODE) { log("KR_PROCS needs KR_EVENT_MODE=0: behind a front, players make their own rooms"); process.exit(1); }
+  await runFront({ root, port: PORT, host: HOST, serve, log });
+  await new Promise<never>(() => {});
+}
 
 // ---- limits
 // bytes per ws message: the biggest legit frame is a voice handshake (a WebRTC offer / answer, ~3-6 KB of SDP, caster
 // listen-in + squad comms); everything else is < 200 B
 const MAX_PAYLOAD = 16384;
-// per IP: every player holds 2 sockets (primary + redundant aux) — 120 lets a whole 50-player LAN party share one NAT
-const MAX_CONNS = Number(process.env.KR_MAX_CONNS || 2000), MAX_CONNS_PER_IP = Number(process.env.KR_MAX_PER_IP || 120);
-const MAX_LOBBIES = 400;
+// connections in total and per address: server/limits.ts (a front applies them across its processes too)
+// lobbies at once: 400 on the machine, split between the match processes under a front
+const MAX_LOBBIES = Math.ceil(400 / PROCS);
 const MAX_LOBBIES_PER_IP = 4;             // lobbies / exhibitions one address may own at once (event mode off)
 // frames per second and strikes per socket: server/limits.ts (shared with WebTransport sessions)
 const HEARTBEAT_MS = 10_000;              // ws ping cadence (+ the silence check below)
@@ -61,9 +71,6 @@ const HEARTBEAT_MS = 10_000;              // ws ping cadence (+ the silence chec
 const SILENT_MAX_MS = (Number(process.env.KR_HEARTBEAT_TIMEOUT_S) > 0 ? Number(process.env.KR_HEARTBEAT_TIMEOUT_S) : 30) * 1000;
 const IDLE_NO_LOBBY_MS = 10 * 60_000;     // connected but in no lobby and silent
 const AFK_IN_MATCH_MS = Number(process.env.KR_AFK_S) > 0 ? Number(process.env.KR_AFK_S) * 1000 : 180_000;   // seated in a running match without sending a single input (KR_AFK_S: test servers only)
-const TRUST_PROXY = process.env.KR_TRUST_PROXY === "1";
-// the proxies allowed to set the client-address headers: loopback (nginx on this machine) plus KR_PROXY_IPS (comma list)
-const PROXY_IPS = new Set((process.env.KR_PROXY_IPS || "").split(",").map((s) => s.trim()).filter(Boolean));
 const ORIGINS = (process.env.KR_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
 
 // ---- world (identical to the client's)
@@ -114,6 +121,10 @@ function transportHealth() {
   for (const c of byToken.values()) by[c.bin.kind] = (by[c.bin.kind] ?? 0) + 1;
   for (const l of lobbies.values()) { const n = l.match?.netStats; if (n) { inputs.lost += n.inputsLost; inputs.recovered += n.inputsRecovered; inputs.dropped += n.inputsDropped; } }
   return { clients: by, settled, inputs, arms, webtransport: wt ? { port: wt.welcome().port, share: WT_SHARE, ...wt.counts } : { off: wtOff } };
+}
+/** this process's /health (the front of a multi-process server sums the processes', server/front.ts) */
+function health() {
+  return { lobbies: lobbies.size, clients: [...lobbies.values()].reduce((a, l) => a + l.clients.length, 0), sockets: socks.size, transports: transportHealth(), inputs: [...lobbies.values()].flatMap((l) => (l.match && l.inputGaps ? [l.inputGaps.report()] : [])), ...(perf ? { performance: perf.read() } : {}) };
 }
 function allow(s: Sock): boolean { if (take(s)) return true; strike(s, "rate"); return false; }
 /** `weight`: a frame no honest client ever sends (a host-only or malformed event message) costs more than a rate blip */
@@ -328,8 +339,10 @@ export class Lobby {
   destroy(force = false) { if (this.event && !force) return; if (this.stateTimer) clearTimeout(this.stateTimer); this.stateTimer = null; if (this.timer) clearInterval(this.timer); this.timer = null; if (this.autoTimer) clearTimeout(this.autoTimer); this.autoTimer = null; this.match = null; this.host = null; lobbies.delete(this.code); log(`lobby ${this.code} closed`); }
 }
 const lobbies = new Map<string, Lobby>();
-const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const newCode = (len = 4) => { let c = ""; do { c = ""; for (let i = 0; i < len; i++) c += CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]; } while (lobbies.has(c)); return c; };
+// under a front, a process mints only the codes it owns (server/procs.ts procOf), so the front can route them
+/** rooms players made here (create and exhibit), for the front's room spreading (server/front.ts pick) */
+let roomsMade = 0;
+const newCode = (len = 4) => { let c = ""; do { c = ""; for (let i = 0; i < len; i++) c += CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]; } while (lobbies.has(c) || (PROC >= 0 && procOf(c) !== PROC)); return c; };
 // (names: server/names.ts — cleanName for what the admin types, playerName for what a player picks: never a staff name)
 /** (admin lobby) the admin's stand-in owner of every event lobby: no client is ever it */
 const EVENT_OWNER = { uid: 0, name: "HOST" } as unknown as Client;
@@ -340,68 +353,13 @@ initEvents({
   drop: (c, code, why) => { c.sock.closedBy ||= `server (${why})`; setTimeout(() => { try { c.sock.ws.close(code, why); } catch { /* gone */ } for (const a of c.aux) { a.closedBy ||= "primary closed"; try { a.ws.close(code, why); } catch { /* gone */ } } }, 60); },
 });
 
-// ---- http (health + static client)
-const serve = process.env.KR_SERVE === "1" || process.argv.includes("--serve");
-const dist = path.join(root, "dist");
-// player bug reports (/kongbot in the game's chat bar) → MongoDB
-const kongbot = kongbotDb(root);
-// dev view notes (?dev=annotate) → .kongbot/annotations/*.jsonl (+ Mongo kongbot_annotations)
-const annotations = annotationsApi(root);
-// automatic performance summaries from players who opted in (?diag) → <KR_DIAG_AUTO>/<date>.jsonl, own limits
-const diagAuto = diagAutoApi(autoDir(root, process.env.KR_DIAG_AUTO ?? (process.env.npm_lifecycle_event === "server" ? "1" : undefined)), log, autoCapBytes(process.env.KR_DIAG_AUTO_MB, log));
-if (diagAuto.dir) log(`automatic summaries are written to ${diagAuto.dir}`);
-const adminHttp = createAdminHttp({ root, ipOf: (req) => ipOf(req), log });
-const server = http.createServer((req, res) => {
-  const url = (req.url || "/").split("?")[0];
-  // (admin lobby) /admin, /admin/api/*, /api/event/CODE — before anything else (server/admin/http.ts)
-  if (adminHttp.handle(req, res, url)) return;
-  if (url === "/api/kongbot") {
-    // a failed store always answers (the client shows "couldn't send"), never a hung request
-    void kongbot.handle(req, res, ipOf(req)).catch((error) => {
-      log("report request failed", error);
-      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
-      if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: "could not store the report" }));
-    });
-    return;
-  }
-  if (url === "/api/diag/auto") {
-    void diagAuto.handle(req, res, ipOf(req)).catch((error) => {
-      log("automatic summary request failed", error);
-      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
-      if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: "could not store the row" }));
-    });
-    return;
-  }
-  if (url === "/api/annotations") {
-    void annotations.handle(req, res, ipOf(req)).catch((error) => {
-      log("annotation request failed", error);
-      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
-      if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: "could not store the note" }));
-    });
-    return;
-  }
-  if (url === "/health") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ ok: true, feedback: kongbot.health(), diagAuto: diagAuto.health(), lobbies: lobbies.size, clients: [...lobbies.values()].reduce((a, l) => a + l.clients.length, 0), sockets: socks.size, transports: transportHealth(), inputs: [...lobbies.values()].flatMap((l) => (l.match && l.inputGaps ? [l.inputGaps.report()] : [])), ...(perf ? { performance: perf.read() } : {}) })); return; }
-  if (!serve || (req.method !== "GET" && req.method !== "HEAD")) { res.writeHead(404); res.end(); return; }
-  void serveStatic(req, res, url, dist).catch((error) => { log("asset request failed", error); if (!res.headersSent) res.writeHead(500); res.end(); });
-});
+// ---- http: the site (server/site.ts). A match process under a front serves none of it: the front does, and hands it
+// only game WebSockets
+const adminHttp = PROC < 0 ? createAdminHttp({ root, ipOf, log }) : null;
+const site = PROC < 0 ? createSite({ root, serve, adminHttp: adminHttp!, health: () => ({ ok: true, ...health() }), log }) : null;
+const server = http.createServer((req, res) => { if (site) site.handle(req, res); else { res.writeHead(404); res.end(); } });
 server.headersTimeout = 20_000; server.requestTimeout = 60_000;
 
-// (admin lobby) behind the proxy, never the LEFT-most X-Forwarded-For entry: the client writes that
-// one itself (rotating it would mint a fresh "address" per request and defeat every per-address limit). Cloudflare's
-// CF-Connecting-IP, else nginx's X-Real-IP, else the right-most X-Forwarded-For entry (the one our proxy appended).
-// Those headers are believed only when the connection itself comes from a trusted proxy (this machine, or KR_PROXY_IPS):
-// a client reaching the port directly can't claim to be someone else (or 127.0.0.1).
-const isLoop = (a: string) => a === "::1" || a.startsWith("127.") || a.startsWith("::ffff:127.");
-const ipOf = (req: http.IncomingMessage) => {
-  const peer = req.socket.remoteAddress || "?";
-  if (TRUST_PROXY && (isLoop(peer) || PROXY_IPS.has(peer.replace(/^::ffff:/i, "")))) {
-    const one = (h: string) => { const v = req.headers[h]; return typeof v === "string" ? v.trim() : ""; };
-    const xff = one("x-forwarded-for").split(",").map((s) => s.trim()).filter(Boolean);
-    const ip = one("cf-connecting-ip") || one("x-real-ip") || xff[xff.length - 1];
-    if (ip && ip.length <= 64) return addrKey(ip);
-  }
-  return addrKey(peer);
-};
 // (admin lobby) two socket servers on one port: /ws (players) and /admin/ws (server/admin/http.ts), routed here
 const wss = new WebSocketServer({
   noServer: true, maxPayload: MAX_PAYLOAD, perMessageDeflate: false,
@@ -412,7 +370,7 @@ const wss = new WebSocketServer({
   },
 });
 server.on("upgrade", (req, socket, head) => {
-  if (adminHttp.upgrade(req, socket, head)) return;
+  if (adminHttp?.upgrade(req, socket, head)) return;
   if ((req.url || "").split("?")[0] === "/ws") { wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req)); return; }
   try { socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); } catch { /* gone */ }
   socket.destroy();
@@ -462,7 +420,7 @@ wss.on("connection", (ws, req) => {
   wsT.onMessage = (u8, _at, from) => onBinary(c, u8, from);
   c.peer = { pid: -1, invSeq: 0, send: (u8) => sendFrame(c.bin, u8), sendResult: (state) => sendJSON(c.sock.ws, { t: "result", state }) };
   byToken.set(c.token, c);
-  sendJSON(ws, { t: "welcome", uid: c.uid, aux: c.token, terrain: td.hash, world: worldHashV, boxes: boxes.length, net: NET_VERSION, ...(wt ? { wt: { ...wt.welcome(), use: Math.random() < WT_SHARE } } : {}) });
+  sendJSON(ws, { t: "welcome", uid: c.uid, aux: c.token, terrain: td.hash, world: worldHashV, boxes: boxes.length, net: NET_VERSION, ...(wt ? { wt: { ...wt.welcome(), use: Math.random() < WT_SHARE } } : {}), ...(PROC >= 0 ? { proc: PROC } : {}) });
   ws.on("message", (data: RawData, isBinary: boolean) => {
     if (!allow(s)) return;
     if (isBinary) { c.ws.receive(s, data); return; }
@@ -501,8 +459,9 @@ function onBinary(c: Client, u8: Uint8Array, from: Path) {
 /** out of whatever lobby the client is in, as a player or as a caster seat */
 function leaveLobby(c: Client) { if (c.seat >= 0) c.lobby?.castLeave(c); else c.lobby?.leave(c); }
 const helloAt = new WeakMap<Client, number>(), helloLater = new WeakMap<Client, NodeJS.Timeout>();
-const ownedLobbies = (ip: string) => { let n = 0; for (const l of lobbies.values()) if (!l.event && l.owner && l.owner.sock?.ip === ip) n++; return n; };
-const lobbyCode = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+/** rooms each address owns on this server's other match processes (KR_PROCS), as the front last told this one */
+let ownedElsewhere: Record<string, number> = {};
+const ownedLobbies = (ip: string) => { let n = ownedElsewhere[ip] ?? 0; for (const l of lobbies.values()) if (!l.event && l.owner && l.owner.sock?.ip === ip) n++; return n; };
 function onJSON(c: Client, msg: { t?: unknown; [k: string]: unknown }) {
   switch (msg.t) {
     // (admin lobby) in an event lobby a name is set before joining; afterwards only the admin renames
@@ -523,7 +482,7 @@ function onJSON(c: Client, msg: { t?: unknown; [k: string]: unknown }) {
       if (EVENT_MODE) { sendJSON(c.sock.ws, { t: "error", msg: "PRIVATE LOBBIES ARE OFF DURING THIS EVENT — USE YOUR HOST'S LINK" }); break; }
       if (lobbies.size >= MAX_LOBBIES) { sendJSON(c.sock.ws, { t: "error", msg: "SERVER FULL" }); break; }
       if (ownedLobbies(c.sock.ip) >= MAX_LOBBIES_PER_IP) { sendJSON(c.sock.ws, { t: "error", msg: "TOO MANY LOBBIES FROM YOUR NETWORK — CLOSE ONE FIRST" }); break; }
-      leaveLobby(c); const l = new Lobby(newCode(), c, msg.mode === "trios" ? "trios" : "solo"); lobbies.set(l.code, l); l.join(c); log(`lobby ${l.code} created by ${c.name}`); break;
+      leaveLobby(c); const l = new Lobby(newCode(), c, msg.mode === "trios" ? "trios" : "solo"); lobbies.set(l.code, l); roomsMade++; l.join(c); log(`lobby ${l.code} created by ${c.name}`); break;
     }
     case "join": {
       const code = lobbyCode(msg.code);
@@ -552,7 +511,7 @@ function onJSON(c: Client, msg: { t?: unknown; [k: string]: unknown }) {
       if (EVENT_MODE) { sendJSON(c.sock.ws, { t: "error", msg: "EXHIBITIONS ARE OFF DURING THIS EVENT" }); break; }
       if (lobbies.size >= MAX_LOBBIES) { sendJSON(c.sock.ws, { t: "error", msg: "SERVER FULL" }); break; }
       if (ownedLobbies(c.sock.ip) >= MAX_LOBBIES_PER_IP) { sendJSON(c.sock.ws, { t: "error", msg: "TOO MANY LOBBIES FROM YOUR NETWORK — CLOSE ONE FIRST" }); break; }
-      leaveLobby(c); const l = new Lobby(newCode(), c, msg.mode === "trios" ? "trios" : "solo"); l.exhibit = true; l.auto = msg.auto === true; lobbies.set(l.code, l);
+      leaveLobby(c); const l = new Lobby(newCode(), c, msg.mode === "trios" ? "trios" : "solo"); l.exhibit = true; l.auto = msg.auto === true; lobbies.set(l.code, l); roomsMade++;
       log(`lobby ${l.code}: exhibition (${l.mode}) opened by ${c.name}`); l.castJoin(c); break;
     }
     // (caster) the owner toggles AUTO (an exhibition starts its next match on its own)
@@ -643,31 +602,38 @@ function shutdown(sig: string) {
   log(`${sig}: shutting down`);
   clearInterval(hb);
   for (const l of [...lobbies.values()]) { l.broadcastJSON({ t: "error", msg: "SERVER RESTARTING" }); l.destroy(true); }
-  adminHttp.shutdown();
+  adminHttp?.shutdown(); site?.close();
   wt?.close();
   for (const s of socks) { s.closedBy ||= "server restart"; s.ws.close(1001, "restart"); }
-  void kongbot.close(); void annotations.close();   // (stops its timers; an in-flight queue import finishes first)
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
 }
 process.on("SIGINT", () => shutdown("SIGINT")); process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("uncaughtException", (e) => log("uncaught", e));
 process.on("unhandledRejection", (e) => log("unhandled rejection", e));
-const HOST = process.env.KR_HOST || (serve ? "0.0.0.0" : "127.0.0.1");
-if (serve && !TRUST_PROXY) log("note: KR_TRUST_PROXY is off — behind nginx / Cloudflare every player shares one address (set KR_TRUST_PROXY=1)");
+if (serve && !TRUST_PROXY && PROC < 0) log("note: KR_TRUST_PROXY is off — behind nginx / Cloudflare every player shares one address (set KR_TRUST_PROXY=1)");
 // ---- WebTransport (KR_WT=1): datagrams for the hot path, the WebSocket pair stays the fallback (server/wt.ts). Behind
 // a proxy (KR_TRUST_PROXY=1) on loopback UDP still comes straight from players, so it listens on every address; any
 // other KR_HOST is kept
 const wtOwner = new WeakMap<WtTransport, Client>();
 let wtOff = process.env.KR_WT === "1" ? "" : "off (KR_WT unset)";
+/** (KR_PROCS) WebTransport sessions by address on this process, and how many more than its WebSockets here it may hold
+ *  (a player whose session and socket come from different addresses: IPv6 for one, IPv4 for the other) */
+const wtPerIp = new Map<string, number>(), WT_SESSION_SLACK = 4;
 if (!wtOff) {
   try {
     wt = await startWt({
-      port: Number(process.env.KR_WT_PORT || PORT), host: process.env.KR_WT_HOST || (TRUST_PROXY && (isLoop(HOST) || HOST === "localhost") ? "0.0.0.0" : HOST), certFile: process.env.KR_WT_CERT, keyFile: process.env.KR_WT_KEY,
-      url: process.env.KR_WT_URL, maxPayload: MAX_PAYLOAD, origins: ORIGINS, silentMaxMs: SILENT_MAX_MS,
+      port: Number(process.env.KR_WT_PORT || PORT) + Math.max(0, PROC), host: process.env.KR_WT_HOST || (TRUST_PROXY && (isLoop(HOST) || HOST === "localhost") ? "0.0.0.0" : HOST), certFile: process.env.KR_WT_CERT, keyFile: process.env.KR_WT_KEY,
+      url: procWtUrl(process.env.KR_WT_URL), maxPayload: MAX_PAYLOAD, origins: ORIGINS, silentMaxMs: SILENT_MAX_MS,
     }, {
-      admit: (ip) => socks.size + wt!.counts.open < MAX_CONNS && (perIp.get(ip) ?? 0) < MAX_CONNS_PER_IP,
-      opened: addIp, closed: dropIp, log,
+      // under a front the per-address cap here sees only this process's sockets (the front counts the WebSockets of all
+      // of them), so sessions from an address, the ones still showing their token included, stay within its WebSockets
+      // here plus WT_SESSION_SLACK: an address can't fill every process's UDP port without sockets the front counted
+      admit: (ip) => socks.size + wt!.counts.open < MAX_CONNS && (perIp.get(ip) ?? 0) < MAX_CONNS_PER_IP
+        && (PROC < 0 || (wtPerIp.get(ip) ?? 0) < (perIp.get(ip) ?? 0) - (wtPerIp.get(ip) ?? 0) + WT_SESSION_SLACK),
+      opened: (ip) => { addIp(ip); wtPerIp.set(ip, (wtPerIp.get(ip) ?? 0) + 1); },
+      closed: (ip) => { dropIp(ip); const n = (wtPerIp.get(ip) ?? 1) - 1; if (n > 0) wtPerIp.set(ip, n); else wtPerIp.delete(ip); },
+      log,
       attach: (token, t) => {
         const c = byToken.get(token); if (!c || c.wt) return false;
         c.wt = t; c.bin = t; wtOwner.set(t, c); t.onMessage = (u8, _at, from) => onBinary(c, u8, from);
@@ -677,4 +643,21 @@ if (!wtOff) {
     });
   } catch (e) { wtOff = (e as Error).message; log(`webtransport unavailable: ${wtOff}`); }
 }
-server.listen(PORT, HOST, () => log(`KONG ROYALE server on ${HOST}:${PORT} (${serve ? "serving dist/ + /ws" : "ws only"})${EVENT_MODE ? " · EVENT MODE (players join by link only)" : ""} · admin ${process.env.KR_ADMIN_KEY_SHA256 ? "key set" : "OFF (no KR_ADMIN_KEY_SHA256)"}`));
+if (PROC < 0) server.listen(PORT, HOST, () => log(`KONG ROYALE server on ${HOST}:${PORT} (${serve ? "serving dist/ + /ws" : "ws only"})${EVENT_MODE ? " · EVENT MODE (players join by link only)" : ""} · admin ${process.env.KR_ADMIN_KEY_SHA256 ? "key set" : "OFF (no KR_ADMIN_KEY_SHA256)"}`));
+else {
+  // ---- under a front (server/front.ts): game sockets arrive over IPC with the upgrade request the front already read,
+  // and the front hears this process's health
+  const toFront = (m: ToFront) => { if (process.connected) process.send?.(m); };
+  process.on("message", (m: ToProc, handle?: net.Socket) => {
+    if (m.t === "owners") { ownedElsewhere = m.n; return; }
+    if (!handle) return;
+    handle.once("close", () => toFront({ t: "gone", ip: m.ip }));
+    server.emit("connection", handle); handle.emit("data", Buffer.from(m.raw, "base64")); handle.resume();
+  });
+  const ownersHere = () => { const n: Record<string, number> = {}; for (const l of lobbies.values()) { const ip = !l.event && l.owner?.sock?.ip; if (ip) n[ip] = (n[ip] ?? 0) + 1; } return n; };
+  const push = () => toFront({ t: "health", h: { ...health(), made: roomsMade, owners: ownersHere() } });
+  setInterval(push, PUSH_MS); push();
+  // the front is gone: nothing can reach this process any more
+  process.on("disconnect", () => shutdown("front gone"));
+  log(`match process ready, WebTransport ${wt ? `on UDP ${wt.welcome().port}` : `off (${wtOff})`}`);
+}
