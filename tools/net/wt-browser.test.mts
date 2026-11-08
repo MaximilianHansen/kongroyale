@@ -1,13 +1,16 @@
 // WEBTRANSPORT IN A BROWSER — the client's real link code (client/src/game/net.ts and its lazy ./wt.ts) in headless
 // Chromium against a real server on loopback. Needs a Chromium or Chrome with WebTransport; no GPU, no root, ~30 s.
 //   npx tsx tools/net/wt-browser.test.mts [--chrome PATH]     (also KR_CHROME; default: Playwright's own Chromium)
-// Checks: with ?wt=1 and a server that offers WebTransport, the link settles on "wt", a ping sent through the link comes
-// back as a pong, /health counts the client on wt and one link settled on wt; the session outlives a lobby that sends
-// nothing for longer than the server's heartbeat timeout (the link's keepalive pings); a page on "localhost" reaches
-// the IPv4 endpoint too; when the server closes the session (a
-// flood past its rate limit) the link goes back to the WebSockets ("closed") and keeps working; without ?wt=1 it stays on the
-// WebSockets with "flag-off"; with ?wt=1 against a server without KR_WT it stays there with "server-off", and /health
-// counts each reason. With no browser to launch, or no QUIC module build for this platform, it prints SKIP and passes.
+// Checks: against a server that offers WebTransport to everyone (KR_WT=1, KR_WT_SHARE unset), a page with no flag is
+// in the "wt" arm, keeps that arm for its session and settles on "wt"; a ping sent through the link comes back as a
+// pong, /health counts the client on wt, one link settled on wt and the arm; the session outlives a lobby that sends
+// nothing for longer than the server's heartbeat timeout (the link's keepalive pings); a page on "localhost" reaches the
+// IPv4 endpoint too; when the server closes the session (a flood past its rate limit) the link goes back to the
+// WebSockets ("closed") and keeps working; ?wt=0 keeps it on the WebSockets ("flag-off", arm "forced-ws") and ?wt=1
+// dials ("forced-wt"). With KR_WT_SHARE=0 a new page is in the "ws" arm ("flag-off"), and a page whose session already
+// holds the "wt" arm keeps it and dials. Against a server without KR_WT the link stays on the WebSockets with
+// "server-off" (arm "off", or "forced-wt" with ?wt=1). /health counts each reason and arm. With no browser to launch,
+// or no QUIC module build for this platform, it prints SKIP and passes.
 import { spawn, type ChildProcess } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
@@ -32,7 +35,8 @@ async function startServer(env: Record<string, string>): Promise<{ port: number;
   if (!(await waitFor(() => /KONG ROYALE server on/.test(out), 60_000))) throw new Error("server did not start:\n" + out);
   return { port, proc };
 }
-type Health = { transports: { clients: Record<string, number>; settled: { wt: number; ws: Record<string, number> }; webtransport: { off?: string; open?: number } } };
+type Settled = { wt: number; ws: Record<string, number> };
+type Health = { transports: { clients: Record<string, number>; settled: Settled; arms: Record<string, { links: number; settled: Settled }>; webtransport: { off?: string; open?: number } } };
 const health = async (port: number) => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as Health;
 
 // the page: net.ts bundled the way the game ships it (the WebTransport code is a separate lazy chunk), plus a few lines
@@ -40,12 +44,13 @@ const health = async (port: number) => (await (await fetch(`http://127.0.0.1:${p
 const ENTRY = `import { connectWs } from "./client/src/game/net";
 import { M, Writer, writeInput } from "./shared/net/proto";
 import { makeInput } from "./shared/sim/player";
-(window as any).run = async (url: string, flood: boolean, idleMs: number) => {
+(window as any).run = async (url: string, flood: boolean, idleMs: number, preArm: string) => {
+  if (preArm) sessionStorage.setItem("kr.wt-arm", preArm);
   const link = await connectWs(url), out: Record<string, unknown> = { pong: false };
   link.onBinary = (u8) => { if (u8[0] === M.Pong) out.pong = true; };
   const t0 = performance.now();
   while (performance.now() - t0 < 8000 && link.transport?.kind !== "wt" && !link.fallback) await new Promise((r) => setTimeout(r, 20));
-  out.kind = link.transport?.kind; out.fallback = link.fallback ?? null;
+  out.kind = link.transport?.kind; out.fallback = link.fallback ?? null; out.arm = link.report?.().arm; out.kept = sessionStorage.getItem("kr.wt-arm");
   // only a running match answers pings: make a lobby and start it (a long warm-up, so it is still running at the end)
   let inLobby = false, inMatch = false; link.onJSON = (m) => { if (m.t === "lobby") inLobby = true; if (m.t === "match") inMatch = true; };
   link.sendJSON({ t: "hello", name: "WT" }); link.sendJSON({ t: "create", mode: "solo" });
@@ -101,13 +106,13 @@ try { browser = await chromium.launch({ executablePath: CHROME, headless: true }
   console.log(`SKIP  no browser to launch (${String(e).split("\n")[0].slice(0, 120)}); pass --chrome or run npx playwright install chromium`);
   page.close(); process.exit(0);
 }
-type Run = { kind?: string; fallback: string | null; pong: boolean; stats: { sent?: [number, number]; recv?: number }; report: { transport: string; fallback: string | null; stats: { recv: number } } | null; chunks: string[]; keepalives?: number; idle?: { kind?: string; fallback: string | null }; after?: { kind?: string; fallback: string | null; pong: boolean } };
-async function run(query: string, port: number, flood = false, idleMs = 0, host = "127.0.0.1"): Promise<Run> {
+type Run = { kind?: string; fallback: string | null; arm?: string; kept: string | null; pong: boolean; stats: { sent?: [number, number]; recv?: number }; report: { transport: string; fallback: string | null; arm: string; ackMs?: { n: number }; deferred?: number; stats: { recv: number } } | null; chunks: string[]; keepalives?: number; idle?: { kind?: string; fallback: string | null }; after?: { kind?: string; fallback: string | null; pong: boolean } };
+async function run(query: string, port: number, flood = false, idleMs = 0, host = "127.0.0.1", preArm = ""): Promise<Run> {
   const p = await browser.newPage();
   try {
     await p.goto(`http://${host}:${pagePort}/${query}`);
     await p.waitForFunction(() => typeof (window as unknown as { run?: unknown }).run === "function");
-    return await p.evaluate(([u, f, i]) => (window as unknown as { run: (u: string, f: boolean, i: number) => Promise<Run> }).run(u, f, i), [`ws://127.0.0.1:${port}/ws`, flood, idleMs] as const);
+    return await p.evaluate(([u, f, i, a]) => (window as unknown as { run: (u: string, f: boolean, i: number, a: string) => Promise<Run> }).run(u, f, i, a), [`ws://127.0.0.1:${port}/ws`, flood, idleMs, preArm] as const);
   } finally { await p.close(); }
 }
 
@@ -120,34 +125,54 @@ try {
     const h0 = await health(s.port);
     if (h0.transports.webtransport.off) console.log(`SKIP  KR_WT=1 checks: the endpoint is off (${h0.transports.webtransport.off})`);
     else {
-      const on = await run("?wt=1", s.port, true, 25_000);
-      check(on.kind === "wt" && on.fallback === null, `?wt=1: the link settles on WebTransport (${on.kind}, ${on.fallback})`);
+      const on = await run("", s.port, true, 25_000);
+      check(on.kind === "wt" && on.fallback === null && on.arm === "wt" && on.kept === "wt", `no flag, KR_WT_SHARE unset: the page is in the "wt" arm, keeps it for its session and settles on WebTransport (${on.kind}, ${on.fallback}, arm ${on.arm}, kept ${on.kept})`);
       check(on.idle?.kind === "wt" && on.idle.fallback === null && (on.keepalives ?? 0) > 0, `25 s in a lobby with nothing to send (heartbeat timeout 15 s), then a match's first frames just after a keepalive: still on WebTransport (${on.idle?.kind}, ${on.idle?.fallback}, ${on.keepalives} keepalive)`);
       check(on.pong, "a ping through the WebTransport link is answered");
       check((on.stats.recv ?? 0) > 0 && (on.stats.sent?.[1] ?? 0) > 0, `the wt transport counts what it sends and receives (sent ${on.stats.sent}, recv ${on.stats.recv})`);
-      check(on.report?.transport === "wt" && on.report.fallback === null && on.report.stats.recv > 0, `the KONGBOT report names the link's transport, fallback and counters (${JSON.stringify(on.report && { ...on.report, stats: on.report.stats.recv })})`);
+      check(on.report?.transport === "wt" && on.report.fallback === null && on.report.arm === "wt" && on.report.stats.recv > 0 && typeof on.report.ackMs?.n === "number" && on.report.deferred === 0, `the KONGBOT report names the link's transport, fallback, arm and counters (${JSON.stringify(on.report && { ...on.report, stats: on.report.stats.recv })})`);
       check(on.chunks.some((c) => c !== "entry.js" && /\.js$/.test(c)), `the WebTransport code arrives as its own lazy chunk (${on.chunks.join(", ")})`);
       const h1 = await health(s.port);
-      check(h1.transports.settled.wt === 1, `/health counts one link settled on wt (${h1.transports.settled.wt})`);
+      check(h1.transports.settled.wt === 1 && h1.transports.arms.wt.links === 1 && h1.transports.arms.wt.settled.wt === 1, `/health counts one link settled on wt, in the wt arm (${h1.transports.settled.wt}, ${JSON.stringify(h1.transports.arms.wt)})`);
       check(on.after?.kind === "ws" && on.after.fallback === "closed" && on.after.pong, `after the server closes the session the link is back on the WebSockets, "closed", and pings work (${on.after?.kind}, ${on.after?.fallback}, pong ${on.after?.pong})`);
-      check(h1.transports.settled.ws.closed === 1, `/health counts one closed fallback (${h1.transports.settled.ws.closed})`);
-      const off = await run("", s.port);
-      check(off.kind === "ws" && off.fallback === "flag-off" && off.pong, `no ?wt: the link stays on the WebSockets, "flag-off", and pings work (${off.kind}, ${off.fallback})`);
+      check(h1.transports.settled.ws.closed === 1 && h1.transports.arms.wt.settled.ws.closed === 1, `/health counts one closed fallback, in the wt arm (${h1.transports.settled.ws.closed})`);
+      const off = await run("?wt=0", s.port);
+      check(off.kind === "ws" && off.fallback === "flag-off" && off.arm === "forced-ws" && off.kept === null && off.pong, `?wt=0: the link stays on the WebSockets, "flag-off", arm "forced-ws", no arm kept, and pings work (${off.kind}, ${off.fallback}, ${off.arm}, ${off.kept})`);
+      const forced = await run("?wt=1", s.port);
+      check(forced.kind === "wt" && forced.arm === "forced-wt", `?wt=1: the link settles on WebTransport, arm "forced-wt" (${forced.kind}, ${forced.arm})`);
       await sleep(100);
-      check((await health(s.port)).transports.settled.ws["flag-off"] === 1, "/health counts one flag-off fallback");
-      const lh = await run("?wt=1", s.port, false, 0, "localhost");
+      const h2 = await health(s.port);
+      check(h2.transports.settled.ws["flag-off"] === 1 && h2.transports.arms["forced-ws"].settled.ws["flag-off"] === 1 && h2.transports.arms["forced-wt"].settled.wt === 1, "/health counts one flag-off fallback, in the forced-ws arm, and the forced-wt link");
+      const lh = await run("", s.port, false, 0, "localhost");
       check(lh.kind === "wt" && lh.fallback === null && lh.pong, `a page on localhost reaches the IPv4 endpoint: the link settles on WebTransport (${lh.kind}, ${lh.fallback})`);
     }
   } finally { s.proc.kill("SIGTERM"); }
 
-  // ---- 2. the server does not offer it
-  const s2 = await startServer({ KR_WARMUP_S: "60" });
+  // ---- 2. the server offers it to nobody new (KR_WT_SHARE=0)
+  const s2 = await startServer({ KR_WT: "1", KR_WT_SHARE: "0", KR_WARMUP_S: "60" });
   try {
-    const r = await run("?wt=1", s2.port);
-    check(r.kind === "ws" && r.fallback === "server-off" && r.pong, `?wt=1, KR_WT unset: the link stays on the WebSockets, "server-off" (${r.kind}, ${r.fallback})`);
-    await sleep(100);
-    check((await health(s2.port)).transports.settled.ws["server-off"] === 1, "/health counts one server-off fallback");
+    if (!(await health(s2.port)).transports.webtransport.off) {
+      const ws = await run("", s2.port);
+      check(ws.kind === "ws" && ws.fallback === "flag-off" && ws.arm === "ws" && ws.kept === "ws" && ws.pong, `KR_WT_SHARE=0: a new page is in the "ws" arm and stays on the WebSockets, "flag-off" (${ws.kind}, ${ws.fallback}, ${ws.arm}, kept ${ws.kept})`);
+      const kept = await run("", s2.port, false, 0, "127.0.0.1", "wt");
+      check(kept.kind === "wt" && kept.arm === "wt", `KR_WT_SHARE=0: a page whose session holds the "wt" arm keeps it and settles on WebTransport (${kept.kind}, ${kept.arm})`);
+      await sleep(100);
+      const h = await health(s2.port);
+      check(h.transports.arms.ws.links === 1 && h.transports.arms.ws.settled.ws["flag-off"] === 1 && h.transports.arms.wt.settled.wt === 1, `/health counts the arms (${JSON.stringify({ ws: h.transports.arms.ws.links, wt: h.transports.arms.wt.links })})`);
+    }
   } finally { s2.proc.kill("SIGTERM"); }
+
+  // ---- 3. the server does not offer it
+  const s3 = await startServer({ KR_WARMUP_S: "60" });
+  try {
+    const r = await run("", s3.port);
+    check(r.kind === "ws" && r.fallback === "server-off" && r.arm === "off" && r.kept === null && r.pong, `KR_WT unset: the link stays on the WebSockets, "server-off", arm "off" (${r.kind}, ${r.fallback}, ${r.arm})`);
+    const f = await run("?wt=1", s3.port);
+    check(f.kind === "ws" && f.fallback === "server-off" && f.arm === "forced-wt", `?wt=1, KR_WT unset: "server-off", arm "forced-wt" (${f.kind}, ${f.fallback}, ${f.arm})`);
+    await sleep(100);
+    const h = await health(s3.port);
+    check(h.transports.settled.ws["server-off"] === 2 && h.transports.arms.off.links === 1, "/health counts two server-off fallbacks, one in the off arm");
+  } finally { s3.proc.kill("SIGTERM"); }
 } finally { await browser.close(); page.close(); }
 
 console.log(failed ? `webtransport in a browser: ${failed} check(s) FAILED` : "webtransport in a browser: all checks passed");

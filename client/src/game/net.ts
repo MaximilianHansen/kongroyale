@@ -7,10 +7,13 @@
 // the first copy (inputs by seq, snapshots/events by tick, inventory by seq, pongs by timestamp). A stall now needs both
 // sockets to lose a packet at the same moment. Disable the aux socket with ?aux=0 on the page URL.
 //
-// WebTransport (?wt=1, and the server offers it in "welcome"): the lazy chunk ./wt.ts dials QUIC; once the session is
-// up it carries the binary frames (datagrams for snapshots and pings) and the aux socket is never opened. If it can't
-// be had, or dies later, the link stays on (or goes back to) the WebSocket pair. Either way the link tells the server
-// once which transport it ended up on and why ({ t: "net" }), so /health counts fallbacks across real players.
+// WebTransport (the server offers it in "welcome" and puts this tab in its WebTransport arm, or the page has ?wt=1;
+// ?wt=0 never): the lazy chunk ./wt.ts dials QUIC; once the session is up it carries the binary frames (datagrams for
+// snapshots and pings) and the aux socket is never opened. If it can't be had, or dies later, the link stays on (or goes
+// back to) the WebSocket pair. Either way the link tells the server once which transport it ended up on, why, and its
+// A/B arm ({ t: "net" }), so /health counts fallbacks and arms across real players. Its report() (KONGBOT and playtest
+// bundles) carries the same, plus input→ack times and the hit markers that waited for the server, so
+// tools/playtest/ab.mts can compare the arms.
 import { DT } from "../../../shared/sim/const";
 import { Match, type MatchOpts } from "../../../shared/sim/match";
 import type { BotDifficulty } from "../ui/api";
@@ -18,7 +21,7 @@ import type { StaticWorld } from "../../../shared/sim/world";
 import { MatchHost, matchInfo, type HostPeer } from "../../../shared/net/host";
 import { flag } from "../flags";
 import { ReplayRecorder, packLog } from "../../../shared/net/replay";
-import { countSent, makeTransportStats, sendFrame, type Channel, type FallbackReason, type Path, type Transport } from "../../../shared/net/transport";
+import { countSent, makeTransportStats, sendFrame, type Channel, type FallbackReason, type Path, type Transport, type WtArm } from "../../../shared/net/transport";
 import type { WtOffer } from "./wt";
 
 export interface Link {
@@ -29,7 +32,13 @@ export interface Link {
   readonly fallback?: FallbackReason | null;
   /** an online link's transport now, its fallback and a copy of its counters, for KONGBOT reports. It lives here, in
    *  the lazy game chunk, so the entry (where the KONGBOT context is gathered) doesn't carry it */
-  report?(): { transport: Transport["kind"]; fallback: FallbackReason | null; stats: Transport["stats"] };
+  report?(): LinkReport;
+  /** (ClientMatch) an input's first acknowledgement arrived this long after it was sent (ms) */
+  noteAck?(ms: number): void;
+  /** (ClientMatch) in play, a predicted hit's marker was left to the server's verdict because the link was slow */
+  noteDeferred?(): void;
+  /** (ClientMatch) a snapshot carried this many seconds of a match's play phase */
+  notePlay?(s: number): void;
   onJSON: (m: Record<string, unknown>) => void;
   /** `at` = arrival time (MessageEvent.timeStamp on the performance.now() clock), when the transport knows it */
   onBinary: (u8: Uint8Array, at?: number) => void;
@@ -41,8 +50,36 @@ export interface Link {
   pump?(): void;
 }
 
+export interface LinkReport {
+  transport: Transport["kind"]; fallback: FallbackReason | null; arm: WtArm; stats: Transport["stats"];
+  /** input→ack over the link's life, from ACK_BIN_MS bins (null: no input acknowledged yet) */
+  ackMs: { n: number; p50: number | null; p95: number | null; p99: number | null };
+  /** hit markers that waited for the server's verdict during play, and the seconds of play they happened in: both
+   *  over the link's life, so their rate doesn't depend on how much of the timeline a report kept */
+  deferred: number; playS: number;
+  /** when the link opened, on the playtest timeline's clock (performance.now() in seconds): rows before it belong to an
+   *  earlier link or a practice match */
+  since: number;
+}
+
 const auxWanted = () => flag("aux");
-const wtWanted = () => flag("wt");
+/** input→ack histogram bins: ACK_BIN_MS wide, the last one holds everything slower */
+const ACK_BIN_MS = 5, ACK_BINS = 200;
+const ARM_KEY = "kr.wt-arm";
+/** this tab's arm: the page's ?wt=1 / ?wt=0, else the first arm a server assigned in this tab's session (a reconnect or a
+ *  reload keeps it, so a player's arm never flips mid-session), else the one this welcome assigns */
+function armOf(offer: WtOffer | undefined): WtArm {
+  const f = flag("wt");
+  if (f === "1") return "forced-wt";
+  if (f === "0") return "forced-ws";
+  if (!offer) return "off";
+  let kept: string | null = null;
+  try { kept = sessionStorage.getItem(ARM_KEY); } catch { /* no storage: this link's arm only */ }
+  if (kept === "wt" || kept === "ws") return kept;
+  const arm = offer.use ? "wt" : "ws";
+  try { sessionStorage.setItem(ARM_KEY, arm); } catch { /* no storage */ }
+  return arm;
+}
 /** a STALLED link — nothing at all from the server for this long (a match sends 30 snapshots + a pong a second)
  *  — takes no more binary frames until something arrives again. Inputs queued behind a dead TCP link came out as one burst
  *  when it recovered (60 a second of stall, on each socket) and tripped the server's per-socket rate limit: strikes, then
@@ -67,21 +104,31 @@ export function connectWs(url: string, timeoutMs = 4000): Promise<Link> {
     };
     const bin: Transport = { kind: "ws", stats, sendReliable: (u8) => send(u8, 0), sendUnreliable: (u8) => send(u8, 1), onMessage: () => {}, close: () => aux?.close() };
     const receive = (e: MessageEvent) => { const u8 = new Uint8Array(e.data as ArrayBuffer); stats.recv++; stats.recvBytes += u8.length; bin.onMessage(u8, e.timeStamp, SERVER_PATH); };
-    let active: Transport = bin, fallback: FallbackReason | null = null;
+    let active: Transport = bin, fallback: FallbackReason | null = null, arm: WtArm = "off", deferred = 0, playS = 0;
+    const since = performance.now() / 1000;
+    const ack = new Uint32Array(ACK_BINS);
+    const ackAt = (p: number, n: number) => { let k = 0, i = 0; for (; i < ACK_BINS - 1; i++) { k += ack[i]; if (k >= p * n) break; } return i * ACK_BIN_MS + ACK_BIN_MS / 2; };
     const link: Link = {
       offline: false, onJSON: () => {}, onBinary: () => {}, onClose: () => {},
       get transport() { return active; }, get fallback() { return fallback; },
-      report: () => ({ transport: active.kind, fallback, stats: structuredClone(active.stats) }),
+      report: () => {
+        let n = 0; for (const c of ack) n += c;
+        return { transport: active.kind, fallback, arm, stats: structuredClone(active.stats), ackMs: { n, p50: n ? ackAt(0.5, n) : null, p95: n ? ackAt(0.95, n) : null, p99: n ? ackAt(0.99, n) : null }, deferred, playS: Math.round(playS), since };
+      },
+      noteAck: (ms) => { ack[Math.max(0, Math.min(ACK_BINS - 1, Math.floor(ms / ACK_BIN_MS)))]++; },
+      noteDeferred: () => { deferred++; },
+      notePlay: (s) => { playS += s; },
       sendJSON: (o) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); },
       sendBinary: (u8) => sendFrame(active, u8),
       close: () => { closed = true; active.close(); bin.close(); ws.close(); },
     };
     bin.onMessage = (u8, at) => link.onBinary(u8, at);
     /** the transport this link ended up on, once per change, to the server's counters */
-    const settle = (why: FallbackReason | null) => { fallback = why; link.sendJSON(why ? { t: "net", transport: "ws", why } : { t: "net", transport: "wt" }); };
+    const settle = (why: FallbackReason | null) => { fallback = why; link.sendJSON(why ? { t: "net", transport: "ws", why, arm } : { t: "net", transport: "wt", arm }); };
     const toWs = (token: string, why: FallbackReason) => { if (closed) return; active = bin; lastRx = performance.now(); openAux(token); settle(why); };
     const tryWt = (token: string, offer: WtOffer | undefined) => {
-      if (!wtWanted()) return toWs(token, "flag-off");
+      arm = armOf(offer);
+      if (arm === "ws" || arm === "forced-ws") return toWs(token, "flag-off");
       if (!offer) return toWs(token, "server-off");
       if (typeof WebTransport === "undefined") return toWs(token, "unsupported");
       import("./wt").then((m) => m.dialWt(offer, token, (u8, at) => link.onBinary(u8, at))).then((wt) => {

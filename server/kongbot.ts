@@ -1,5 +1,6 @@
 // KONGBOT server side: POST /api/kongbot (client/src/kongbot) → MongoDB, collection kongbot_reports.
 //   KR_MONGO_URI (default mongodb://127.0.0.1:27017, `npm run kongbot:db` starts one), KR_MONGO_DB (default kong_royale)
+// A body may arrive gzip-compressed (Content-Encoding: gzip); it is inflated here, never past MAX_BODY.
 // A report is never lost to a database hiccup: while Mongo is unreachable it is written to .kongbot/spool/ and imported
 // on the next successful connection. Reports are private: there is no read endpoint — triage reads Mongo directly
 // (npm run kongbot, tools/kongbot/cli.mts). Each report gets a short id (KB-<n>) the player sees in the toast.
@@ -8,11 +9,14 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import zlib from "node:zlib";
 import { MongoClient, Binary, type Collection, type Document } from "mongodb";
 import { bundleDir, bundleWriter, parseBundle, type Bundle } from "./playtest-bundles";
 
 const URI = process.env.KR_MONGO_URI || "mongodb://127.0.0.1:27017";
 const DB = process.env.KR_MONGO_DB || "kong_royale";
+/** MAX_BODY bounds what arrives and, for a gzip upload (Content-Encoding: gzip, the ?diag send sheet), what it inflates
+ *  to: the inflate stops at MAX_BODY, so a small upload can't expand into a large one in memory */
 const MAX_BODY = 12 * 1024 * 1024, MAX_SHOT = 6 * 1024 * 1024;
 const RATE_N = 20, RATE_WINDOW_MS = 10 * 60_000;
 // whole-server brakes (per-address limits alone do not stop many addresses): uploads in flight (each up to MAX_BODY in
@@ -158,13 +162,20 @@ export function kongbotDb(root: string) {
     if (h.length >= RATE_N) { reply(res, 429, { ok: false, error: "too many reports, try again in a few minutes" }); return; }
     h.push(now); hits.set(ip, h); recent.push(now);
 
+    const encoding = String(req.headers["content-encoding"] ?? "identity").trim().toLowerCase();
+    if (encoding !== "identity" && encoding !== "gzip") { reply(res, 415, { ok: false, error: "send the report as JSON, plain or gzip" }); req.resume(); return; }
     const chunks: Buffer[] = []; let size = 0, over = false;
     try {
       for await (const c of req) { size += (c as Buffer).length; if (size > MAX_BODY) { over = true; break; } chunks.push(c as Buffer); }
     } catch { reply(res, 400, { ok: false, error: "bad body" }); return; }
     if (over) { reply(res, 413, { ok: false, error: "report too large" }); req.destroy(); return; }
+    let raw: Buffer = Buffer.concat(chunks);
+    if (encoding === "gzip") {
+      try { raw = await new Promise<Buffer>((ok, fail) => zlib.gunzip(raw, { maxOutputLength: MAX_BODY }, (e, out) => (e ? fail(e) : ok(out)))); }
+      catch (e) { const big = (e as { code?: string }).code === "ERR_BUFFER_TOO_LARGE"; reply(res, big ? 413 : 400, { ok: false, error: big ? "report too large" : "bad body" }); return; }
+    }
     let b: Record<string, unknown>;
-    try { b = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { reply(res, 400, { ok: false, error: "bad json" }); return; }
+    try { b = JSON.parse(raw.toString("utf8")); } catch { reply(res, 400, { ok: false, error: "bad json" }); return; }
     if (!b || typeof b !== "object" || Array.isArray(b)) { reply(res, 400, { ok: false, error: "report must be an object" }); return; }
     const message = String(b.message ?? "").trim().slice(0, 2000);
     if (message.length < 3) { reply(res, 400, { ok: false, error: "empty message" }); return; }
@@ -186,7 +197,7 @@ export function kongbotDb(root: string) {
       build: gitInfo(), ua: str(req.headers["user-agent"], 400),
       ctx: clean(b.ctx ?? null), logs: Array.isArray(b.logs) ? (clean(b.logs.slice(-1500)) as unknown[]) : [], trail: Array.isArray(b.trail) ? (clean(b.trail.slice(-400)) as unknown[]) : [],
       shot: shot ? new Binary(shot) : null, shotMime, shotSize: Array.isArray(b.shotSize) ? (b.shotSize as number[]).slice(0, 2) : null,
-      bundle: bundle ? { mark: bundle.mark, timeline: clean(bundle.timeline) as Bundle["timeline"], flags: bundle.flags } : null,
+      bundle: bundle ? { mark: bundle.mark, timeline: clean(bundle.timeline) as Bundle["timeline"], flags: bundle.flags, diag: bundle.diag } : null,
       notes: [], history: [{ at, by: "reporter", status: "new" }],
     };
     const saveBundle = (id: string) => {

@@ -53,7 +53,7 @@ const FLAGS = {
   fullcam: { kind: present, owner: "engine", purpose: "full scene-graph camera updates instead of the camera-only walk" },
   fxlive: { kind: present, owner: "weapons", purpose: "weapon stages play effects live instead of frozen" },
   fxt: { kind: text, owner: "weapons", purpose: "time (s) the fx stage freezes at; default 0.2" },
-  geofree: { kind: one, owner: "engine", purpose: "=1 drops the CPU vertex arrays of static town-kit batches once they are on the GPU" },
+  geofree: { kind: on, owner: "engine", purpose: "drop the CPU vertex arrays of static meshes once they are on the GPU and rebuild them on a context restore; =0 keeps them, and ?dev=annotate keeps them unless =1" },
   geoshare: { kind: on, owner: "engine", purpose: "copies of one asset share their identical vertex arrays (crates per rarity, the two planes); =0 keeps a copy each" },
   gpu: { kind: text, owner: "engine", purpose: "renderer string to classify instead of the real GPU's" },
   guard: { kind: present, owner: "boot", purpose: "run the display frame-rate guard in automated browsers too" },
@@ -93,7 +93,7 @@ const FLAGS = {
   lowmemview: { kind: num(2), owner: "boot", purpose: "lowmem: at most this many far POIs build because they are in view during the plane; the rest stay terrain until landing" },
   lowmemcap: { kind: num(3), owner: "boot", purpose: "lowmem: at most this many streamed POIs stay built; past it the farthest is evicted, never the nearest or the one the player is in" },
   lowmembudget: { kind: num(1500), owner: "boot", purpose: "lowmem: estimated MB (vertex arrays + textures) the streamed POIs may hold; past it the farthest is evicted like lowmemcap" },
-  farimp: { kind: present, owner: "boot", purpose: "lowmem: draw a baked far impostor (public/assets/far) for every streamed POI that is not built" },
+  farimp: { kind: on, owner: "boot", purpose: "lowmem: draw a baked far impostor (public/assets/far) for every streamed POI that is not built" },
   lowmemhyst: { kind: num(100), owner: "boot", purpose: "lowmem: at the cap or budget, a pending POI builds only if it is this much nearer (m) than the POI it would evict" },
   manual: { kind: present, owner: "caster", purpose: "caster camera starts in manual instead of autopilot" },
   map: { kind: one, owner: "ui", purpose: "open the full-screen map (view-camera captures)" },
@@ -134,6 +134,7 @@ const FLAGS = {
   rockMerge: { kind: on, owner: "pois", purpose: "Mist Falls merges its near rock sets into meshes; =0 = the old instanced sets" },
   rocks: { kind: on, owner: "terrain", purpose: "draw the terrain rocks" },
   resaudit: { kind: present, owner: "engine", purpose: "__kr.resAudit(): what the renderer holds outside a scope" },
+  resguard: { kind: text, owner: "engine", purpose: "half-rate guard: =1 on, =0 off; absent = on unless automated" },
   scale: { kind: num(0), owner: "engine", purpose: "pin the 3D resolution scale; 0 = not pinned" },
   sculpt: { kind: present, owner: "pois", purpose: "town statue sculpts live instead of loading its baked mesh" },
   seed: { kind: num(0), owner: "game", purpose: "practice match seed (plane line, storm, loot); 0 = random" },
@@ -199,7 +200,7 @@ const FLAGS = {
   wprepass: { kind: present, owner: "water", purpose: "depth pre-pass for water" },
   wripple: { kind: present, owner: "water", purpose: "demo ripples" },
   ws: { kind: text, owner: "game", routing: true, purpose: "game server socket URL (ws:// or wss://) instead of the page's own" },
-  wt: { kind: one, owner: "game", purpose: "WebTransport when the server offers it" },
+  wt: { kind: text, owner: "game", purpose: "WebTransport: =1 on, =0 off, else the A/B arm" },
 } as const satisfies Record<string, Flag>;
 
 export type FlagName = keyof typeof FLAGS;
@@ -230,6 +231,8 @@ const values: Record<string, unknown> = {};
     const v = q.get(name);
     values[name] = v === null ? kind.default : kind.parse(v);
   }
+  // the annotator picks on CPU vertices and its wireframe builds edge indices from them, so it keeps them unless asked
+  if (values.dev === "annotate" && q.get("geofree") === null) values.geofree = false;
 }
 
 export function flag<K extends FlagName>(name: K): FlagValue<K> {
