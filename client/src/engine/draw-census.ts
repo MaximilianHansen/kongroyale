@@ -13,6 +13,9 @@
 // material whose version moved since its last draw (three re-derives its program parameters then). The time between
 // two draws of one pass, less the hooks run in it (the next object's two matrix products, the render list step), is the
 // later draw's gap. A pass's walk is its own time outside draws, gaps and hooks: projectObject, sorting, setup.
+// Per draw it also notes a program lookup (three called getProgram, seen through material.customProgramCacheKey) and
+// which of the material's renderer properties changed then (why). Per world module it counts the matrix walk:
+// updateMatrixWorld visits and updateMatrix recomposes.
 //
 // __kr.drawCensus: { on, label, report(), reset() }. gpu-match.mts --census sets label to the tour segment and on to
 // the measured frames, then saves report().
@@ -31,22 +34,26 @@ const HOOKS = ["onBeforeRender", "onAfterRender", "onBeforeShadow", "onAfterShad
 type HookName = (typeof HOOKS)[number];
 type Hook = ((...a: unknown[]) => unknown) & { census?: true };
 const NOOP = THREE.Object3D.prototype as unknown as Record<HookName, Hook>;
-const SUMS = ["draws", "drawMs", "gapMs", "hookMs", "progSwitch", "matSwitch", "matVersion", "syncN", "syncMs"] as const;
+const SUMS = ["draws", "drawMs", "gapMs", "hookMs", "progSwitch", "matSwitch", "matVersion", "reprog", "syncN", "syncMs"] as const;
 
 interface Bucket {
   draws: number; drawMs: number; gapMs: number; hookMs: number; progSwitch: number; matSwitch: number; matVersion: number;
+  /** reprog: draws on which three looked its program up again (getProgram); why: the material property fields that changed then */
+  reprog: number; why: Record<string, number>;
   syncN: number; syncMs: number; gl: Record<string, number>; hooks: Record<string, { n: number; ms: number }>;
 }
-const bucket = (): Bucket => ({ draws: 0, drawMs: 0, gapMs: 0, hookMs: 0, progSwitch: 0, matSwitch: 0, matVersion: 0, syncN: 0, syncMs: 0, gl: {}, hooks: {} });
+const bucket = (): Bucket => ({ draws: 0, drawMs: 0, gapMs: 0, hookMs: 0, progSwitch: 0, matSwitch: 0, matVersion: 0, reprog: 0, why: {}, syncN: 0, syncMs: 0, gl: {}, hooks: {} });
 const add = (to: Bucket, b: Bucket) => {
   for (const f of SUMS) to[f] += b[f];
   for (const [g, v] of Object.entries(b.gl)) to.gl[g] = (to.gl[g] ?? 0) + v;
+  for (const [g, v] of Object.entries(b.why)) to.why[g] = (to.why[g] ?? 0) + v;
   for (const [h, v] of Object.entries(b.hooks)) { const s = (to.hooks[h] ??= { n: 0, ms: 0 }); s.n += v.n; s.ms += v.ms; }
 };
 /** uniqProgs / uniqMats: distinct programs and materials drawn per call of the pass (the fewest switches any order could give) */
 interface Pass { calls: number; inclMs: number; exclMs: number; uniqProgs: number; uniqMats: number; b: Bucket }
 /** objects: by Object3D.id with the name re-taken after each ownership walk, so objects a match removes are never kept alive */
-interface Label { frames: number; stepMs: number; submitMs: number; passes: Map<string, Pass>; classes: Map<string, Bucket>; objects: Map<number, Bucket & { name: string; gen: number }>; outside: Bucket }
+/** matrix: per world module, the scene-graph nodes three's matrix walk visited and the local matrices it recomposed */
+interface Label { frames: number; stepMs: number; submitMs: number; passes: Map<string, Pass>; classes: Map<string, Bucket>; objects: Map<number, Bucket & { name: string; gen: number }>; outside: Bucket; matrix: Map<string, { visits: number; composes: number }> }
 interface Frame { key: string; t0: number; child: number; lastEnd: number; hooks: number; pass: Pass; progs: Set<unknown>; mats: Set<THREE.Material> }
 
 export interface DrawCensus {
@@ -61,7 +68,7 @@ export interface DrawCensus {
 export function installDrawCensus(e: Engine): DrawCensus {
   const r = e.renderer, now = () => performance.now();
   const labels = new Map<string, Label>();
-  const newLabel = (): Label => ({ frames: 0, stepMs: 0, submitMs: 0, passes: new Map(), classes: new Map(), objects: new Map(), outside: bucket() });
+  const newLabel = (): Label => ({ frames: 0, stepMs: 0, submitMs: 0, passes: new Map(), classes: new Map(), objects: new Map(), outside: bucket(), matrix: new Map() });
   let cur = newLabel();
   const census: DrawCensus = { on: true, label: "all", report, reset: () => { labels.clear(); cur = newLabel(); gen++; } };
 
@@ -135,6 +142,17 @@ export function installDrawCensus(e: Engine): DrawCensus {
   let lastProg: unknown = null, lastMat: THREE.Material | null = null, lastObj: THREE.Object3D | null = null, lastSide = -1, inDraw = false;
   const bs: Bucket[] = [bucket(), bucket(), bucket()], one: Bucket[] = [bucket()];
   const matVer = new WeakMap<THREE.Material, number>();
+  // three calls material.customProgramCacheKey() only from getProgram (WebGLPrograms.getParameters): a call inside a draw
+  // is a program lookup, and the material property fields it rewrote say why
+  let reprogHit = false;
+  const wrapKey = (m: { customProgramCacheKey: () => string; censusKey?: true }) => {
+    if (Object.prototype.hasOwnProperty.call(m, "censusKey")) return;
+    const f = m.customProgramCacheKey;
+    m.customProgramCacheKey = function (this: THREE.Material) { if (inDraw) reprogHit = true; return f.call(this); };
+    m.censusKey = true;
+  };
+  wrapKey(THREE.Material.prototype as unknown as { customProgramCacheKey: () => string });
+  const before: Record<string, unknown> = {};
   const rbd = r.renderBufferDirect.bind(r);
   r.renderBufferDirect = (camera, scene, geometry, material, object, group) => {
     if (!census.on || !stack.length) return rbd(camera, scene, geometry, material, object, group);
@@ -145,6 +163,11 @@ export function installDrawCensus(e: Engine): DrawCensus {
     const t0 = now();
     if (f.lastEnd) { const gap = t0 - f.lastEnd - f.hooks; for (let i = 0; i < 3; i++) bs[i].gapMs += gap; }
     f.hooks = 0;
+    const mp = r.properties.get(material) as Record<string, unknown>;
+    for (const k in before) delete before[k];
+    for (const k in mp) { const x = mp[k]; if (x === null || typeof x !== "object") before[k] = x; }
+    if (Object.prototype.hasOwnProperty.call(material, "customProgramCacheKey")) wrapKey(material as unknown as { customProgramCacheKey: () => string });
+    reprogHit = false;
     inDraw = true;
     try { rbd(camera, scene, geometry, material, object, group); } finally {
       const t1 = now(); inDraw = false; f.lastEnd = t1;
@@ -155,6 +178,12 @@ export function installDrawCensus(e: Engine): DrawCensus {
         if (prog !== lastProg) b.progSwitch++;
         if (material !== lastMat) b.matSwitch++;
         if (moved) b.matVersion++;
+      }
+      if (reprogHit) {
+        let any = false;
+        for (const k in mp) { const x = mp[k]; if ((x === null || typeof x !== "object") && k in before && before[k] !== x) { any = true; for (let i = 0; i < 3; i++) bs[i].why[k] = (bs[i].why[k] ?? 0) + 1; } }
+        if (!any) for (let i = 0; i < 3; i++) bs[i].why["(none)"] = (bs[i].why["(none)"] ?? 0) + 1;
+        for (let i = 0; i < 3; i++) bs[i].reprog++;
       }
       lastProg = prog; lastMat = material; lastObj = object; lastSide = material.side; matVer.set(material, material.version); f.progs.add(prog); f.mats.add(material);
     }
@@ -192,6 +221,23 @@ export function installDrawCensus(e: Engine): DrawCensus {
     gen++;
   };
   walk(); setInterval(walk, 1000);
+
+  // ---- the matrix walk: every updateMatrixWorld visit and updateMatrix recompose, charged to the object's module (the
+  // static cache's per-node overrides call the prototype method they captured, so a node it skips is never counted)
+  const moduleKey = new WeakMap<THREE.Object3D, { gen: number; key: string }>();
+  const matrixOf = (o: THREE.Object3D) => {
+    let c = moduleKey.get(o);
+    if (!c || c.gen !== gen) moduleKey.set(o, (c = { gen, key: o === e.scene ? "(scene)" : moduleName(o) }));
+    let m = cur.matrix.get(c.key); if (!m) cur.matrix.set(c.key, (m = { visits: 0, composes: 0 }));
+    return m;
+  };
+  const O3 = THREE.Object3D.prototype, umw = O3.updateMatrixWorld, um = O3.updateMatrix;
+  O3.updateMatrixWorld = function (this: THREE.Object3D, force?: boolean) { if (census.on) matrixOf(this).visits++; return umw.call(this, force); };
+  // the scene's own updateMatrixWorld (static-cache.ts skipHiddenRoots, engine.ts) never reaches the prototype; the
+  // camera's own one ends in Camera.prototype's, which calls the prototype's (counted there)
+  const sceneUmw = e.scene.updateMatrixWorld;
+  e.scene.updateMatrixWorld = function (this: THREE.Scene, force?: boolean) { if (census.on) matrixOf(this).visits++; return sceneUmw.call(this, force); };
+  O3.updateMatrix = function (this: THREE.Object3D) { if (census.on) matrixOf(this).composes++; return um.call(this); };
 
   // ---- GL calls: counted per group, read-backs timed, charged to the draw in progress (else the pass, else outside)
   const gl = r.getContext() as unknown as Record<string, (...a: unknown[]) => unknown>;
@@ -249,7 +295,7 @@ export function installDrawCensus(e: Engine): DrawCensus {
     return {
       totalMs: pf(total(b)), draws: pc(b.draws), drawMs: pf(b.drawMs), gapMs: pf(b.gapMs), hookMs: pf(b.hookMs),
       usPerDraw: b.draws ? +(total(b) * 1000 / b.draws).toFixed(2) : null,
-      progSwitch: pc(b.progSwitch), matSwitch: pc(b.matSwitch), matVersion: pc(b.matVersion), syncN: pc(b.syncN), syncMs: pf(b.syncMs), gl, hooks,
+      progSwitch: pc(b.progSwitch), matSwitch: pc(b.matSwitch), matVersion: pc(b.matVersion), reprog: pc(b.reprog), why: Object.fromEntries(Object.entries(b.why).sort((x, y) => y[1] - x[1]).slice(0, 6).map(([k, v]) => [k, pc(v)])), syncN: pc(b.syncN), syncMs: pf(b.syncMs), gl, hooks,
     };
   }
   const ranked = <K, B extends Bucket>(m: Map<K, B>, n: number) => [...m].sort((a, b) => total(b[1]) - total(a[1])).slice(0, n);
@@ -269,6 +315,7 @@ export function installDrawCensus(e: Engine): DrawCensus {
         byModule: byDim(0), byKind: byDim(1), byMaterial: byDim(2),
         classes: ranked(l.classes, 80).map(([key, b]) => ({ key, ...fmt(b, fr) })),
         objects: ranked(l.objects, 40).map(([, b]) => ({ key: b.name, ...fmt(b, fr) })),
+        matrix: [...l.matrix].sort((a, b) => b[1].visits + b[1].composes - a[1].visits - a[1].composes).slice(0, 40).map(([key, m]) => ({ key, visits: +(m.visits / fr).toFixed(1), composes: +(m.composes / fr).toFixed(1) })),
       };
     }
     return out;

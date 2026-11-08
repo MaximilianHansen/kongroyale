@@ -320,10 +320,19 @@ function startTour(cfg: { segs: Segment[]; maxHp: number; ar: number; arMag: num
 const browser: Browser = await chromium.launch({ executablePath: CHROME || undefined, channel: CHROME ? undefined : "chrome", headless: !HEADED, args: FLAGS, timeout: 120_000 });
 const browserVersion = browser.version();
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+// a fetch the local server resets under load is retried once, then left to the browser (a subresource keeps loading
+// without the isolation headers, which only the document needs: a document that lost them fails the run at ready); an
+// unhandled rejection here used to end the run
 if (CENSUS) await ctx.route(ORIGIN + "/**", async (rt) => {
-  const res = await rt.fetch(), headers = { ...res.headers(), "cross-origin-opener-policy": "same-origin", "cross-origin-embedder-policy": "require-corp" };
-  delete headers["content-encoding"]; delete headers["content-length"];
-  await rt.fulfill({ response: res, headers });
+  for (let i = 0; i < 2; i++) {
+    try {
+      const res = await rt.fetch(), headers = { ...res.headers(), "cross-origin-opener-policy": "same-origin", "cross-origin-embedder-policy": "require-corp" };
+      delete headers["content-encoding"]; delete headers["content-length"];
+      await rt.fulfill({ response: res, headers });
+      return;
+    } catch { /* retried, then continued below */ }
+  }
+  await rt.continue().catch(() => {});
 });
 await ctx.addInitScript((v) => { try { localStorage.setItem("kr-video", v); localStorage.setItem("kr-fov-moved", "1"); } catch { /* private mode */ } }, JSON.stringify(VIDEO));
 // tsx compiles the page functions below with esbuild's keepNames, which calls a __name helper the page doesn't have
@@ -365,6 +374,7 @@ try {
   });
   log("ready in " + (marks.readyWallMs / 1000).toFixed(1) + " s on " + pageInfo.renderer + "; timer query " + pageInfo.timerQuery);
   if (pageInfo.stage === "failed") throw Error("boot failed");
+  if (CENSUS && !(await page.evaluate(() => globalThis.crossOriginIsolated))) throw Error("--census: the page is not cross-origin isolated (its document lost the COOP/COEP headers), so its timings would be clamped");
   pageInfo.software = /swiftshader|llvmpipe|softpipe|software|microsoft basic/i.test(String(pageInfo.renderer));
   if (pageInfo.software && !SOFTWARE) throw Error("software renderer " + pageInfo.renderer + ": not a real-GPU run (--software checks the route, never the timing)");
   if (CENSUS) await page.evaluate(() => { const dc = (window as any).__kr.drawCensus; if (!dc) throw Error("?drawcensus did not install __kr.drawCensus"); dc.on = false; dc.reset(); });
