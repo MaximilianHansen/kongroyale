@@ -385,6 +385,7 @@ if ( aLodFade.x != -1.0 && aLodFade.y != 0.0 ) {   // (x = −1: a detail pool's
 const F_PARS = /* glsl */ `
 #define VEG_TDITHER ${VEG_XFADE ? "1.0" : "0.0"}
 uniform vec3 uSunDir;
+uniform float uVegLite;
 uniform float uTrans;
 uniform float uShadowLift;
 uniform float uSpecK;
@@ -574,11 +575,13 @@ void RE_Direct_Veg( const in IncidentLight directLight, const in vec3 geometryPo
   // glossy leaf spec (front side only). Leaf-cluster cards carry fake puffed normals: a full GGX lobe on them paints
   // whole cards sun-white, so they keep only a trace of it
   #ifndef VEG_MATTE
-  vec3 irr2 = saturate( nl ) * directLight.color * uSpecK;
-  #ifdef VEG_BB_FRAG
-    irr2 *= 0.18;
-  #endif
-  reflectedLight.directSpecular += irr2 * BRDF_GGX( directLight.direction, geometryViewDir, geometryNormal, material ) * material.multiScatteringCompensation;
+  if ( uVegLite == 0.0 ) {
+    vec3 irr2 = saturate( nl ) * directLight.color * uSpecK;
+    #ifdef VEG_BB_FRAG
+      irr2 *= 0.18;
+    #endif
+    reflectedLight.directSpecular += irr2 * BRDF_GGX( directLight.direction, geometryViewDir, geometryNormal, material ) * material.multiScatteringCompensation;
+  }
   #endif
 }
 #undef RE_Direct
@@ -663,14 +666,15 @@ const LIGHTS_SUN_ONLY = THREE.ShaderChunk.lights_fragment_begin
 // (textureCubeUV: 2 fetches + ~60 ALU) on every trunk fragment was measurable at the jungle cameras)
 const LIGHTS_MAPS_VEG = THREE.ShaderChunk.lights_fragment_maps
   .replace("iblIrradiance += getIBLIrradiance( geometryNormal );", "iblIrradiance += vegHemiIrradiance( geometryNormal ) * envMapIntensity;")
-  .replace("#if defined( USE_ENVMAP ) && defined( RE_IndirectSpecular )", "#if defined( USE_ENVMAP ) && defined( RE_IndirectSpecular ) && !defined( VEG_MATTE )");
+  .replace("#if defined( USE_ENVMAP ) && defined( RE_IndirectSpecular )", "#if defined( USE_ENVMAP ) && defined( RE_IndirectSpecular ) && !defined( VEG_MATTE )\nif ( uVegLite == 0.0 ) {")
+  .replace(/#endif\s*$/, "}\n#endif\n");
 // leaf-cluster cards: their puffed normals turn edge-on at random → the sky reflection greyed whole cards; keep a trace
 
 // broad leaves: the sky reflection at grazing angles washed monstera / banana leaves pale teal; undersides are matte
 const LIGHTS_MAPS_VEG_LEAF = LIGHTS_MAPS_VEG.replace("radiance += iblRadiance;", "radiance += iblRadiance * ( gl_FrontFacing ? 0.28 : 0.1 ) * uSpecK;");
-// (the sky reflection is skipped on matte parts — VEG_MATTE, also settable at runtime through VEG_NOSPEC for A/B probes)
+// (the sky reflection is skipped on matte parts — VEG_MATTE — and on the LOD1 tier through uVegLite, see liteMaterial)
 const LIGHTS_MAPS_VEG_MATTE = LIGHTS_MAPS_VEG;
-if (!LIGHTS_SUN_ONLY.includes("vegSunRaw") || !LIGHTS_MAPS_VEG.includes("vegHemiIrradiance") || !LIGHTS_MAPS_VEG.includes("!defined( VEG_MATTE )")) console.warn("veg: three shader chunks changed — foliage lighting patch not applied");
+if (!LIGHTS_SUN_ONLY.includes("vegSunRaw") || !LIGHTS_MAPS_VEG.includes("vegHemiIrradiance") || !LIGHTS_MAPS_VEG.includes("!defined( VEG_MATTE )\nif ( uVegLite == 0.0 ) {") || !LIGHTS_MAPS_VEG.endsWith("}\n#endif\n")) console.warn("veg: three shader chunks changed — foliage lighting patch not applied");
 
 const NORMAL_NOFLIP = THREE.ShaderChunk.normal_fragment_begin.replace("normal *= faceDirection;", "");
 
@@ -728,12 +732,14 @@ export function foliageMaterial(o: FoliageOpts): FoliageMaterials {
   };
   mat.onBeforeCompile = (sh) => {
     patchVertex(sh, false);
+    sh.uniforms.uVegLite = VEG_FULL;
     // (perf: leaf-cluster billboard cards are matte — their GGX trace (×0.18) and sky reflection (×0.2) on fake
     // puffed normals cost a cube fetch + ~80 ALU per canopy fragment for glints the painted masses already carry)
     const matte = o.matte || bb;
-    sh.fragmentShader = (o.hullFade ? "#define VEG_HULLFADE\nvarying float vVegHull;\n" : "") + (o.twoSide ? "#define VEG_TWOSIDE\n" : "") + (o.rootFade ? "#define VEG_ROOTFADE\n" : "") + (dry ? "#define VEG_SENESCE\n" : "") + (leafy ? "#define VEG_LEAF\n" : "") + (bb ? "#define VEG_BB_FRAG\n" : "") + (matte ? "#define VEG_MATTE\n" : "#ifdef VEG_NOSPEC\n#define VEG_MATTE\n#endif\n") + sh.fragmentShader
+    sh.fragmentShader = (o.hullFade ? "#define VEG_HULLFADE\nvarying float vVegHull;\n" : "") + (o.twoSide ? "#define VEG_TWOSIDE\n" : "") + (o.rootFade ? "#define VEG_ROOTFADE\n" : "") + (dry ? "#define VEG_SENESCE\n" : "") + (leafy ? "#define VEG_LEAF\n" : "") + (bb ? "#define VEG_BB_FRAG\n" : "") + (matte ? "#define VEG_MATTE\n" : "") + sh.fragmentShader
       .replace("#include <common>", "#include <common>\n" + F_PARS)
       .replace("#include <normal_fragment_begin>", o.noFlip ? NORMAL_NOFLIP : "#include <normal_fragment_begin>")
+      .replace("#include <normal_fragment_maps>", "if ( uVegLite == 0.0 ) {\n#include <normal_fragment_maps>\n}")
       .replace("#include <map_fragment>", F_MAP + F_HULL + F_ROOT + F_SENESCE + F_GRADE)
       .replace("#include <alphatest_fragment>", "#include <alphatest_fragment>\n" + F_FADE)
       .replace("#include <lights_physical_pars_fragment>", "#include <lights_physical_pars_fragment>\n" + F_DIRECT)
@@ -829,20 +835,23 @@ export function equalMaterial(fm: FoliageMaterials): THREE.MeshStandardMaterial 
 }
 
 const liteCache = new WeakMap<THREE.Material, THREE.MeshStandardMaterial>();
+const VEG_FULL = { value: 0 };
+const VEG_LITE = { value: 1 };
 /**
- * Perf: the LOD1 tier (15–85 m) of a part — no GGX sun glint, no sky-reflection fetch (VEG_NOSPEC →
- * VEG_MATTE), no normal map: at that distance the glint is sub-pixel sparkle, the sky sheen a flat tint the fill
- * already carries, the bump detail below a pixel.
+ * Perf: the LOD1 tier (15–85 m) of a part — no GGX sun glint, no sky-reflection fetch, no normal map: at that
+ * distance the glint is sub-pixel sparkle, the sky sheen a flat tint the fill already carries, the bump detail below a
+ * pixel. It shares its part's program and skips the glint and sky reflection on a per-material uniform (uVegLite), so a
+ * species without a normal map compiles one program instead of two before the island is ready (RAY-132).
  */
 export function liteMaterial(fm: FoliageMaterials): THREE.MeshStandardMaterial {
   const src = fm.mat;
   let m = liteCache.get(src);
   if (!m) {
     m = src.clone();
-    m.onBeforeCompile = src.onBeforeCompile;
+    m.onBeforeCompile = (sh, r) => { src.onBeforeCompile(sh, r); sh.uniforms.uVegLite = VEG_LITE; };
     m.customProgramCacheKey = src.customProgramCacheKey;
-    m.defines = { ...(src.defines ?? {}), VEG_NOSPEC: 1 };
-    // (… and no normal map: at 15–85 m the per-pixel TBN (screen-space derivatives) + the extra fetch buy nothing)
+    // (no normal map: a fetch with implicit gradients inside the uVegLite branch gets flattened on D3D11, so it would
+    // still run on every LOD1 fragment; species with a normal map keep a separate lite program for this)
     m.normalMap = null;
     m.userData = src.userData;
     (m as unknown as { defaultAttributeValues: Record<string, number[]> }).defaultAttributeValues = { aLodFade: [0, 0], aAtlas: [0], aVar: [0] };

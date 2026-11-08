@@ -1,6 +1,6 @@
 ---
 name: verify-diagnostics
-description: Model-check Kong Royale's player diagnostics with TLA+ - the crash heartbeat across tabs (no false crash prompt, no lost crash, one report per crash) and the send flow (consent first, callsign only when ticked, every send answered) - against the code in client/src/playtest/beat.ts, diag.ts and report.ts. Use before calling done any change to the heartbeat (beat.ts startBeat, writeBeat and its pagehide/pageshow listeners, the startBeat call in main.ts, readBeats, findDeadSession, installDiag), the crash card, the send sheet, quickSend, send or body, or the consent and callsign rules.
+description: Model-check Kong Royale's player diagnostics with TLA+ - the crash heartbeat across tabs (no false crash prompt, no lost crash, one report per crash) and the send flow (consent first, callsign only when ticked, every send answered, and the automatic summary, on by default for every player: none before the toast was shown, none after the player turned it off in Settings or under a privacy signal, none from automation) - against the code in client/src/playtest/beat.ts, diag.ts and report.ts. Use before calling done any change to the heartbeat (beat.ts startBeat, writeBeat and its pagehide/pageshow listeners, the startBeat call in main.ts, readBeats, findDeadSession, installDiag), the crash card, the send sheet, quickSend, send or body, or the consent and callsign rules.
 ---
 
 # Verify player diagnostics
@@ -25,6 +25,11 @@ found its bugs (docs/statecharts/diagnostics.md), and now checks the code that f
 | DiagHeartbeat | OneReportPerCrash | One crash is reported at most once, however many tabs load and whatever the player taps. |
 | DiagSend | NoManualSendWithoutConsent | Nothing a player sends leaves the browser before they have seen the consent text on the sheet. |
 | DiagSend | CallsignOnlyWhenTicked | The callsign goes only in a send where "Include my callsign" was ticked. |
+| DiagSend | AutoOnlyAfterNotice | An automatic summary leaves only after the one-time toast was shown (or the player chose in Settings). The default is on, so this is what makes "the player was told first" true. |
+| DiagSend | AutoRespectsOff | And never after the Settings row is turned off, or while Global Privacy Control or Do Not Track is on. |
+| DiagSend | AutoNeverInAutomation | A page under automation (`navigator.webdriver`) sends no summary unless the URL or build asked for diagnostics (`?diag`, `VITE_KR_DIAG=1`). The default is on for every player of a production build, so this keeps harnesses, benches and CI jobs from sending. |
+| DiagSend | NoBeatUnderSignal | The default writes no heartbeat record while Global Privacy Control or Do Not Track is on; only an explicit `?diag` does. |
+| DiagSend | NoBeatAfterOff | A heartbeat record that outlives switching the summaries off in Settings is deleted by the next write (`writeBeat`, within one 5 s beat), unless the player switched back on first. It is a leads-to rule; `BeatTick` is the write and Spec makes it strongly fair. |
 | DiagSend | EverySendAnswered | Every send ends with the thank-you and report id, or a message that it did not go. |
 | DiagSend | SendEnds | A send never hangs: one of the two shows in the end. |
 
@@ -40,6 +45,10 @@ found its bugs (docs/statecharts/diagnostics.md), and now checks the code that f
 | report.ts `quickSend` (SEND DIAGNOSTICS on the results card; reads `consented`) | DiagSend QuickSend |
 | `installReport`'s takeover of `__kr.kongbot.open` (REPORT A PROBLEM) | DiagSend OpenSheet |
 | report.ts `createSheet` (its SEND and CANCEL; stores `kr.diag.consent` after a send goes through) | SheetSend, SheetCancel, Accepted |
+| beat.ts `summariesDefault` (production build, no `?diag` in the URL, not `navigator.webdriver`) and `summariesOn` (that, and `autoOn()`, or `diagOn()`); read by main.ts (`startBeat`), playtest/index.ts (the recorder, diag.ts and auto.ts chunks) and settings-model.ts (the Settings row shows wherever `summariesDefault` holds, so a player who turned it off can turn it back on) | DiagSend `Runs` (the guard on ShowNotice, AutoSend and BootBeat), BootBeat (main.ts `startBeat`) |
+| consent.ts `autoOn`, `autoTold`, `autoMaySend`, `privacySignal`, `markTold`, `setAuto` (kr.diag.auto, kr.diag.auto.told); the Settings → Video → Diagnostics row in ui/settings-model.ts | DiagSend SettingsToggle (counts as told) |
+| auto.ts `showNotice`: the one-time toast on the title once `__kr.ready` (it asks nothing, links to Settings, goes away after 6 s), not under the privacy signal | DiagSend ShowNotice |
+| auto.ts `emit` (sends when `autoMaySend()`, holds up to eight rows while the toast can still come, else drops) → `beacon` (navigator.sendBeacon to /api/diag/auto) | DiagSend AutoSend |
 | report.ts `send` (the POST and its `TIMEOUT_MS` abort), `notSent`, and `body` and `minimise` (what a send carries; the callsign only when ticked) | Accepted, Refused, ToastGone |
 
 **The first beat is written at boot, inside the lock.** main.ts calls `startBeat` once the boot JS has run, before the
@@ -52,10 +61,12 @@ no record. Drop `\cap started` and TLC shows the path: Open, Kill, Open.
 **Two dead sessions, one card:** when two sessions died (a browser crash with two tabs open), one load claims both and
 the card asks about the newest only. The model counts both as picked up (`seen`), and at most one report goes out.
 
-Not modelled: time, the 7-day expiry of old records (`KEEP_MS`), browsers without Web Locks (they keep no heartbeat),
-`SEND_GAP_MS` (a send within 10 s of the last one is turned away on screen and sends nothing), and the automatic
-summary, which is not built. When it is, add it to both models as the first design had it
-(docs/statecharts/diagnostics.md), with its rule AutoOnlyWhenOn.
+Not modelled: the production-build and `?diag=0` conditions of `summariesDefault` (a page without them never starts the summaries, the same as a bot page with no flag), time, the 7-day expiry of old records (`KEEP_MS`), browsers without Web Locks (they keep no heartbeat),
+`SEND_GAP_MS` (a send within 10 s of the last one is turned away on screen and sends nothing), and, for the automatic
+summary, which event makes a row (a long frame, low fps, a lost context, a repeated error, a crash, a match end), its
+rate limits and its size. Those are in auto.ts and tools/playtest/diag-auto.test.mts; the model only guards whether a row
+may leave. `tools/playtest/auto-consent.test.mts` runs consent.ts itself (default on, told first, off in Settings, both privacy signals,
+blocked storage).
 
 ## Run it
 

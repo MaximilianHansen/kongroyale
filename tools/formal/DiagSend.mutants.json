@@ -9,15 +9,15 @@
   {
     "name": "the callsign rides along on a one-tap send",
     "why": "quickSend takes the callsign though the player ticked nothing",
-    "find": "sent \\cup {[callsign |-> FALSE, ticked |-> FALSE,",
-    "replace": "sent \\cup {[callsign |-> TRUE, ticked |-> FALSE,",
+    "find": "sent \\cup {[kind |-> \"manual\", callsign |-> FALSE, ticked |-> FALSE,",
+    "replace": "sent \\cup {[kind |-> \"manual\", callsign |-> TRUE, ticked |-> FALSE,",
     "expect": "Invariant CallsignOnlyWhenTicked is violated"
   },
   {
     "name": "the sheet ignores the tick",
     "why": "body takes the callsign whatever the box says",
-    "find": "sent' = sent \\cup {[callsign |-> t, ticked |-> t,",
-    "replace": "sent' = sent \\cup {[callsign |-> TRUE, ticked |-> t,",
+    "find": "sent' = sent \\cup {[kind |-> \"manual\", callsign |-> t, ticked |-> t,",
+    "replace": "sent' = sent \\cup {[kind |-> \"manual\", callsign |-> TRUE, ticked |-> t,",
     "expect": "Invariant CallsignOnlyWhenTicked is violated"
   },
   {
@@ -32,6 +32,55 @@
     "why": "send has no TIMEOUT_MS abort, so an upload the server never answers leaves the player on Sending",
     "find": "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Accepted \\/ Refused)",
     "replace": "Spec == Init /\\ [][Next]_vars",
+    "expect": "Temporal properties were violated"
+  },
+  {
+    "name": "a summary leaves before the toast",
+    "why": "auto.ts emit sends without checking that the toast was shown",
+    "find": "/\\ told /\\ autoSet /= \"off\" /\\ ~gpc",
+    "replace": "/\\ autoSet /= \"off\" /\\ ~gpc",
+    "expect": "Invariant AutoOnlyAfterNotice is violated"
+  },
+  {
+    "name": "a summary ignores the off choice",
+    "why": "the send path does not read the stored off choice",
+    "find": "/\\ told /\\ autoSet /= \"off\" /\\ ~gpc",
+    "replace": "/\\ told /\\ ~gpc",
+    "expect": "Invariant AutoRespectsOff is violated"
+  },
+  {
+    "name": "a summary ignores the privacy signal",
+    "why": "the send path does not read Global Privacy Control or Do Not Track",
+    "find": "/\\ told /\\ autoSet /= \"off\" /\\ ~gpc",
+    "replace": "/\\ told /\\ autoSet /= \"off\"",
+    "expect": "Invariant AutoRespectsOff is violated"
+  },
+  {
+    "name": "Settings off does not stick",
+    "why": "the Settings row leaves the stored choice on",
+    "find": "autoSet' = v /\\ wish' = v /\\ told' = TRUE",
+    "replace": "autoSet' = \"on\" /\\ wish' = v /\\ told' = TRUE",
+    "expect": "Invariant AutoRespectsOff is violated"
+  },
+  {
+    "name": "automation sends too",
+    "why": "the default does not check navigator.webdriver, so a harness, bench or CI job sends summaries",
+    "find": "/\\ Runs /\\ told /\\ autoSet /= \"off\" /\\ ~gpc",
+    "replace": "/\\ told /\\ autoSet /= \"off\" /\\ ~gpc",
+    "expect": "Invariant AutoNeverInAutomation is violated"
+  },
+  {
+    "name": "the default heartbeat ignores the privacy signal",
+    "why": "startBeat runs by default under Global Privacy Control or Do Not Track and stores a record",
+    "find": "(flagged \\/ (~gpc /\\ autoSet /= \"off\"))",
+    "replace": "(flagged \\/ autoSet /= \"off\")",
+    "expect": "Invariant NoBeatUnderSignal is violated"
+  },
+  {
+    "name": "Settings off leaves the heartbeat running",
+    "why": "writeBeat keeps writing the record after the player turned the summaries off",
+    "find": "beat /\\ ~flagged /\\ autoSet = \"off\" /\\ beat' = FALSE",
+    "replace": "beat /\\ ~flagged /\\ autoSet = \"off\" /\\ beat' = beat",
     "expect": "Temporal properties were violated"
   }
 ]

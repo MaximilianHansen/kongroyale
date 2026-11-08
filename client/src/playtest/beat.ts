@@ -1,11 +1,12 @@
-// The start of the diagnostics heartbeat (?diag), in the boot chunk: main.ts calls startBeat() as soon as the boot JS
-// has run, before the world loads and before the lazy diag chunk arrives (later on a slow link, where it queues behind
-// the world's downloads), so a tab killed during load (an out-of-memory kill on Safari) leaves a record that a later
-// load reports. The page takes its session's Web Lock first and writes its first beat inside the lock, so a slow boot
-// never looks dead to another tab. The pagehide and pageshow listeners mark the record clean and running again from
-// here on. diag.ts (lazy) keeps the beat current every 5 s and finds the dead sessions; diagOn() is the one switch both
-// chunks read.
+// The start of the diagnostics heartbeat (?diag, and by default the automatic summaries), in the boot chunk: main.ts calls startBeat() as soon as the
+// boot JS has run, before the world loads and before the lazy diag chunk arrives (later on a slow link, where it queues
+// behind the world's downloads), so a tab killed during load (an out-of-memory kill on Safari) leaves a record that a
+// later load reports. The page takes its session's Web Lock first and writes its first beat inside the lock, so a
+// slow boot never looks dead to another tab. The pagehide and pageshow listeners mark the record clean and running
+// again from here on. diag.ts (lazy) keeps the beat current every 5 s and finds the dead sessions; diagOn() (the send
+// sheet and crash card too) and summariesOn() (recorder, heartbeat, automatic summaries) are the switches both chunks read. Model: tools/formal/DiagHeartbeat.tla.
 import { flag } from "../flags";
+import { autoOn } from "./consent";
 
 export const BEAT_KEY = "kr.diag.hb.";
 
@@ -26,9 +27,21 @@ export function diagOn(): boolean {
   return (import.meta as unknown as { env?: { VITE_KR_DIAG?: string } }).env?.VITE_KR_DIAG === "1";
 }
 
+/** the automatic summaries' default: a production build with no ?diag in the URL, outside automation
+ *  (navigator.webdriver, so no harness, bench or CI job ever sends). The Settings row shows wherever this holds. */
+export const summariesDefault = (): boolean =>
+  flag("diag") === null && (import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD === true && !navigator.webdriver;
+
+/** the page records and sends summaries: full diagnostics (diagOn), or the default for a player who has not turned them
+ *  off and whose browser sends no privacy signal. Under the signal, or after Settings off, nothing starts or is stored. */
+export const summariesOn = (): boolean => diagOn() || (summariesDefault() && autoOn());
+
 export function writeBeat(b: Beat): void {
   if (!locks) return;
-  try { localStorage.setItem(BEAT_KEY + b.sid, JSON.stringify(b)); } catch { /* storage full or blocked: no crash evidence */ }
+  try {
+    if (!diagOn() && !autoOn()) { localStorage.removeItem(BEAT_KEY + b.sid); return; }
+    localStorage.setItem(BEAT_KEY + b.sid, JSON.stringify(b));
+  } catch { /* storage full or blocked: no crash evidence */ }
 }
 
 /** hold this session's Web Lock for the page's whole life, then write its first beat: a session whose page holds no
