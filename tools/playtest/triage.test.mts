@@ -167,6 +167,9 @@ const clean = (s: string) => { for (const w of [...callsigns, ...words]) assert.
   crashed.ctx.diag.prev = { sid: "old", phase: 2, poi: "the-wreck", x: -1200, z: 90, clean: false };
   assert.equal(entryOf(crashed).location.poi, null, "a crash far from every POI is placed by its coordinates, not by the heartbeat's nearest POI");
   assert.equal(entryOf(crashed).location.cell, "-12,0");
+  const moved = structuredClone(crashed);
+  moved.bundle.diag = moved.ctx.diag; delete moved.ctx.diag;
+  assert.deepEqual(entryOf(moved), entryOf(crashed), "diagnostics sent as bundle.diag triage the same as the older ctx.diag");
 
   const stale = base();
   stale.ctx.diag.path.rows = [];

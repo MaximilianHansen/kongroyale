@@ -1,0 +1,72 @@
+# Host tick A/B on a pull request: bench:host's real-play match, timed on main and
+# on the PR in turn on one runner (tools/performance/run.mts, 5 interleaved pairs), judged by compare.mts against the
+# thresholds calibrated for this runner class in tools/performance/budgets-ci.json. Wall-clock time on a shared runner is
+# noisy, so it fails only on a "worse" verdict: every PR run outside main's range AND the median past its threshold.
+# Runs when a PR changes the simulation, the netcode or the server, or carries the "perf" label. The "perf-aa" label
+# times main against itself instead (the noise floor), to recalibrate the thresholds. On other PRs the job passes at once.
+# A label change on a measured PR measures again (the newest run cancels the older one), so the check always reflects
+# the PR's current labels and code.
+# Like "checks", it runs the PR's code with a read-only token and no secrets.
+name: perf
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: host tick A/B
+    # every label event measures again when the PR needs it: a skipped job would pass in place of a failed measurement,
+    # and removing perf-aa must replace a main-against-main pass. On PRs that need no A/B this costs seconds
+    concurrency:
+      group: perf-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: decide whether this PR needs the A/B
+        id: decide
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          mode=skip
+          if [[ " $LABELS " == *" perf-aa "* ]]; then mode=aa
+          elif [[ " $LABELS " == *" perf "* ]]; then mode=ab
+          elif git diff --name-only HEAD^1 HEAD | grep -qE '^(shared/(sim|net|world|pois)/|server/)'; then mode=ab
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "host tick A/B: $mode (base is main at $(git rev-parse --short HEAD^1))"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.decide.outputs.mode != 'skip'
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.decide.outputs.mode != 'skip'
+        run: npm ci --ignore-scripts
+      - name: main beside the PR (the merge commit's first parent)
+        if: steps.decide.outputs.mode != 'skip'
+        run: git worktree add ../kong-base HEAD^1 && ln -s "$PWD/node_modules" ../kong-base/node_modules
+      - name: five interleaved pairs of real-play, then compare.mts
+        if: steps.decide.outputs.mode != 'skip'
+        env:
+          MODE: ${{ steps.decide.outputs.mode }}
+        run: |
+          cand=.; [ "$MODE" = aa ] && cand=../kong-base
+          npx tsx tools/performance/run.mts --base ../kong-base --cand "$cand" --scenario real-play --reps 5 \
+            --metrics hostTickMs,simulationMs --stats p50,p99 --budgets tools/performance/budgets-ci.json --out-dir ci-metrics-perf
+      - name: the comparison on the run's page
+        if: always() && steps.decide.outputs.mode != 'skip'
+        run: if [ -f ci-metrics-perf/comparison.md ]; then cat ci-metrics-perf/comparison.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && steps.decide.outputs.mode != 'skip'
+        with:
+          name: ci-metrics-perf
+          path: ci-metrics-perf/
+          retention-days: 30

@@ -14,8 +14,8 @@
       "webglMB": 1350,
       "textureMB": 1190,
       "bufferMB": 140,
-      "textureCount": 249,
-      "geometryCpuMB": 175,
+      "textureCount": 244,
+      "geometryCpuMB": 114,
       "textureCpuMB": 274
     }
   }
