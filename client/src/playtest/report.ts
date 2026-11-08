@@ -191,6 +191,8 @@ function contents(c: Choice, m: Moment): string[] {
     "Device, graphics card, browser, settings and the non-routing URL flags (" + kb(ctx) + ")",
     "Frame rate, memory and ping, one row per second (" + ((b?.timeline as { rows?: unknown[] } | null)?.rows?.length ?? 0) + " s, " + kb(b?.timeline) + ")",
   ];
+  const steps = (ctx.perf as { resSteps?: unknown[] | null } | undefined)?.resSteps;
+  if (steps?.length) list.push("3D-resolution steps the game took to keep its frame rate (" + steps.length + ", " + kb(steps) + ")");
   if (d) list.push("Stutter markers and their causes (" + d.events.length + ", " + kb(d.events) + ")", "Where you were and where you looked, once a second (" + d.path.rows.length + " s, " + kb(d.path) + ")");
   if (b?.replay) list.push("Your inputs in this bot match (" + kb(b.replay) + ")");
   if (out.shot) list.push("A picture of the game view (" + Math.round(out.shot.length * 0.75 / 1024) + " KB)");
