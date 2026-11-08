@@ -1,4 +1,4 @@
-export { lowMemoryDevice, nextNearModule, evictStreamed, trimStreamed, moduleCtx, warmTextures } from "./low-mem";
+export { lowMemoryDevice, nextNearModule, evictStreamed, trimStreamed, moduleCtx, warmTextures, showImpostors } from "./low-mem";
 const POST_BUILD_EXPECT_MS = { afterBuild: 750, game: 11200, settle: 4300 };
 const POST_MS_PER_PRE_READY_BUILD_MS = 0.27;
 const POST_BUILD_STORE_KEY = "kr-boot-post-v1";

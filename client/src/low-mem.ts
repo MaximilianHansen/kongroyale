@@ -250,6 +250,15 @@ async function loadImpostors(engine: Engine, w: World, out: Map<string, THREE.Me
   }));
 }
 
+/** __kr.showImpostors() on a view-camera page (?view / ?cam, no streaming): every POI the page did not build draws its
+ *  baked far impostor and every built one hides it, so tools/performance/visual.mts compares an impostor with its POI
+ *  from one camera */
+export async function showImpostors(engine: Engine, w: World) {
+  const shown = new Map<string, THREE.Mesh>();
+  await loadImpostors(engine, w, shown);
+  for (const [id, mesh] of shown) mesh.visible = !w.modOf.has(id);
+}
+
 function refreshImpostors(modOf: ReadonlyMap<string, unknown>) {
   if (!impostors) return;
   const now = performance.now();

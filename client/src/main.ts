@@ -407,6 +407,7 @@ if (!gameMode) {
       applyView(engine.camera, spec, engine.terrain);
     } else await setView(viewId!);
   } catch (e) { report("view", e); }
+  kr.showImpostors = async () => (await postBuildImport)?.showImpostors(engine, world);
   if (flag("fly")) void import("./engine/dev-probes").then((m) => m.enableFly(engine.camera, canvas, (fn) => engine.onUpdate(fn)), (e) => report("fly", e));
   engine.start();
 } else {
