@@ -11,7 +11,8 @@
 // ground), --timeout-s 420 (whole match; 1800 with --route), --headed, --chrome <path> (else the installed Chrome channel),
 // --angle d3d11|metal|vulkan|default (default: d3d11 on Windows, metal on macOS, vulkan on Linux),
 // --shots <dir> (a screenshot per window), --trace <file> (a Chrome performance trace of the first --trace-s 30 s of
-// the match), --query "a=1&b=2" (extra URL flags, e.g. an A/B switch). --query, --trace and --shots are recorded in
+// the match), --census <file> (the per-draw cost census of each route segment, see below), --query "a=1&b=2" (extra URL
+// flags, e.g. an A/B switch), --cpuprofile <dir> (a V8 CPU profile per route segment). --query, --trace and --shots are recorded in
 // config, so runs that differ in them never mix. A software renderer (SwiftShader, llvmpipe, ...) fails the run.
 //
 // Interleave baseline and candidate runs yourself (base, cand, base, cand ...), five or more a side, one at a time:
@@ -72,7 +73,7 @@ const SHOTS = arg("--shots", ""), TRACE = arg("--trace", ""), TRACE_S = Number(a
 const EXTRA = arg("--query", "");
 const ANGLE = arg("--angle", process.platform === "win32" ? "d3d11" : process.platform === "darwin" ? "metal" : "vulkan");
 const CHROME = arg("--chrome", process.env.KR_CHROME ?? "");
-const K = await import(pathToFileURL(path.join(root, "shared/sim/const.ts")).href) as { PLANE_SPEED: number; PLAYER_R: number; PLAYER_H: number; MAX_HP: number; WEAPON_DEFS: Record<string, { mag: number; ammo: string }> };
+const K = await import(pathToFileURL(path.join(root, "shared/sim/const.ts")).href) as { PLANE_SPEED: number; MAX_HP: number; WEAPON_DEFS: Record<string, { mag: number; ammo: string }> };
 const MAP = await import(pathToFileURL(path.join(root, "shared/world/map.ts")).href) as { WEAPONS: readonly string[]; POIS: Array<{ id: string; x: number; z: number }> };
 const { ammoIndex } = await import(pathToFileURL(path.join(root, "shared/sim/player.ts")).href) as { ammoIndex: (a: string) => number };
 const PLANE_SPEED = K.PLANE_SPEED;
@@ -106,7 +107,16 @@ const PRESETS = {
   epic: { aa: "taa", shadows: "epic", ao: true, post: "epic", viewDist: "epic", foliage: "epic", effects: "epic" },
 };
 const VIDEO = { v: 2, preset: PRESET, auto: PRESET, res3d: 1, resUser: true, dynres: false, fpsCap: 0, fov: 72, showFps: false, ...PRESETS[PRESET] };
-const QUERY = "seed=" + SEED + "&dynres=0&dpr=1" + (EXTRA ? "&" + EXTRA : "");
+// --census <file>: the per-draw cost census (client/src/engine/draw-census.ts) over each route segment's measured frames,
+// saved to <file>. The page is made cross-origin isolated (COOP + COEP added to every response it loads), so
+// performance.now() resolves 5 us instead of 100 us. The census wraps every draw and GL call: its timings are for
+// ranking draw classes, never for comparing with a run without it.
+const CENSUS = arg("--census", "");
+// --cpuprofile <dir>: a sampled V8 CPU profile of each route segment's run phase, <dir>/cpu-<segment>.cpuprofile (the
+// profiler slows the page: read its shares, never its milliseconds against an unprofiled run)
+const CPUPROF = arg("--cpuprofile", "");
+if ((CPUPROF || CENSUS) && ROUTE === "pan") throw Error("--cpuprofile and --census work per route segment: use them with --route tour or survey");
+const QUERY = "seed=" + SEED + "&dynres=0&dpr=1" + (CENSUS ? "&drawcensus" : "") + (EXTRA ? "&" + EXTRA : "");
 
 // ---- server: the measured checkout's production entry point, loopback only
 async function up() { try { return (await fetch(ORIGIN + "/", { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } }
@@ -141,11 +151,13 @@ function install(cfg: { maxFrames: number; panRate: number; panPitch: number; pl
   const f32 = () => new Float32Array(AN);
   const c = { arm: false, lineSeen: false, on: false, pan: false, panT0: 0, landed: false, n: 0, invalid: 0, disjoints: 0, timer: !!ext, jumping: false, jumpAt: null as null | Record<string, number>, T: new Float64Array(N), CPU: new Float32Array(N), GPU: new Float32Array(N).fill(-1), PH: new Int8Array(N).fill(-1), ST: new Int8Array(N).fill(-1), SR: new Int8Array(N), PN: new Int8Array(N),
     // the route: segment index and measured flag per frame, then the frame's attribution (ms unless named)
-    SEG: new Int8Array(AN).fill(-1), MEAS: new Int8Array(AN), SIMIN: f32(), SIMOUT: f32(), PRED: f32(), RUPD: f32(), ACT: f32(), VEHU: f32(), HOOKS: f32(), IDLE: f32(), CULL: f32(), SUBMIT: f32(), CALLS: f32(), TRIS: f32(), PROGN: f32(), HEAP: f32(),
+    SEG: new Int8Array(AN).fill(-1), MEAS: new Int8Array(AN), SIMIN: f32(), SIMOUT: f32(), ACK: f32(), PRED: f32(), RUPD: f32(), ACT: f32(), VEHU: f32(), HOOKS: f32(), IDLE: f32(), CULL: f32(), SUBMIT: f32(), CALLS: f32(), TRIS: f32(), PROGN: f32(), HEAP: f32(),
     loaf: [] as Array<Record<string, unknown>> };
   // attribution: the objects that do a frame's work are wrapped where they live (no game code changes). simOut is the
-  // practice host's simulation run by its 8 ms timer between frames, charged to the next frame it delays
-  const A = { simIn: 0, simOut: 0, pred: 0, rupd: 0, act: 0, vehu: 0, idle: 0, occ0: 0, cull1: 0, inStep: false };
+  // practice host's simulation run by its 8 ms timer between frames, charged to the next frame it delays; with the host
+  // in its worker (?hostworker=1) it is what is left of the host on this thread, the delivery of the worker's messages.
+  // ACK is the input-to-ack latency (ClientMatch.ackMs) of the newest input acknowledged during the frame, -1 = none
+  const A = { simIn: 0, simOut: 0, pred: 0, rupd: 0, act: 0, vehu: 0, idle: 0, occ0: 0, cull1: 0, inStep: false, ackSeq: -1 };
   const timed = (o: Record<string, any> | null | undefined, name: string, add: (ms: number) => void) => {
     if (!o || o["__krTimed_" + name] || typeof o[name] !== "function") return;
     const f = o[name] as Fn; o["__krTimed_" + name] = true;
@@ -209,6 +221,7 @@ function install(cfg: { maxFrames: number; panRate: number; panPitch: number; pl
     }
     if (!pan && g) {
       timed(g.link, "pump", (ms) => { if (A.inStep) A.simIn += ms; else A.simOut += ms; });
+      timed(g.link, "deliver", (ms) => { if (A.inStep) A.simIn += ms; else A.simOut += ms; });
       timed(cm, "update", (ms) => { A.pred += ms; });
       const r = g.render;
       timed(r, "update", (ms) => { A.rupd += ms; }); timed(r, "updateActors", (ms) => { A.act += ms; }); timed(r, "updateVehicles", (ms) => { A.vehu += ms; });
@@ -220,6 +233,7 @@ function install(cfg: { maxFrames: number; panRate: number; panPitch: number; pl
     let progs0 = 0;
     if (!pan) {
       const run = kr.tourRun; c.SEG[i] = run ? run.index : -1; c.MEAS[i] = run?.measuring ? 1 : 0;
+      const dc = kr.drawCensus; if (dc) { dc.label = String(c.SEG[i]); dc.on = c.MEAS[i] === 1; }
       A.simIn = A.pred = A.rupd = A.act = A.vehu = A.idle = A.occ0 = A.cull1 = 0; A.inStep = true;
       info.reset(); progs0 = info.programs?.length ?? 0;
     }
@@ -232,7 +246,8 @@ function install(cfg: { maxFrames: number; panRate: number; panPitch: number; pl
       c.CPU[i] = s1 - s0;
       if (!pan) {
         A.inStep = false;
-        c.SIMIN[i] = A.simIn; c.SIMOUT[i] = A.simOut; A.simOut = 0; c.PRED[i] = A.pred; c.RUPD[i] = A.rupd; c.ACT[i] = A.act; c.VEHU[i] = A.vehu;
+        c.SIMIN[i] = A.simIn; c.SIMOUT[i] = A.simOut; A.simOut = 0;
+        const seq = cm ? cm.authSeq : -1; c.ACK[i] = cm && seq !== A.ackSeq && A.ackSeq >= 0 ? cm.ackMs : -1; A.ackSeq = seq; c.PRED[i] = A.pred; c.RUPD[i] = A.rupd; c.ACT[i] = A.act; c.VEHU[i] = A.vehu;
         c.IDLE[i] = A.idle; c.HOOKS[i] = A.occ0 ? A.occ0 - s0 - A.idle : 0; c.CULL[i] = A.occ0 && A.cull1 ? A.cull1 - A.occ0 : 0; c.SUBMIT[i] = A.cull1 ? s1 - A.cull1 : 0;
         c.CALLS[i] = info.render.calls; c.TRIS[i] = info.render.triangles; c.PROGN[i] = (info.programs?.length ?? 0) - progs0;
         c.HEAP[i] = ((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1048576;
@@ -249,46 +264,47 @@ function install(cfg: { maxFrames: number; panRate: number; panPitch: number; pl
 
 // ---- the route (tour.mts) in the page: its runner drives GameInput the way a player's keys and mouse do, and its API
 // moves things on the practice match's in-page host (an offline practice match: there is no server to touch)
-function startTour(cfg: { segs: Segment[]; R: number; H: number; maxHp: number; ar: number; arMag: number; arAmmo: number }) {
+function startTour(cfg: { segs: Segment[]; maxHp: number; ar: number; arMag: number; arAmmo: number }) {
   const kr = (window as unknown as { __kr: Record<string, any> }).__kr, g = kr.game, input = g.input;
   const fns = (globalThis as unknown as { __krTourFns: { steer: typeof steer; runner: typeof tourRunner } }).__krTourFns;
-  const host = () => g.link.match, me = () => host().players[g.cm.me];
-  const place = (q: Record<string, number | boolean>, x: number, z: number) => {
-    const w = host().world; w.velY = 0; w.resolveCapsule(x, Math.max(w.ground(x, z), 0) + 0.05, z, cfg.R, cfg.H, false);
-    q.x = w.P[0]; q.y = w.P[1]; q.z = w.P[2]; q.vx = q.vy = q.vz = 0; q.grounded = true;
-  };
+  // writes go through the link's host tools (client/src/game/host-tools.ts), reads through its host view: the same
+  // ops whether the host runs in this tab or in its worker (?hostworker=1), where a write lands a message later and the
+  // view is a copy a few ticks old
+  const tool = (t: Record<string, unknown>) => g.link.hostTool({ ...t, pid: g.cm.me }), view = () => g.link.hostView();
+  const me = () => view().players[g.cm.me];
   const alive = (q: Record<string, number>) => q.st !== 3 && q.st !== 5;
   const api = {
     pose() {
       const cm = g.cm, p = cm.pred, v = p.st === 8 ? cm.myVehicle() : null;
-      return { x: p.x, y: p.y, z: p.z, ground: host().world.ground(p.x, p.z), heading: v ? v.yaw : p.yaw, speed: v ? Math.abs(v.vf) : Math.hypot(p.vx, p.vz), riding: p.st === 8, onGround: p.st === 0 };
+      return { x: p.x, y: p.y, z: p.z, ground: cm.world.ground(p.x, p.z), heading: v ? v.yaw : p.yaw, speed: v ? Math.abs(v.vf) : Math.hypot(p.vx, p.vz), riding: p.st === 8, onGround: p.st === 0 };
     },
-    teleport(x: number, z: number, yaw: number) { const q = me(); place(q, x, z); q.yaw = yaw; q.st = 0; input.yaw = yaw; },
+    teleport(x: number, z: number, yaw: number) { tool({ op: "place", x, z, yaw }); input.yaw = yaw; },
     vehicle(kind: number, x: number, z: number) {
       let best = null as null | { x: number; y: number; z: number }, bd = Infinity;
-      for (const v of host().vehs.list) if (v.st <= 2 && v.kind === kind && v.seats[0] < 0 && v.seats[1] < 0 && v.seats[2] < 0) { const d = Math.hypot(v.x - x, v.z - z); if (d < bd) { bd = d; best = { x: v.x, y: v.y, z: v.z }; } }
+      for (const v of view().vehs) if (v.st <= 2 && v.kind === kind && v.seats[0] < 0 && v.seats[1] < 0 && v.seats[2] < 0) { const d = Math.hypot(v.x - x, v.z - z); if (d < bd) { bd = d; best = { x: v.x, y: v.y, z: v.z }; } }
       return best;
     },
     bringBots(n: number, x: number, z: number, r0: number, r1: number) {
-      const m = host(), team = me().team;
-      const foes = (m.players as Array<Record<string, any>>).filter((q) => q.bot && alive(q) && q.team !== team && q.st === 0).sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z)).slice(0, n);
-      foes.forEach((q, i) => { const a = (i / foes.length) * Math.PI * 2, r = r0 + ((r1 - r0) * i) / Math.max(1, foes.length - 1); place(q, x + Math.sin(a) * r, z + Math.cos(a) * r); });
-      return foes.length;
+      const team = me()?.team;
+      const foes = (view().players as Array<Record<string, any>>).filter((q) => q.bot && alive(q) && q.team !== team && q.st === 0).length;
+      tool({ op: "bring", n, x, z, r0, r1 });
+      return Math.min(n, foes);
     },
     enemy() {
-      const p = me(); let best = null as null | { x: number; y: number; z: number }, bd = 60;
-      for (const q of host().players as Array<Record<string, any>>) if (q.bot && alive(q) && q.team !== p.team) { const d = Math.hypot(q.x - p.x, q.z - p.z); if (d < bd) { bd = d; best = { x: q.x, y: q.y + 1.2, z: q.z }; } }
+      const p = me(); if (!p) return null;
+      let best = null as null | { x: number; y: number; z: number }, bd = 60;
+      for (const q of view().players as Array<Record<string, any>>) if (q.bot && alive(q) && q.team !== p.team) { const d = Math.hypot(q.x - p.x, q.z - p.z); if (d < bd) { bd = d; best = { x: q.x, y: q.y + 1.2, z: q.z }; } }
       return best;
     },
-    heal() { me().hp = cfg.maxHp; },
-    arm() { const p = me(), s = p.slots[0]; s.kind = 1; s.id = cfg.ar; s.rarity = 2; s.count = 1; s.mag = cfg.arMag; p.active = 0; p.ammo[cfg.arAmmo] = 600; input.slotWanted = 0; },
+    heal() { if (g.cm.pred.hp < cfg.maxHp) tool({ op: "heal", hp: cfg.maxHp }); },
+    arm() { tool({ op: "arm", weapon: cfg.ar, mag: cfg.arMag, ammo: cfg.arAmmo, reserve: 600 }); input.slotWanted = 0; },
   };
   const run = fns.runner(cfg.segs, api, fns.steer);
   const held = new Set<string>();
   const key = (code: string, on: boolean) => { if (on === held.has(code)) return; if (on) held.add(code); else held.delete(code); dispatchEvent(new KeyboardEvent(on ? "keydown" : "keyup", { code, key: code })); };
   kr.tourRun = run;
   kr.tourTick = (dt: number) => {
-    if (run.done || !g.link.match) { for (const k of [...held]) key(k, false); input.fire = false; kr.tourTick = null; return; }
+    if (run.done || !g.inMatch || !g.link?.hostTool) { for (const k of [...held]) key(k, false); input.fire = false; kr.tourTick = null; return; }
     const k = run.update(dt);
     key("KeyW", k.fwd); key("KeyS", k.back); key("KeyA", k.left); key("KeyD", k.right); key("Space", k.jump); key("KeyE", k.use); key("ShiftLeft", k.sprint || k.down);
     input.yaw = k.yaw; input.pitch = k.pitch;
@@ -301,6 +317,11 @@ function startTour(cfg: { segs: Segment[]; R: number; H: number; maxHp: number; 
 const browser: Browser = await chromium.launch({ executablePath: CHROME || undefined, channel: CHROME ? undefined : "chrome", headless: !HEADED, args: FLAGS, timeout: 120_000 });
 const browserVersion = browser.version();
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
+if (CENSUS) await ctx.route(ORIGIN + "/**", async (rt) => {
+  const res = await rt.fetch(), headers = { ...res.headers(), "cross-origin-opener-policy": "same-origin", "cross-origin-embedder-policy": "require-corp" };
+  delete headers["content-encoding"]; delete headers["content-length"];
+  await rt.fulfill({ response: res, headers });
+});
 await ctx.addInitScript((v) => { try { localStorage.setItem("kr-video", v); localStorage.setItem("kr-fov-moved", "1"); } catch { /* private mode */ } }, JSON.stringify(VIDEO));
 // tsx compiles the page functions below with esbuild's keepNames, which calls a __name helper the page doesn't have
 await ctx.addInitScript("globalThis.__name = (f) => f;");
@@ -320,7 +341,7 @@ let exitCode = 0;
 const marks: Record<string, number> = {};
 const route: Record<string, unknown> = {};
 let pageInfo: Record<string, unknown> = {};
-const ATTRIB = ["SEG", "MEAS", "SIMIN", "SIMOUT", "PRED", "RUPD", "ACT", "VEHU", "HOOKS", "IDLE", "CULL", "SUBMIT", "CALLS", "TRIS", "PROGN", "HEAP"] as const;
+const ATTRIB = ["SEG", "MEAS", "SIMIN", "SIMOUT", "ACK", "PRED", "RUPD", "ACT", "VEHU", "HOOKS", "IDLE", "CULL", "SUBMIT", "CALLS", "TRIS", "PROGN", "HEAP"] as const;
 type Series = Record<(typeof ATTRIB)[number], number[]>;
 let data: ({ panT0: number; PN: number[]; n: number; invalid: number; disjoints: number; timer: boolean; T: number[]; CPU: number[]; GPU: number[]; PH: number[]; ST: number[]; SR: number[]; loaf: Array<{ t: number; dur: number; block: number; scripts: Array<Record<string, unknown>> }> } & Series) | null = null;
 let tour: { results: Array<{ id: string; ok: boolean; stuck: number; skipped: number; waypoints: number; of: number; runS: number; note: string }>; log: string[] } | null = null;
@@ -343,6 +364,7 @@ try {
   if (pageInfo.stage === "failed") throw Error("boot failed");
   pageInfo.software = /swiftshader|llvmpipe|softpipe|software|microsoft basic/i.test(String(pageInfo.renderer));
   if (pageInfo.software && !SOFTWARE) throw Error("software renderer " + pageInfo.renderer + ": not a real-GPU run (--software checks the route, never the timing)");
+  if (CENSUS) await page.evaluate(() => { const dc = (window as any).__kr.drawCensus; if (!dc) throw Error("?drawcensus did not install __kr.drawCensus"); dc.on = false; dc.reset(); });
   await page.evaluate(install, { maxFrames: Math.ceil(TIMEOUT_S * (ROUTE === "pan" ? 250 : 150)), panRate: PAN_RATE, panPitch: PAN_PITCH, planeSpeed: PLANE_SPEED, route: ROUTE });
   if (ROUTE !== "pan") await page.evaluate("globalThis.__krTourFns = { steer: " + steer.toString() + ", runner: " + tourRunner.toString() + " }");
 
@@ -359,6 +381,16 @@ try {
   });
   const m0 = Date.now();
   let tracing = !!TRACE, landedAt = 0, last = "", lastSeg = "";
+  const cdp = CPUPROF ? await ctx.newCDPSession(page) : null;
+  let profiling = -1;
+  const stopProfile = async () => {
+    if (!cdp || profiling < 0) return;
+    const { profile } = await cdp.send("Profiler.stop") as { profile: unknown };
+    const f = path.resolve(CPUPROF, "cpu-" + SEGS[profiling].id + ".cpuprofile");
+    fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(profile)); artifacts.push(f);
+    profiling = -1;
+  };
+  if (cdp) { await cdp.send("Profiler.enable"); await cdp.send("Profiler.setSamplingInterval", { interval: 200 }); }
   const seen = new Set<string>();
   for (;;) {
     const s = await read();
@@ -373,14 +405,15 @@ try {
         if (s.landed && !landedAt) {
           landedAt = Date.now(); route.landed = { x: s.x, z: s.z };
           log("landed at " + s.x + ", " + s.z + ": the " + ROUTE + " starts (" + SEGS.map((q) => q.id).join(", ") + ")");
-          await page.evaluate(startTour, { segs: SEGS, R: K.PLAYER_R, H: K.PLAYER_H, maxHp: K.MAX_HP, ar: MAP.WEAPONS.indexOf("ar"), arMag: K.WEAPON_DEFS.ar.mag, arAmmo: ammoIndex(K.WEAPON_DEFS.ar.ammo) });
+          await page.evaluate(startTour, { segs: SEGS, maxHp: K.MAX_HP, ar: MAP.WEAPONS.indexOf("ar"), arMag: K.WEAPON_DEFS.ar.mag, arAmmo: ammoIndex(K.WEAPON_DEFS.ar.ammo) });
         }
         const tag = s.seg + " " + s.segPhase;
         if (landedAt && tag !== lastSeg) {
           lastSeg = tag; log("  " + (SEGS[s.seg]?.id ?? "-") + " " + s.segPhase + " at " + s.x + ", " + s.z);
+          if (cdp) { await stopProfile(); if (s.segPhase === "run") { await cdp.send("Profiler.start"); profiling = s.seg; } }
           if (s.segPhase === "run") { const at = s.seg; setTimeout(() => { void page.evaluate(() => (window as any).__kr.tourRun?.index).then((now) => now === at ? shot("tour-" + SEGS[at].id) : undefined).catch(() => {}); }, Math.min(8, SEGS[at].seconds / 2) * 1000); }
         }
-        if (s.done) { await sleep(500); break; }
+        if (s.done) { await stopProfile(); await sleep(500); break; }
         if (landedAt && s.phase >= 3) { errors.push("the match ended at " + el.toFixed(0) + " s, in " + (SEGS[s.seg]?.id ?? "-") + ": run fewer --segments per match"); break; }
       } else if (s.pan && !landedAt) {
         landedAt = Date.now(); route.landed = { x: s.x, z: s.z };
@@ -400,6 +433,14 @@ try {
     const attrib: Record<string, number[]> = {}; for (const k of names) attrib[k] = a(c[k]);
     return { panT0: c.panT0 as number, PN: a(c.PN), n, invalid: c.invalid, disjoints: c.disjoints, timer: c.timer, T: a(c.T), CPU: a(c.CPU), GPU: a(c.GPU), PH: a(c.PH), ST: a(c.ST), SR: a(c.SR), loaf: c.loaf, ...attrib } as any;
   }, [...ATTRIB]);
+  if (CENSUS) {
+    const rep = await page.evaluate(() => (window as any).__kr.drawCensus.report()) as Record<string, unknown>;
+    const named: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rep)) named[/^\d+$/.test(k) ? SEGS[Number(k)]?.id ?? k : k] = v;
+    fs.mkdirSync(path.dirname(path.resolve(CENSUS)), { recursive: true });
+    fs.writeFileSync(path.resolve(CENSUS), JSON.stringify({ query: QUERY, preset: PRESET, viewport: W + "x" + H, ...named }, null, 1));
+    artifacts.push(path.resolve(CENSUS));
+  }
   if (ROUTE !== "pan") tour = await page.evaluate(() => { const r = (window as any).__kr.tourRun; return r ? { results: r.results, log: r.log } : null; });
   pageInfo.krErrors = await page.evaluate(() => (window as any).__kr.errors.slice(0, 20));
   pageInfo.renderScale = await page.evaluate(() => (window as any).__kr.engine.renderScale);
@@ -469,6 +510,7 @@ function routeCase(seg: Segment, k: number, idx: number[]): CaseResult {
   const attribution: Record<string, Metric> = {
     mainThreadMs: dist(col((i) => d.CPU[i] + d.SIMOUT[i])),
     simMs: dist(col((i) => d.SIMIN[i] + d.SIMOUT[i])),
+    inputAckMs: dist(idx.filter((i) => d.ACK[i] >= 0).map((i) => d.ACK[i])),
     predictionMs: dist(col((i) => d.PRED[i])),
     actorsMs: dist(col((i) => d.ACT[i])),
     vehiclesMs: dist(col((i) => d.VEHU[i])),
@@ -510,7 +552,7 @@ const winInfo = process.platform === "win32" ? {
 const result: RunResult = {
   schema: RESULT_SCHEMA, version: RESULT_VERSION, tool: "tools/performance/gpu-match.mts", startedAt: new Date(t0).toISOString(), durationMs: Date.now() - t0,
   source: source(root), environment: { ...base, gpu: data ? String(pageInfo.renderer) : null },
-  config: { browser: "chrome " + browserVersion, flags: FLAGS.join(" "), headless: !HEADED, viewport: W + "x" + H, dpr: 1, preset: PRESET, res3d: 1, dynres: false, fpsCap: "display refresh", mode: MODE, seed: SEED, ...(ROUTE === "pan" ? { panS: PAN_S } : { route: ROUTE, tourVersion: TOUR_VERSION, segments: SEGS.map((s) => s.id).join(","), software: SOFTWARE }), query: QUERY, cache: "fresh browser profile per run", ...(TRACE ? { traceS: TRACE_S } : {}), ...(SHOTS ? { shots: true } : {}) },
+  config: { browser: "chrome " + browserVersion, flags: FLAGS.join(" "), headless: !HEADED, viewport: W + "x" + H, dpr: 1, preset: PRESET, res3d: 1, dynres: false, fpsCap: "display refresh", mode: MODE, seed: SEED, ...(ROUTE === "pan" ? { panS: PAN_S } : { route: ROUTE, tourVersion: TOUR_VERSION, segments: SEGS.map((s) => s.id).join(","), software: SOFTWARE }), query: QUERY, cache: "fresh browser profile per run", ...(TRACE ? { traceS: TRACE_S } : {}), ...(SHOTS ? { shots: true } : {}), ...(CENSUS ? { census: true } : {}), ...(CPUPROF ? { cpuProfileUs: 200 } : {}) },
   cases, errors: [...errors, ...pageErrors.map((e) => "pageerror: " + e), ...((pageInfo.krErrors as string[] | undefined) ?? []).map((e) => "__kr.errors: " + e.split("\n")[0])], artifacts,
 };
 (result as unknown as Record<string, unknown>).detail = {

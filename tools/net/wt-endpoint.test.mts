@@ -8,7 +8,9 @@
 // gaps past the window counted (the snapshots' lastSeq follows them, /health counts them), pings (a pong comes back as a datagram), snapshots as
 // datagrams and the reliable frames (inventory) on the stream; /health counts the client on "wt"; a flood of frames
 // past the rate limit closes the session and the client's frames go back to its WebSockets. A session counts against the
-// per-address cap like a WebSocket, and closing the primary WebSocket closes the session and frees both slots.
+// per-address cap like a WebSocket, and closing the primary WebSocket closes the session and frees both slots. The
+// A/B: welcome puts the session in the WebTransport arm (use: true; with KR_WT_SHARE=0, false), and /health counts the
+// link under the arm it reports, with its inputs (seqs advanced, lost, recovered).
 import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
@@ -33,7 +35,7 @@ async function startServer(env: Record<string, string>): Promise<{ port: number;
   if (!ok) throw new Error("server did not start:\n" + out);
   return { port, proc, log: () => out };
 }
-const health = async (port: number) => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { transports: { clients: Record<string, number>; inputs: { lost: number; recovered: number; dropped: number }; webtransport: { off?: string; open?: number; refused?: Record<string, number> } } };
+const health = async (port: number) => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { transports: { clients: Record<string, number>; inputs: { lost: number; recovered: number; dropped: number }; arms: Record<string, { links: number; settled: { wt: number }; inputs: { seqs: number; lost: number; recovered: number } }>; webtransport: { off?: string; open?: number; refused?: Record<string, number> } } };
 
 /** a WebSocket client: JSON control + binary frames */
 async function wsClient(port: number) {
@@ -41,7 +43,7 @@ async function wsClient(port: number) {
   ws.on("message", (d: Buffer, isBin: boolean) => { if (isBin) bin.push(new Uint8Array(d)); else json.push(JSON.parse(String(d))); });
   await new Promise((r) => ws.once("open", r));
   await waitFor(() => json.some((m) => m.t === "welcome"), 5000);
-  return { ws, json, bin, welcome: json.find((m) => m.t === "welcome") as { aux: string; uid: number; wt?: { port: number; hashes?: string[] } }, send: (o: unknown) => ws.send(JSON.stringify(o)) };
+  return { ws, json, bin, welcome: json.find((m) => m.t === "welcome") as { aux: string; uid: number; wt?: { port: number; hashes?: string[]; use?: boolean } }, send: (o: unknown) => ws.send(JSON.stringify(o)) };
 }
 
 // ---- 1. off by default
@@ -77,6 +79,7 @@ const s = await startServer({ KR_WT: "1", KR_WARMUP_S: "60", KR_MAX_PER_IP: "2" 
 try {
   const c = await wsClient(s.port), wtw = c.welcome.wt;
   check(!!wtw && wtw.port === s.port && wtw.hashes?.length === 1, `KR_WT=1: welcome announces port ${wtw?.port} and one certificate hash`);
+  check(wtw?.use === true, `KR_WT_SHARE unset: welcome puts the session in the WebTransport arm (use ${wtw?.use})`);
   const hashes = (wtw?.hashes ?? []).map((h) => ({ algorithm: "sha-256", value: new Uint8Array(Buffer.from(h, "base64")) }));
   const url = `https://127.0.0.1:${wtw!.port}/wt`;
   const open = async (token: string) => {
@@ -102,6 +105,7 @@ try {
   await sleep(300);
   check(await waitFor(() => w.frames.some((f) => new TextDecoder().decode(f) === '{"t":"wt-ok"}'), 3000), "an attached session gets { t: \"wt-ok\" } on its stream");
   check((await health(s.port)).transports.clients.wt === 1, "/health counts the client on wt");
+  c.send({ t: "net", transport: "wt", arm: "wt" });
   const twice = await open(c.welcome.aux);
   check(await waitFor(twice.closed, 5000) && !w.closed(), "a second session for the same client is refused, the first stays");
   const third = new WebSocket(`ws://127.0.0.1:${s.port}/ws`);
@@ -136,6 +140,8 @@ try {
   check(await waitFor(() => snaps().some((d) => { const r = new Reader(d); r.u8(); readSnapHeader(r, h); return h.lastSeq === 100; }), 5000), "a window past a gap is queued (snapshot acknowledges seq 100)");
   hin = (await health(s.port)).transports.inputs;
   check(hin.lost === 39, `seqs 61-99 count as lost (${hin.lost})`);
+  const arm = (await health(s.port)).transports.arms.wt;
+  check(arm.links === 1 && arm.settled.wt === 1 && arm.inputs.seqs === 100 && arm.inputs.lost === 39 && arm.inputs.recovered === 3, `/health counts the link, its settling and its inputs under the wt arm it reported (${JSON.stringify(arm)})`);
 
   // the stream, not datagrams: every frame of the flood arrives, so the count past the bucket (400) is exact
   for (let i = 0; i < 1200; i++) { inW.reset().u8(M.Ping).f64(i); void w.sw.write(frame(inW.view())); }
@@ -157,6 +163,14 @@ try {
     check((await health(s.port)).transports.webtransport.open === 0, `round ${round}: /health has no session open`);
   }
 } finally { s.proc.kill("SIGTERM"); }
+{
+  const s0 = await startServer({ KR_WT: "1", KR_WT_SHARE: "0" });
+  try {
+    const c = await wsClient(s0.port);
+    check(!!c.welcome.wt && c.welcome.wt.use === false, `KR_WT_SHARE=0: welcome still offers the endpoint but puts the session in the WebSockets arm (use ${c.welcome.wt?.use})`);
+    c.ws.close();
+  } finally { s0.proc.kill("SIGTERM"); }
+}
 if (failed) { console.error(`${failed} check(s) failed`); process.exit(1); }
 console.log("webtransport endpoint: all checks passed");
 process.exit(0);

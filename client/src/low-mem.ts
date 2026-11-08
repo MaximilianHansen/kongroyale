@@ -89,7 +89,7 @@ const GEOFREE = flag("geofree");
 let restoreHooked = false;
 
 export function moduleCtx(engine: Engine, w: World, id: string): Engine {
-  (globalThis as unknown as { __kr: { rebuildModule?: (id: string) => Promise<void> } }).__kr.rebuildModule ??= async (x) => { if (w.modOf.has(x)) await evictStreamed(engine, w, x); const queued = pendingRef.indexOf(x); if (queued >= 0) pendingRef.splice(queued, 1); delete streamMsRef[x]; refreshImpostors(w.modOf); const t0 = performance.now(); await (await w.build(x)).integrated; if (!w.modOf.has(x)) { if (queued >= 0) pendingRef.push(x); return; } streamMsRef[x] = Math.round(performance.now() - t0); refreshImpostors(w.modOf); setTimeout(() => refreshImpostors(w.modOf), IMPOSTOR_HOLD_MS); };
+  (globalThis as unknown as { __kr: { rebuildModule?: (id: string) => Promise<void> } }).__kr.rebuildModule ??= async (x) => { if (w.modOf.has(x)) await evictStreamed(engine, w, x); const queued = pendingRef.indexOf(x); if (queued >= 0) pendingRef.splice(queued, 1); delete streamMsRef[x]; refreshImpostors(w.modOf); const t0 = performance.now(); await (await w.build(x)).integrated; if (!w.modOf.has(x)) { if (queued >= 0) pendingRef.push(x); return; } streamMsRef[x] = Math.round(performance.now() - t0); refreshImpostors(w.modOf); pollImpostor(w, x); };
   if (GEOFREE && !restoreHooked) {
     restoreHooked = true;
     rebuildOnRestore(engine, w, (x) => ctxOf.has(x), evictStreamed);
@@ -121,6 +121,7 @@ export type World = {
 
 export async function evictStreamed(engine: Engine, w: World, id: string) {
   const m = w.modOf.get(id)!, roots = w.roots(id);
+  integratedAt.delete(id); released.delete(id);
   const hooks = new Set(hooksOf.get(id)), u = engine.updates;
   for (let i = u.length - 1; i >= 0; i--) if (hooks.has(u[i])) { u.splice(i, 1); engine.updLabels.splice(i, 1); }
   engine.occlusion.unregister(id);
@@ -159,7 +160,8 @@ function costMB(roots: readonly THREE.Object3D[]): number {
     if (m.material) for (const x of Array.isArray(m.material) ? m.material : [m.material]) texturesOf(x, tex);
   });
   let bytes = 0;
-  for (const b of bufs) bytes += (b as { array?: ArrayBufferView }).array?.byteLength ?? 0;
+  // (a geofree-released attribute still holds its GPU buffer: count the size it recorded when it dropped its array)
+  for (const b of bufs) bytes += (b as { array?: ArrayBufferView | null }).array?.byteLength ?? (b as { releasedBytes?: number }).releasedBytes ?? 0;
   for (const t of tex) { const im = t.image as { width?: number; height?: number } | null; if (im?.width && im.height) bytes += im.width * im.height * 4 * (t.generateMipmaps ? 4 / 3 : 1); }
   return bytes / 1e6;
 }
@@ -178,7 +180,31 @@ function evictionsFor(list: readonly Resident[]): Resident[] {
 
 const IMPOSTOR_MAGIC = "KRFI", IMPOSTOR_HEADER_B = 40, INTEGRATED_POLL_MS = 100, INTEGRATED_POLL_MAX_MS = 300_000, IMPOSTOR_HOLD_MS = 1000;
 let impostors: Map<string, THREE.Mesh> | null = null, streamMsRef: Record<string, number> = {}, pendingRef: string[] = [];
-const integratedAt = new Map<string, number>();
+let revealingRef: (id: string) => boolean = () => false;
+const integratedAt = new Map<string, number>(), released = new Set<string>();
+
+/** a built POI keeps its impostor until its model has dissolved in (engine/cull.ts reveal), and for at least
+ *  IMPOSTOR_HOLD_MS: the dissolve steps by a frame dt clamped at 0.1 s, so under about 9 fps a wall-clock hold alone
+ *  ended at 18-30% reveal and the location blinked; the floor covers a model whose dissolve is unavailable.
+ *  Once released it stays hidden until the POI is evicted: a later HLOD reveal of the near sources is not a new build */
+function held(id: string, now: number): boolean {
+  if (released.has(id)) return false;
+  const at = integratedAt.get(id);
+  if (at === undefined || now - at < IMPOSTOR_HOLD_MS || revealingRef(id)) return true;
+  released.add(id);
+  return false;
+}
+
+/** refresh the impostors until `id`'s may hide, its build fails, or INTEGRATED_POLL_MAX_MS passes */
+function pollImpostor(w: World, id: string) {
+  const until = performance.now() + INTEGRATED_POLL_MAX_MS;
+  const t = setInterval(() => {
+    refreshImpostors(w.modOf);
+    const failed = streamMsRef[id] !== undefined && !w.modOf.has(id);
+    if (!failed && held(id, performance.now()) && performance.now() < until) return;
+    clearInterval(t);
+  }, INTEGRATED_POLL_MS);
+}
 
 function decodeImpostor(buf: ArrayBuffer): THREE.BufferGeometry {
   const dv = new DataView(buf);
@@ -202,7 +228,9 @@ function decodeImpostor(buf: ArrayBuffer): THREE.BufferGeometry {
 async function loadImpostors(engine: Engine, w: World, out: Map<string, THREE.Mesh>) {
   const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") + "/assets/far/";
   const scope = resources.root.child("far-impostors");
-  const mat = scope.material(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  // (double-sided: the bake merges leaf cards and cliff shells drawn DoubleSide at the POI, and culling their back halves
+  // showed as see-through speckle from the plane)
+  const mat = scope.material(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
   const group = new THREE.Group();
   group.name = "far-merge-impostors";
   engine.scene.add(group);
@@ -226,10 +254,9 @@ function refreshImpostors(modOf: ReadonlyMap<string, unknown>) {
   if (!impostors) return;
   const now = performance.now();
   for (const [id, mesh] of impostors) {
-    if (!modOf.has(id)) integratedAt.delete(id);
+    if (!modOf.has(id)) { integratedAt.delete(id); released.delete(id); }
     else if (streamMsRef[id] !== undefined && !integratedAt.has(id)) integratedAt.set(id, now);
-    const at = integratedAt.get(id);
-    mesh.visible = at === undefined || now - at < IMPOSTOR_HOLD_MS;
+    mesh.visible = held(id, now);
   }
 }
 
@@ -253,6 +280,7 @@ export function trimStreamed(engine: Engine, w: World, incoming: string | null, 
   if (!impostors && flag("farimp")) { impostors = new Map(); void loadImpostors(engine, w, impostors).catch((e) => w.report("far-impostors", e)); }
   streamMsRef = streamMs;
   pendingRef = pending;
+  revealingRef = (id) => engine.cull.revealing(w.roots(id));
   return (trimming = trimming.then(async () => {
     refreshImpostors(w.modOf);
     for (;;) {
@@ -266,15 +294,7 @@ export function trimStreamed(engine: Engine, w: World, incoming: string | null, 
       delete streamMs[victim.id];
     }
     if (incoming) { building.add(incoming); motion.builtAt = performance.now(); }
-    if (incoming && impostors) {
-      const until = performance.now() + INTEGRATED_POLL_MAX_MS;
-      const t = setInterval(() => {
-        refreshImpostors(w.modOf);
-        const at = integratedAt.get(incoming), failed = streamMs[incoming] !== undefined && !w.modOf.has(incoming);
-        if (!failed && (at === undefined || performance.now() - at < IMPOSTOR_HOLD_MS) && performance.now() < until) return;
-        clearInterval(t);
-      }, INTEGRATED_POLL_MS);
-    }
+    if (incoming && impostors) pollImpostor(w, incoming);
   }).catch((e) => w.report("lowmem-trim", e)));
 }
 
