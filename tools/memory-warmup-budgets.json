@@ -1,5 +1,5 @@
 {
-  "about": "memory.mts --warmup --budgets: what the game holds in the first practice match's warm-up (on foot on the lobby islet, the match scope open), on SwiftShader with the title modules only. CI's no-GPU match-to-match memory job checks it in the same run as tools/memory-leak-budgets.json, so it costs no extra CI time. A number over its budget fails; a number more than underPct under fails until the budget is lowered (the failure names the new value, measured plus headroomPct), so budgets only go down. Set 2026-11-07 from the CI runner's own memory-result artifacts on main, four runs (9cc83fa, f466bc8, 0c1713f, 4548a29): WebGL 1879.0-1881.7 MB, textures 335-340, geometry CPU copies 208.4-208.8 MB, texture CPU copies 308.6 MB, JS heap after GC 194.5-197.5 MB. Each budget is the largest of the four plus 2%, rounded up.",
+  "about": "memory.mts --warmup --budgets: what the game holds in the first practice match's warm-up (on foot on the lobby islet, the match scope open), on SwiftShader with the title modules only. CI's no-GPU match-to-match memory job checks it in the same run as tools/memory-leak-budgets.json, so it costs no extra CI time. A number over its budget fails; a number more than underPct under fails until the budget is lowered (the failure names the new value, measured plus headroomPct), so budgets only go down. Set 2026-11-07 from the CI runner's own memory-result artifacts on main, four runs (9cc83fa, f466bc8, 0c1713f, 4548a29): WebGL 1879.0-1881.7 MB, textures 335-340, geometry CPU copies 208.4-208.8 MB with geofree off (128.4 MB with geofree on by default, one SwiftShader run of this stack), texture CPU copies 308.6 MB, JS heap after GC 194.5-197.5 MB. Each budget is the largest of the four plus 2%, rounded up.",
   "config": {
     "url": "/?resaudit=&modules=atmos%2Cterrain%2Cwater%2Cveg%2Cpoi%3Alobby-islet%2Cshowcase%2Cweapons-showcase%2Cgameplay-stage&seed=42&vegsplat=0",
     "profile": "nogpu",
@@ -15,7 +15,7 @@
     "warmup": {
       "webglMB": 1920,
       "textureCount": 347,
-      "geometryCpuMB": 213,
+      "geometryCpuMB": 131,
       "textureCpuMB": 315,
       "heapUsedMB": 202
     }
