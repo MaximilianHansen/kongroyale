@@ -2,7 +2,8 @@
 // button) and the pause card (SETTINGS). Five categories (Mouse & keyboard, Controller, Audio, Video, Accessibility);
 // every change applies instantly and is remembered on this device (settings/preferences.ts for the player's
 // preferences, engine/display.ts for video). Also here: the FPS counter overlay, the first-visit "auto-detected" toast,
-// the bench's step-down notice and the runtime guard's "switch to a lower preset?" toast.
+// the bench's step-down notice and the runtime guard's "switch to a lower preset?" toast. While the pointer is locked
+// (aiming in a match) their buttons can't be clicked, so each shows as a passive line and waits for a free pointer.
 // The root keeps the class `.kr-video` (`.on` while open) and the BACK button `.close`: game/index.ts gates gameplay
 // input and routes the controller on them.
 import type { Engine } from "../engine/engine";
@@ -34,6 +35,7 @@ const CSS = `
 .kr-vtoast { left: 50%; bottom: ${u(250)}; transform: translateX(-50%); }
 .kr-vnote { right: ${T(36)}; bottom: ${T(30)}; max-width: ${T(900)}; white-space: normal; border-radius: var(--kong-radius-tile); box-shadow: var(--kong-drop-pill), inset ${T(8)} 0 0 var(--kong-warning); }
 .kr-vtoast.on, .kr-vnote.on { display: flex; }
+.kr-vtoast.kr-vline { pointer-events: none; }
 .kr-vtoast b, .kr-vnote b { color: var(--kong-accent); font-weight: 900; }
 .kr-vtoast button, .kr-vnote button { appearance: none; cursor: pointer; white-space: nowrap; padding: ${T(6)} ${T(16)}; border-radius: 999px;
   border: var(--kong-outline-sm) solid var(--kong-outline); box-shadow: 0 ${T(3)} 0 var(--kong-outline); background: var(--kong-surface-2); color: var(--kong-text);
@@ -99,7 +101,18 @@ export function mountVideoUi(engine: Engine, display: Display, menu: VideoMenu) 
 
   const toast = document.createElement("div"); toast.className = "kr-vtoast"; toast.setAttribute("role", "status"); document.body.appendChild(toast);
   let toastTimer = 0;
-  const show = (html: string, ms: number) => { toast.innerHTML = html; toast.classList.add("on"); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => toast.classList.remove("on"), ms); };
+  const show = (html: string, ms: number) => { toast.innerHTML = html; toast.classList.add("on"); clearTimeout(toastTimer); if (ms) toastTimer = window.setTimeout(() => toast.classList.remove("on"), ms); };
+  // with the pointer locked a notice's buttons are out of reach (in full screen the mouse aims), so the player gets
+  // a passive line that never takes input, and the notice itself waits until the pointer is free: Esc's pause card, the
+  // results screen or the title. There it stays up, with no timer, and an unanswered suggestion goes back in the queue
+  // when the player returns to aiming (the guard offers each level once a session, so it must not be lost).
+  // The game never releases the pointer for a notice; only the player's own Esc does.
+  const line = document.createElement("div"); line.className = "kr-vtoast kr-vline"; line.setAttribute("role", "status"); document.body.appendChild(line);
+  let lineTimer = 0;
+  let held: (() => void) | null = null;
+  const locked = () => !!document.pointerLockElement;
+  const passive = (html: string) => { line.innerHTML = html; line.classList.add("on"); clearTimeout(lineTimer); lineTimer = window.setTimeout(() => line.classList.remove("on"), 6000); };
+  const offer = (html: string, ms: number, hint: string) => { if (!locked()) { show(html, ms); return; } held = () => show(html, 0); passive(hint); };
   toast.addEventListener("click", (ev) => {
     const a = (ev.target as HTMLElement).dataset.a;
     if (!a) return;
@@ -122,12 +135,23 @@ export function mountVideoUi(engine: Engine, display: Display, menu: VideoMenu) 
     display.ackStepped();
     note.classList.remove("on");
   });
-  display.onStepped = showNote;
-  if (display.settings.stepped && !display.settings.stepped.ack) showNote(display.settings.stepped);
+  const syncNote = () => { const st = display.settings.stepped; note.classList.toggle("on", !!st && !st.ack && !locked()); };
+  display.onStepped = (st) => { showNote(st); syncNote(); if (locked()) passive(`<span>Graphics set to <b>${esc(cap(st.to))}</b> · Esc → Settings to change</span>`); };
+  if (display.settings.stepped && !display.settings.stepped.ack) { showNote(display.settings.stepped); syncNote(); }
+  document.addEventListener("pointerlockchange", () => {
+    syncNote();
+    if (locked()) {
+      if (toast.classList.contains("on") && toast.querySelector("button")) { const html = toast.innerHTML; toast.classList.remove("on"); if (toast.querySelector("[data-a=apply]")) held = () => show(html, 0); }
+      return;
+    }
+    line.classList.remove("on");
+    const run = held; held = null; run?.();
+  });
 
   display.onSuggest = (level, f) => {
     toast.dataset.level = level;
-    show(`<span>Frame rate is low (${f} FPS): switch to <b>${esc(cap(level))}</b>?</span><button type="button" class="y" data-a="apply">Switch</button><button type="button" data-a="x">Keep</button>`, 12000);
+    offer(`<span>Frame rate is low (${f} FPS): switch to <b>${esc(cap(level))}</b>?</span><button type="button" class="y" data-a="apply">Switch</button><button type="button" data-a="x">Keep</button>`, 12000,
+      `<span>Frame rate is low (${f} FPS) · Esc to switch to <b>${esc(cap(level))}</b></span>`);
   };
   return {
     /** first visit: say what Auto picked */
@@ -135,7 +159,9 @@ export function mountVideoUi(engine: Engine, display: Display, menu: VideoMenu) 
       const s = display.settings;
       const m = /(GeForce [^(),]+|Quadro [^(),]+|Radeon[^(),]*|Apple M\d[^(),]*|Iris[^(),]*|Intel[^(),]*|Arc [^(),]+|Mali[^(),]*|Adreno[^(),]*)/i.exec(display.gpu);
       const name = (m ? m[1] : "your GPU").replace(/\s+/g, " ").trim();
-      show(`<span>Video preset <b>Auto · ${esc(cap(s.auto))}</b> · ${esc(name)}</span><button type="button" data-a="menu">Settings</button>`, 7000);
+      const what = `Video preset <b>Auto · ${esc(cap(s.auto))}</b> · ${esc(name)}`;
+      if (locked()) passive(`<span>${what} · Esc → Settings to change</span>`);
+      else show(`<span>${what}</span><button type="button" data-a="menu">Settings</button>`, 7000);
     },
   };
 }
