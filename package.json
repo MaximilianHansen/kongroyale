@@ -43,7 +43,7 @@
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.6.6",
     "@types/three": "0.186.0",
     "@types/ws": "^8.5.13",
     "meshoptimizer": "1.1.1",
