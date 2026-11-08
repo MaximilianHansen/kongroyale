@@ -11,8 +11,9 @@ pr=$(gh pr list --repo "$REPO" --state open --limit 200 --json number,headRefOid
 if [ -z "$pr" ]; then echo "no open pull request has head $HEAD_SHA (pushed again or closed); nothing to post"; exit 0; fi
 base_sha=$(gh pr view "$pr" --repo "$REPO" --json baseRefOid --jq .baseRefOid)
 
-# main's numbers: the checks run on the PR's base commit, else the newest finished main run that started before this one
-runs=$(gh run list --repo "$REPO" --workflow ci.yml --branch main --event push --status completed --limit 50 --json databaseId,headSha,createdAt)
+# main's numbers: the checks run on the PR's base commit, else the newest successful main run that started before this
+# one. Main cancels a run when the next push lands, so a cancelled run has few or no artifacts.
+runs=$(gh run list --repo "$REPO" --workflow ci.yml --branch main --event push --status success --limit 50 --json databaseId,headSha,createdAt)
 base_run=$(jq -r --arg sha "$base_sha" '[.[] | select(.headSha == $sha)][0].databaseId // empty' <<<"$runs")
 if [ -z "$base_run" ]; then base_run=$(jq -r --arg t "$RUN_CREATED" '[.[] | select(.createdAt < $t)][0].databaseId // empty' <<<"$runs"); fi
 base_used=$(jq -r --arg id "$base_run" '[.[] | select((.databaseId | tostring) == $id)][0].headSha // empty' <<<"$runs")
