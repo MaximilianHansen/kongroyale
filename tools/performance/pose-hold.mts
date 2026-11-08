@@ -1,4 +1,4 @@
-// In-match frame timing at one fixed pose, in real Safari (safaridriver) or Chrome: a seeded practice match, the player
+// In-match frame timing at one fixed pose, in real Safari (safaridriver), Firefox (geckodriver) or Chrome: a seeded practice match, the player
 // teleported to a pose on the in-page host once the match reaches Play, a settle while that place streams in, then
 // --hold-s seconds of frames standing still. It answers "why is it slow HERE" for a player report (a KONGBOT bundle
 // gives the pose: ctx.game.player.pos / yawDeg / pitchDeg) and runs the same in every browser, so a Safari A/B needs no
@@ -8,7 +8,8 @@
 //   npx tsx tools/performance/pose-hold.mts --browser safari --out reports/performance/hold-base-1.json
 //   npx tsx tools/performance/pose-hold.mts --browser safari --query dpr=1 --out reports/performance/hold-dpr1-1.json
 //
-// Options: --browser safari|chrome|chromium (chromium = Playwright's own build; on a machine without a GPU add
+// Options: --browser safari|firefox|chrome|chromium (firefox = stock Firefox through geckodriver, headed, the display's own DPR like
+// Safari; it has no GPU timer, so --gpu is refused there; chromium = Playwright's own build; on a machine without a GPU add
 // --software, which checks the route and the counts, never the timing), --root <checkout> (serve its dist/; build
 // first), --port 3032, --viewport 1592x960 (CSS px; Safari renders at the display's own DPR, Chrome at --dpr 2),
 // --preset low|medium|high|epic|auto|auto-high|auto-medium (default high; auto leaves the game's own pick and its
@@ -39,7 +40,7 @@ import { arg, env, save, source, stats } from "./common.mts";
 import { RESULT_SCHEMA, RESULT_VERSION, type CaseResult, type Metric, type RunResult } from "./schema.ts";
 
 const SCENARIO_VERSION = 1;
-const BROWSER = arg("--browser", "safari") as "safari" | "chrome" | "chromium";
+const BROWSER = arg("--browser", "safari") as "safari" | "firefox" | "chrome" | "chromium";
 const root = path.resolve(arg("--root", "."));
 const out = path.resolve(arg("--out", "reports/performance/pose-hold.json"));
 const PORT = Number(arg("--port", "3032"));
@@ -55,12 +56,14 @@ const SEED = Number(arg("--seed", "42"));
 const SOFTWARE = process.argv.includes("--software");
 const GPU = process.argv.includes("--gpu");
 const SD_PORT = Number(arg("--safaridriver-port", "4472"));
+const GD_PORT = Number(arg("--geckodriver-port", "4473"));
 const READY_S = Number(arg("--ready-timeout-s", "300"));
 const PLAY_S = Number(arg("--play-timeout-s", "300"));
 const AT_PHASE = Number(arg("--at-phase", "2"));
 const ORIGIN = "http://127.0.0.1:" + PORT;
-if (!["safari", "chrome", "chromium"].includes(BROWSER)) throw Error("--browser " + BROWSER + ": one of safari, chrome, chromium");
+if (!["safari", "firefox", "chrome", "chromium"].includes(BROWSER)) throw Error("--browser " + BROWSER + ": one of safari, firefox, chrome, chromium");
 if (!["low", "medium", "high", "epic", "auto", "auto-high", "auto-medium"].includes(PRESET)) throw Error("--preset " + PRESET + ": one of low, medium, high, epic, auto, auto-high, auto-medium");
+if (BROWSER === "firefox" && GPU) throw Error("--gpu: Firefox has no GPU timer query");
 if (![PX, PZ, YAW_DEG, PITCH_DEG].every(Number.isFinite)) throw Error("--pose x,z,yawDeg,pitchDeg");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const t0 = Date.now();
@@ -141,17 +144,17 @@ const READ = `JSON.stringify((() => {
 // ---- drivers
 interface Driver { version: string; open(url: string): Promise<void>; run(expr: string): Promise<string>; shot(file: string): Promise<void>; close(): Promise<void> }
 const SAFARIDRIVER = ["/System/Cryptexes/App/usr/bin/safaridriver", "/usr/bin/safaridriver"].find((p) => fs.existsSync(p)) ?? "safaridriver";
-async function safari(): Promise<Driver> {
-  const base = "http://127.0.0.1:" + SD_PORT;
-  const proc = spawn(SAFARIDRIVER, ["-p", String(SD_PORT)], { stdio: "ignore" });
+async function webdriver(bin: string, args: string[], port: number, caps: Record<string, unknown>): Promise<Driver> {
+  const base = "http://127.0.0.1:" + port;
+  const proc = spawn(bin, args, { stdio: "ignore" });
   const wd = async (method: string, p: string, body?: unknown) => {
     const r = await fetch(base + p, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     const j = (await r.json()) as { value: { error?: string; message?: string } & Record<string, unknown> };
-    if (j.value && j.value.error) throw new Error("safaridriver " + method + " " + p + ": " + j.value.error + ": " + j.value.message);
+    if (j.value && j.value.error) throw new Error(path.basename(bin) + " " + method + " " + p + ": " + j.value.error + ": " + j.value.message);
     return j.value as any;
   };
   for (let i = 0; i < 40; i++) { try { await wd("GET", "/status"); break; } catch { await sleep(250); } }
-  const s = await wd("POST", "/session", { capabilities: { alwaysMatch: { browserName: "safari" } } });
+  const s = await wd("POST", "/session", { capabilities: { alwaysMatch: caps } }).catch((e) => { proc.kill(); throw e; });
   const sid = "/session/" + s.sessionId;
   try {
     await wd("POST", sid + "/timeouts", { script: 120_000, pageLoad: 300_000, implicit: 0 });
@@ -172,6 +175,8 @@ async function safari(): Promise<Driver> {
     close: async () => { try { await wd("DELETE", sid); } catch { /* gone */ } proc.kill(); },
   };
 }
+const safari = () => webdriver(SAFARIDRIVER, ["-p", String(SD_PORT)], SD_PORT, { browserName: "safari" });
+const firefox = () => webdriver("geckodriver", ["--port", String(GD_PORT)], GD_PORT, { browserName: "firefox" });
 async function chromium(kind: "chrome" | "chromium"): Promise<Driver> {
   const pw = await import("playwright");
   const angle = SOFTWARE ? "swiftshader" : process.platform === "darwin" ? "metal" : process.platform === "win32" ? "d3d11" : "vulkan";
@@ -190,14 +195,14 @@ process.on("exit", () => { if (server.exitCode === null) server.kill(); });
 for (let i = 0; !(await up()); i++) { if (server.exitCode !== null || i > 120) throw Error("the server did not come up"); await sleep(500); }
 
 const locked = () => process.platform === "darwin" && /CGSSessionScreenIsLocked<\/key>\s*<true\/>/.test(spawnSync("ioreg", ["-n", "Root", "-d1", "-a"], { encoding: "utf8" }).stdout ?? "");
-if (BROWSER === "safari" && locked()) throw Error("the screen is locked: Safari renders no frames then. Unlock the Mac for the run");
+if ((BROWSER === "safari" || BROWSER === "firefox") && locked()) throw Error("the screen is locked: " + BROWSER + " renders no frames then. Unlock the Mac for the run");
 const awake = process.platform === "darwin" ? spawn("caffeinate", ["-d", "-i"], { stdio: "ignore" }) : null;
 const yaw = (YAW_DEG * Math.PI) / 180, pitch = (PITCH_DEG * Math.PI) / 180;
 const errors: string[] = [], marks: Record<string, number> = {}, artifacts: string[] = [];
 let page: any = null, capture: ChildProcess | null = null, d: Driver | null = null;
 const status = async () => JSON.parse(await d!.run(STATUS));
 try {
-  d = BROWSER === "safari" ? await safari() : await chromium(BROWSER);
+  d = BROWSER === "safari" ? await safari() : BROWSER === "firefox" ? await firefox() : await chromium(BROWSER);
   await d.run(SET_VIDEO(VIDEO));
   const load0 = Date.now();
   await d.open(ORIGIN + "/?" + QUERY);
@@ -282,7 +287,7 @@ if (page && page.n > 1) {
 const result: RunResult = {
   schema: RESULT_SCHEMA, version: RESULT_VERSION, tool: "tools/performance/pose-hold.mts", startedAt: new Date(t0).toISOString(), durationMs: Date.now() - t0,
   source: source(root), environment: { ...env(), gpu: page ? String(page.renderer) : null },
-  config: { browser: BROWSER + " " + (d?.version ?? "?"), viewport: VW + "x" + VH, preset: PRESET, query: QUERY, pose: [PX, PZ, YAW_DEG, PITCH_DEG].join(","), settleS: SETTLE_S, holdS: HOLD_S, mode: MODE, capture: CAPTURE ? "on" : "off", ...(GPU ? { gpu: "on" } : {}), atPhase: AT_PHASE, dpr: page ? Number(page.dpr) : -1, headed: BROWSER === "safari" || process.argv.includes("--headed") },
+  config: { browser: BROWSER + " " + (d?.version ?? "?"), viewport: VW + "x" + VH, preset: PRESET, query: QUERY, pose: [PX, PZ, YAW_DEG, PITCH_DEG].join(","), settleS: SETTLE_S, holdS: HOLD_S, mode: MODE, capture: CAPTURE ? "on" : "off", ...(GPU ? { gpu: "on" } : {}), atPhase: AT_PHASE, dpr: page ? Number(page.dpr) : -1, headed: BROWSER === "safari" || BROWSER === "firefox" || process.argv.includes("--headed") },
   cases, errors, artifacts,
 };
 (result as unknown as Record<string, unknown>).detail = { marks, host: os.hostname(), page: page ? { ...page, T: undefined, frames: { t: page.T.map((x: number) => +(x - page.T[0]).toFixed(2)), cpu: page.CPU, calls: page.CALLS, tris: page.TRIS, points: page.PTS, programs: page.PROG } } : null };
