@@ -80,7 +80,7 @@ function railing(b: Builder, m: HarborMats, pts: V3[], h = 1.1, post = 1.6, mat?
   for (const hh of [h, h * 0.5]) b.rail(R, pts.map((p) => [p[0], p[1] + hh, p[2]] as V3), 0.032, 6);
 }
 
-function buildCrane(b: Builder, m: HarborMats, cz: number, idx: number, kit: { add(p: import("../../../../../shared/pois/harbor-kit").ContainerPlacement): unknown }) {
+async function buildCrane(b: Builder, m: HarborMats, cz: number, idx: number, kit: { add(p: import("../../../../../shared/pois/harbor-kit").ContainerPlacement): unknown }, y: () => Promise<void>) {
   const Y = cranePaint(m), D = m.darkPaint, S = m.steel;
   const gz = C.girderHalfZ, gw = 1.25;
   // ---------------- bogies + sill beams (per rail)
@@ -116,6 +116,7 @@ function buildCrane(b: Builder, m: HarborMats, cz: number, idx: number, kit: { a
     b.cyl(m.rubber, [C.railLand - 1.25, C.sillTop - 0.3, rz], [C.railLand - 2.15, C.sillTop - 0.3, rz], 1.2, 24);
     b.box(Y, [C.railLand - 1.7, C.sillTop - 1.3, rz], [1.5, 1.0, 0.5]);
   }
+  await y();
   // ---------------- legs (lattice)
   for (const rx of [C.railLand, C.railSea]) for (const sz of [-1, 1]) latticeLeg(b, m, rx, cz + sz * C.legHalfZ, C.sillTop, C.portalY - 0.2, C.legW);
   // portal beams along z (top of each rail's leg pair) + mid ties + knee braces
@@ -135,6 +136,7 @@ function buildCrane(b: Builder, m: HarborMats, cz: number, idx: number, kit: { a
     b.beam(Y, [C.railSea + 0.9, 25, z], [C.railSea + 6.5, C.portalY - 0.2, cz + sz * gz], 0.55, 0.55, { bevel: 0.05 });
     b.beam(Y, [C.railLand - 0.9, 25, z], [C.railLand - 7, C.portalY - 0.2, cz + sz * gz], 0.55, 0.55, { bevel: 0.05 });
   }
+  await y();
   // ---------------- main girder (twin trusses) + cross members
   for (const sz of [-1, 1]) {
     const zc = cz + sz * gz;
@@ -168,6 +170,7 @@ function buildCrane(b: Builder, m: HarborMats, cz: number, idx: number, kit: { a
     if (sz > 0) { railing(b, m, [[C.girderX0 + 0.2, C.girderY1, wz + sz * 0.48], [g0, C.girderY1, wz + sz * 0.48]], 1.1, 3.0); railing(b, m, [[g1, C.girderY1, wz + sz * 0.48], [C.girderX1 - 0.2, C.girderY1, wz + sz * 0.48]], 1.1, 3.0); }
     else { const [s0, s1] = craneStairGap(); railing(b, m, [[C.girderX0 + 0.2, C.girderY1, wz + sz * 0.48], [s0, C.girderY1, wz + sz * 0.48]], 1.1, 3.0); railing(b, m, [[s1, C.girderY1, wz + sz * 0.48], [C.girderX1 - 0.2, C.girderY1, wz + sz * 0.48]], 1.1, 3.0); }
   }
+  await y();
   // ---------------- A-frame + stays
   const apexZs = [cz - gz, cz + gz];
   const apxB = C.apexX - 8.5, apxF = C.apexX + 7.5;
@@ -215,6 +218,7 @@ function buildCrane(b: Builder, m: HarborMats, cz: number, idx: number, kit: { a
     }
     b.box(D, [C.apexX + 0.9, C.apexY - 0.8, az], [0.9, 0.7, 0.8], { bevel: 0.06 });
   }
+  await y();
   // ---------------- machinery house on the backreach (a hollow room + roof stair + the cab below: shared pieces)
   const H = C.house;
   const hy = (H.y0 + H.y1) / 2;
@@ -350,7 +354,7 @@ export const part: Part = {
   async build({ ctx, mats, group, kit, lod, c1 }) {
     // both cranes in ONE merged builder (≈10 draws), full detail at every distance; a ~1 k-tri proxy each for the shadows
     const b = new Builder(true), far = new Builder(true);
-    for (let i = 0; i < C.zs.length; i++) { buildCrane(b, mats, C.zs[i], i, kit); await ctx.yield(); craneProxy(far, mats, C.zs[i], i); }
+    for (let i = 0; i < C.zs.length; i++) { await buildCrane(b, mats, C.zs[i], i, kit, () => ctx.yield()); await ctx.yield(); craneProxy(far, mats, C.zs[i], i); }
     // (the wire ropes keep their own "cable" material — atmos' thin-wire path holds them ≥ ~1.7 px)
     const g = await b.buildAsync("crane", { palette: (m) => m.name !== "yellowPaint" && m.name !== "cable" && !m.transparent && !/^room-(grating|checker)/.test(m.name) }, () => ctx.yield());
     group.add(g);

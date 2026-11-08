@@ -287,8 +287,8 @@ export function rootMassGeo(m: RootMass): THREE.BufferGeometry {
   g.setIndex(idx); g.computeVertexNormals();
   return g;
 }
-export function addRootMasses(bins: (x: number, z: number) => TownBins, masses: RootMass[]) {
-  for (const m of masses) bins(m.x, m.z).thatch.add(rootMassGeo(m), null, soft("#c9a276", 0.55, 1.22 + (m.seed % 7) * 0.02), barkFn(m.seed, 0.95));
+export async function addRootMasses(bins: (x: number, z: number) => TownBins, masses: RootMass[], y: () => Promise<void>) {
+  for (const m of masses) { bins(m.x, m.z).thatch.add(rootMassGeo(m), null, soft("#c9a276", 0.55, 1.22 + (m.seed % 7) * 0.02), barkFn(m.seed, 0.95)); await y(); }
 }
 
 const leafTex = new Map<string, THREE.Texture>();
