@@ -45,6 +45,7 @@ const checks = [
   { id: "refresh", name: "display refresh estimate", cmd: "npx", args: ["tsx", "tools/engine/refresh.test.mts"] },
   { id: "resguard", name: "half-rate guard decisions", cmd: "npx", args: ["tsx", "tools/engine/res-guard.test.mts"] },
   { id: "scenegate", name: "visibility gate lifecycle", cmd: "npx", args: ["tsx", "tools/engine/scene-gate.test.mts"] },
+  { id: "hlod", name: "HLOD captures a POI's far state", cmd: "npx", args: ["tsx", "tools/engine/hlod-far-state.test.mts"] },
   { id: "parity", name: "wire / matrix / geometry / http / splat parity", slow: true, cmd: "npm", args: ["run", "bench:verify"] },
   { id: "alloc", name: "host allocation per tick (against tools/alloc-budgets.json)", slow: true, cmd: "npx", args: ["tsx", "tools/performance/alloc.mts", "--budgets", "tools/alloc-budgets.json", "--out", tmp("alloc.json")] },
   { id: "sim", name: "headless match (seed 42)", slow: true, cmd: "npx", args: ["tsx", "tools/sim-smoke.mts", "trios", "42", "--check"] },
