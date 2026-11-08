@@ -5,7 +5,7 @@
 //   died (the heartbeat in diag.ts), the title offers to send what is known about it.
 // What goes out is minimised here: no callsign unless the player ticks it, no page URL, time zone, language, lobby code
 // or lobby names, no console log, no routing flags. The body is a KONGBOT report (POST /api/kongbot, server/kongbot.ts):
-// the diagnostics ride in ctx.diag, the metrics timeline and the input replay in bundle, so the server stays unchanged.
+// the diagnostics, the metrics timeline and the input replay ride in bundle (bundle.diag), which the server validates.
 import { deadChecked, snapshot } from "./diag";
 
 /** the callsign is offered, unticked, for credit in the fix and to find a player's logs; false removes the checkbox and
@@ -142,8 +142,8 @@ function message(c: Choice, ctx: Json | null, prev: Json | null): string {
 
 /** build the body (only a crash report carries the dead session, so later reports aren't counted as crashes); past MAX_BODY_CHARS it drops the replay, then the picture, then all but the last 5 minutes */
 function body(c: Choice, m: Moment, bundle: Json | null, diag: Json, prev: Json | null) {
-  const ctx = minimise(m.ctx, c.withName);
-  if (ctx) ctx.diag = { ...diag, prev: c.mode === "crash" ? prev : null, install: clientId(), kind: c.mode === "crash" ? "crash" : c.chip || c.note ? "report" : "diagnostics", chip: c.chip, dropped: [] as string[] };
+  const ctx = minimise(m.ctx, c.withName), dropped: string[] = [];
+  bundle = { ...bundle, diag: { ...diag, prev: c.mode === "crash" ? prev : null, install: clientId(), kind: c.mode === "crash" ? "crash" : c.chip || c.note ? "report" : "diagnostics", chip: c.chip, dropped } };
   const name = c.withName && OFFER_CALLSIGN ? kr().game?.lobby?.name ?? null : null;
   const replay = bundle?.replay as { opts?: { humans?: Array<{ name?: string }> } } | null | undefined;
   if (replay?.opts?.humans && !name) bundle = { ...bundle, replay: { ...replay, opts: { ...replay.opts, humans: replay.opts.humans.map((h) => ({ ...h, name: "" })) } } };
@@ -152,7 +152,6 @@ function body(c: Choice, m: Moment, bundle: Json | null, diag: Json, prev: Json 
     ctx, logs: [] as unknown[], trail: [] as unknown[], shot: c.withShot ? m.shot?.dataUrl ?? null : null, shotSize: c.withShot && m.shot ? [m.shot.w, m.shot.h] : null,
     sentAt: new Date().toISOString(), bundle,
   };
-  const dropped = (ctx?.diag as { dropped: string[] } | undefined)?.dropped ?? [];
   const size = () => JSON.stringify(out).length;
   if (size() > MAX_BODY_CHARS && out.bundle?.replay) { out.bundle = { ...out.bundle, replay: null }; dropped.push("replay"); }
   if (size() > MAX_BODY_CHARS && out.shot) { out.shot = null; out.shotSize = null; dropped.push("picture"); }
@@ -167,11 +166,15 @@ function bodyNow(c: Choice, m: Moment) {
 }
 
 async function send(c: Choice, m: Moment): Promise<string> {
-  const b = bodyNow(c, m);
+  const json = JSON.stringify(bodyNow(c, m));
+  // gzip where the browser can: a report is mostly numbers in JSON and shrinks about tenfold on a stream's uplink.
+  // The server inflates it (server/kongbot.ts); a browser without CompressionStream sends it as it is
+  const gz = typeof CompressionStream === "undefined" ? null : await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer().catch(() => null);
   const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(new Error("no answer from the server")), TIMEOUT_MS);
   try {
-    const res = await fetch(base + "api/kongbot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b), signal: ctl.signal });
+    const headers: Record<string, string> = gz ? { "content-type": "application/json", "content-encoding": "gzip" } : { "content-type": "application/json" };
+    const res = await fetch(base + "api/kongbot", { method: "POST", headers, body: gz ?? json, signal: ctl.signal });
     const j = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
     if (!res.ok || !j.ok) throw new Error(j.error || "HTTP " + res.status);
     lastSend = performance.now();
@@ -186,11 +189,13 @@ const notSent = (e: unknown) => (e instanceof TypeError ? "no connection to the 
 /** a short list of what the body holds, from the body send() would build now (after its size cuts) */
 function contents(c: Choice, m: Moment): string[] {
   const kb = (v: unknown) => Math.max(1, Math.round(JSON.stringify(v ?? null).length / 1024)) + " KB";
-  const out = bodyNow(c, m), b = out.bundle, { diag, ...ctx } = out.ctx ?? {}, d = diag as { events: unknown[]; path: { rows: unknown[] } };
+  const out = bodyNow(c, m), b = out.bundle, ctx = out.ctx ?? {}, d = b.diag as { events: unknown[]; path: { rows: unknown[] } };
   const list = [
     "Device, graphics card, browser, settings and the non-routing URL flags (" + kb(ctx) + ")",
     "Frame rate, memory and ping, one row per second (" + ((b?.timeline as { rows?: unknown[] } | null)?.rows?.length ?? 0) + " s, " + kb(b?.timeline) + ")",
   ];
+  const steps = (ctx.perf as { resSteps?: unknown[] | null } | undefined)?.resSteps;
+  if (steps?.length) list.push("3D-resolution steps the game took to keep its frame rate (" + steps.length + ", " + kb(steps) + ")");
   if (d) list.push("Stutter markers and their causes (" + d.events.length + ", " + kb(d.events) + ")", "Where you were and where you looked, once a second (" + d.path.rows.length + " s, " + kb(d.path) + ")");
   if (b?.replay) list.push("Your inputs in this bot match (" + kb(b.replay) + ")");
   if (out.shot) list.push("A picture of the game view (" + Math.round(out.shot.length * 0.75 / 1024) + " KB)");
