@@ -113,11 +113,11 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # three practice matches entered and left in their warm-up, title modules only: past the warm-up, or with every POI
       # streamed, SwiftShader needs more memory than the runner has
-      - name: three warm-ups back to back, what grows between the last two and what the renderer holds outside a scope
+      - name: three warm-ups back to back, what the first holds, what grows between the last two and what the renderer holds outside a scope
         timeout-minutes: 30
         run: |
           node tools/kr-verify.mjs up --prod --port 3140
-          npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?resaudit&modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage" --warmup --matches 3 --max-mb 9000 --budgets tools/memory-leak-budgets.json --out shots/memory/ci
+          npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?resaudit&modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage" --warmup --matches 3 --max-mb 9000 --budgets tools/memory-warmup-budgets.json --budgets tools/memory-leak-budgets.json --out shots/memory/ci
       - name: stop the server
         if: always()
         run: node tools/kr-verify.mjs down
@@ -125,6 +125,39 @@ jobs:
         if: always()
         with:
           name: memory-result
+          path: shots/memory/ci/
+          retention-days: 7
+
+  lowmem-memory:
+    name: no-GPU low-memory memory
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      # the whole island under the low-memory setup: POIs stream in near the player and past the cap the farthest is
+      # evicted, so it fits the runner through the plane and on foot. Its own job (about 10 min) so it runs beside the
+      # others and the workflow takes no longer
+      - name: low-memory setup at the title, in the plane and 60 s into the play phase
+        timeout-minutes: 30
+        run: |
+          node tools/kr-verify.mjs up --prod --port 3140
+          npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?lowmem=1&geofree=1&farimp=1" --matches 1 --max-mb 9000 --budgets tools/memory-lowmem-budgets.json --out shots/memory/ci
+      - name: stop the server
+        if: always()
+        run: node tools/kr-verify.mjs down
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: memory-lowmem-result
           path: shots/memory/ci/
           retention-days: 7
 
