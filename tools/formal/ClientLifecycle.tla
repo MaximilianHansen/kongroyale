@@ -5,9 +5,9 @@
    tab. Abstracted: the match's phases are one step each; positions, loot and timers are left out; the reload timers
    are a step that can happen while the context is lost.
 
-   Online: CREATE/JOIN, the room, host START. Offline: PLAY vs bots (a practice match on an OfflineLink). Left out: a
-   link that drops mid-match and the reconnect card (index.ts linkLost, reconnectTry), which end in the same exitToRoom
-   rewire as MatchOver. *)
+   Online: CREATE/JOIN, the room, host START. Offline: PLAY vs bots (a practice match on an OfflineLink, or under
+   ?hostworker=1 a WorkerLink whose host can die: PracticeHostLost). Left out: an online link that drops mid-match and
+   the reconnect card (index.ts linkLost, reconnectTry), which end in the same exitToRoom rewire as MatchOver. *)
 EXTENDS Naturals
 
 CONSTANTS Online   \* TRUE: include the online room paths; FALSE: practice only (a smaller chart)
@@ -53,8 +53,10 @@ Play ==
   /\ silent' = ~WireOk
   /\ UNCHANGED <<boot, prefabs, seated, err, why, ctx, restores>>
 
-(* CREATE/JOIN: online() (index.ts:234-247) reuses the online link it has (235); one that closed at the title is
-   already gone (SocketClosesAtTitle). Like PLAY,
+(* CREATE/JOIN: online() (index.ts:240-256) reuses the online link it has (241) unless a multi-process server's front
+   put it on another process than the room's (KR_PROCS, net.ts roomUrl): then it silences and closes that link and
+   connects again, the same wire as a first connect. One that closed at the title is already gone
+   (SocketClosesAtTitle). Like PLAY,
    create and join await prepareIsland(), which waits for the prefabs after ready and resolves at once before it;
    before ready they wait there for dataset.ready, invite links included *)
 Connect ==
@@ -104,6 +106,14 @@ Leave ==
   /\ scope' = (IF render THEN 0 ELSE scope) /\ render' = FALSE
   /\ UNCHANGED <<boot, prefabs, phase, ctx, restores>>
 
+(* the practice host worker dies mid-match (host-worker.ts HostWorker.fail): the WorkerLink closes, wire()'s onClose runs
+   linkLost, which for an offline link is leaveAll plus the reason on the title (setBusy) *)
+PracticeHostLost ==
+  /\ view \in {"match", "results"} /\ link = "offline"
+  /\ link' = "none" /\ view' = "title" /\ err' = TRUE /\ seated' = FALSE /\ why' = FALSE /\ silent' = FALSE
+  /\ scope' = (IF render THEN 0 ELSE scope) /\ render' = FALSE
+  /\ UNCHANGED <<boot, prefabs, phase, ctx, restores>>
+
 (* the server takes this client out of a running match for inactivity (Lobby.housekeeping in server/index.ts, any lobby): unseat (a bot
    plays the seat, the room frame still lists us), then error "REMOVED FOR INACTIVITY" with afk:true. The client shows
    the text, keeps it as the room's reason (roomReason) and runs backToRoom: exitToRoom (dispose, wire: a new idle
@@ -138,7 +148,7 @@ Reload ==
   /\ ctx' = "ok" /\ restores' = 0
 
 Next == Ready \/ Prefabs \/ Play \/ Connect \/ JoinFails \/ SocketClosesAtTitle \/ Start \/ NextPhase \/ MatchOver
-  \/ Leave \/ RemovedAfk \/ Crashed \/ Dismiss \/ Lose \/ Restored \/ RestoreDone \/ Reload
+  \/ Leave \/ PracticeHostLost \/ RemovedAfk \/ Crashed \/ Dismiss \/ Lose \/ Restored \/ RestoreDone \/ Reload
 
 Spec == Init /\ [][Next]_vars
 

@@ -1,5 +1,6 @@
 // The playtest perf HUD (?perfhud): a small panel in the top-left corner that shows the newest second of the metrics
-// ring (recorder.ts): fps, frame p95 and max, GPU ms, ping and jitter, heap, and the renderer's resource counts.
+// ring (recorder.ts): fps, frame p95 and max, GPU ms, ping and jitter, heap, the renderer's resource counts, the 3D render
+// scale and the half-rate guard's newest step.
 
 const CSS = `.kr-perfhud { position: fixed; left: 8px; top: 30vh; z-index: 99998; pointer-events: none; user-select: none;
   font: 600 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #fbf3c9; background: rgba(10,30,46,0.72);
@@ -8,6 +9,11 @@ const CSS = `.kr-perfhud { position: fixed; left: 8px; top: 30vh; z-index: 99998
 .kr-perfhud .bad { color: #ff8a7a; }`;
 
 const fixed = (v: number, d: number) => (v < 0 ? "–" : v.toFixed(d));
+/** the half-rate guard's newest step (engine/res-guard.ts, __kr.resLog): why and how long ago */
+const guard = () => {
+  const log = (window as unknown as { __kr: { resLog?: Array<{ at: number; why: string }> } }).__kr.resLog, s = log?.[log.length - 1];
+  return s ? ` · guard ${s.why} ${Math.round(performance.now() / 1000 - s.at)} s ago` : "";
+};
 const warn = (bad: boolean, text: string) => (bad ? `<span class="bad">${text}</span>` : text);
 
 /** add the panel and return the function that redraws it from a ring row */
@@ -23,7 +29,7 @@ export function installPerfHud(ring: Float32Array): (at: number) => void {
     el.innerHTML = [
       `<b>${fixed(v(1), 0)}</b> fps · p95 ${warn(v(3) > 33.4, fixed(v(3), 1) + " ms")} · max ${warn(v(4) > 50, fixed(v(4), 0))} · gpu ${v(7) > 0 ? fixed(v(7), 1) : "–"} ms`,
       `ping ${warn(v(8) > 120, fixed(v(8), 0))} ms ± ${fixed(v(9), 1)} · heap ${fixed(v(10), 0)} MB · ${warn(v(5) > 0, fixed(v(5), 0) + " stalls")}`,
-      `tex ${v(11)} · geo ${v(12)} · prog ${v(13)} · scale ${fixed(v(14), 2)}`,
+      `tex ${v(11)} · geo ${v(12)} · prog ${v(13)} · scale ${fixed(v(14), 2)}${guard()}`,
     ].join("\n");
   };
 }

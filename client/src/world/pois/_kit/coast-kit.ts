@@ -433,7 +433,10 @@ export class CoastLod {
   private items: Array<{ o: THREE.Object3D; lod: number; c: THREE.Vector3; r: number; counts?: number[] }> = [];
   private last = new THREE.Vector3(Infinity, 0, 0);
   far = false;
-  constructor(private o: { center: [number, number, number]; radius: number; proxy?: THREE.Object3D; far?: number; mid?: number; near?: number }) {}
+  constructor(private o: { center: [number, number, number]; radius: number; proxy?: THREE.Object3D; far?: number; mid?: number; near?: number }) {
+    // the module's own far form: ?invariants (engine/invariants.hot.ts) counts it like an impostor or HLOD proxy
+    if (o.proxy) o.proxy.userData.farForm = true;
+  }
 
   add(root: THREE.Object3D, lodOverride?: number) {
     root.updateMatrixWorld(true);
