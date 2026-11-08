@@ -34,7 +34,7 @@ pieces fit; read it before changing networking, the simulation or world loading.
 | `npm run server` | Game server on port 3020, restarted when a file changes. Add `KR_EVENT_MODE=0` to allow creating rooms. |
 | `npm run build` | Production build into `dist/` and `dist-admin/`, then precompression. About 15 s. |
 | `npm test` | Every check that needs no GPU, network or database. Run `npm run build` first. About 6 min (8 on 2 vCPU). |
-| `npm test -- --fast` | Skips the eleven slow checks (solver, glass, parity, sim, replay, nettail, afk, redteam, planeview, wt, wtbrowser). About 30 s. `--list` shows each check's id and `--only lint,sim` runs some of them. |
+| `npm test -- --fast` | Skips the thirteen slow checks (solver, glass, parity, alloc, sim, replay, nettail, afk, redteam, planeview, wt, wtbrowser, procs). About 30 s. `--list` shows each check's id and `--only lint,sim` runs some of them. |
 | `npm run typecheck` | The TypeScript check alone (the first step of `npm test`). |
 | `npm run sim` | A headless 50-bot match (trios, seed 42). Fast feedback for simulation changes. |
 | `npm run netlab` | Hit registration under simulated latency, using the real client and server code. Add `-- --check` to fail on a regression. |
@@ -109,10 +109,10 @@ catching it; turn it into a check when the same mistake shows up twice.
 
 | Rule | Enforced by |
 |---|---|
-| 1. The server is authoritative | Review only. The `redteam` step of `npm test` attacks the admin lobby. |
+| 1. The server is authoritative | Review only. The `redteam` step of `npm test` attacks the admin lobby; the `fuzz` step sends seeded malformed packets through the decoders, `MatchHost.receive` and the real server (`tools/net/fuzz.test.mts`). |
 | 2. `shared/` is deterministic: no `Math.random`, wall-clock time, Node or DOM APIs | Lint rule `shared-determinism`; the `sim` step of `npm test` fails when the headless match's state hash changes |
 | 2. `shared/` math gives the same bits everywhere: transcendental functions, `hypot` and `**` go through `shared/sim/dmath.ts` | Lint rule `shared-math` (empty baseline); the `dmath` step of `npm test` checks every dmath function bit for bit against recorded vectors |
-| 2. Hot paths don't allocate | Lint rule `hot-alloc` over `*.hot.ts` and `tools/lint/hot.json` |
+| 2. Hot paths don't allocate | Lint rule `hot-alloc` over `*.hot.ts` and `tools/lint/hot.json`; `npm test` (`alloc` step): bytes allocated per host tick and GC count on the real-play match against `tools/alloc-budgets.json`. Over budget fails, and so does more than 20% under until the budget is lowered |
 | 3. Never commit secrets | CI job "no secrets" (key and env file check, gitleaks) |
 | 4. Every asset needs a source and a licence | `npm test` (`assets` step): no new unattributed asset beyond `tools/verify-assets.baseline.json`, which only shrinks |
 | 5. One change per pull request | Review only |
@@ -121,8 +121,9 @@ catching it; turn it into a check when the same mistake shows up twice.
 | Constants carry their unit | Lint rule `unit-suffix`, report only: `npm test` prints the count and never fails on it |
 | Tunable numbers live in `shared/sim/const.ts` | Review only |
 | `import type` for type-only imports | Lint rule `import-type` (also flags unused imports) |
-| Download size only goes down | `npm test` (`size` step): gzip bytes for entry, boot, worker and lazy JS against `tools/size-budgets.json`. Over budget fails, and so does more than 5% under until the budget is lowered |
+| Download size only goes down | `npm test` (`size` step): gzip bytes for entry, boot, worker and lazy JS against `tools/size-budgets.json`. Over budget fails, and so does more than 5% under until the budget is lowered. A budget change says why in its PR description and commit message, never in the file's `about` |
 | Memory at the title only goes down | CI job "no-GPU boot smoke" (`memory.mts --budgets tools/memory-budgets.json`): WebGL bytes, textures, buffers and CPU copies the game holds at the playable title on SwiftShader. Over budget fails, and so does more than 5% under until the budget is lowered |
+| Memory in a match only goes down | CI job "no-GPU match-to-match memory" (`--budgets tools/memory-warmup-budgets.json`): WebGL bytes, textures, CPU copies and the JS heap in the first practice warm-up, title modules only. CI job "no-GPU low-memory memory" (`--budgets tools/memory-lowmem-budgets.json`): the low-memory setup (`?lowmem=1&geofree=1&farimp=1`, whole island) at the title, in the plane and 60 s into the play phase, plus the resident POIs and their peak (the cap). Over budget fails, and so does more than 5% under until the budget is lowered. Each failure names the phase, the metric and how far it moved, in the log, as an annotation and in the job summary |
 | A match leaves nothing behind | CI job "no-GPU match-to-match memory" (`memory.mts --warmup --budgets tools/memory-leak-budgets.json`): three practice matches entered and left in their warm-up. WebGL bytes, textures, geometries and ledger bytes may not grow from the second to the third past the `leak` ceilings, and the match scope must be closed after leaving |
 | The renderer holds no unowned resource | The same job with `?resaudit`: geometries, textures and render targets the renderer holds that no resource scope owns stay under the `left3` ceiling, which is lowered as owners move to scopes |
 | URL flags are read through `client/src/flags.ts` | Lint rule `url-flags`: no `location.search` read anywhere in `client/src/` outside the registry. Lint rule `url-params`: no reads of the page URL's `searchParams`. Both rules have empty baselines, so any raw read fails |

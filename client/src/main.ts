@@ -96,6 +96,7 @@ const engine = (() => {
 })();
 kr.engine = engine;
 if (flag("texprof")) await import("./engine/dev-probes").then((m) => m.installTexProf(engine), (e) => report("texprof", e));
+if (flag("drawcensus")) await import("./engine/draw-census").then((m) => { kr.drawCensus = m.installDrawCensus(engine); }, (e) => report("drawcensus", e));
 // the video settings (engine/display.ts): frame cap / 3D resolution now, the rest once atmos + veg exist
 const display = gameMode && !shot ? new Display(engine) : null;
 kr.display = display;
@@ -305,6 +306,7 @@ function registerFar(id: string, m: WorldModule | null, streamed: boolean) {
 }
 
 const world = { modOf, scopeOf, rootsOf, loaded, roots: (id: string) => moduleRoots(id, true), report, build: (id: string) => streamBuild(id, false) };
+if (flag("invariants")) void import("./engine/invariants").then((m) => { kr.invariants = m.installInvariants(engine, world.roots, () => kr.modules, report); }, (e) => report("invariants", e));
 
 const atmos = () => engine.shared.get("atmos") as { sweep?: () => number } | undefined;
 
@@ -405,6 +407,7 @@ if (!gameMode) {
       applyView(engine.camera, spec, engine.terrain);
     } else await setView(viewId!);
   } catch (e) { report("view", e); }
+  kr.showImpostors = async () => (await postBuildImport)?.showImpostors(engine, world);
   if (flag("fly")) void import("./engine/dev-probes").then((m) => m.enableFly(engine.camera, canvas, (fn) => engine.onUpdate(fn)), (e) => report("fly", e));
   engine.start();
 } else {
@@ -488,6 +491,7 @@ if (display && bootReady) void import("./ui/settings").then(({ createVideoMenu, 
   const bot = !!navigator.webdriver;
   void display.firstVisitBench().then(() => { if (first && !flag("noannounce") && (!bot || flag("announce"))) ui.announceAuto(); }).catch((e) => report("display-bench", e));
   if (!bot || flag("guard")) display.startGuard(inMatch);
+  void import("./engine/res-guard").then((m) => m.startResGuard(engine), (e) => report("res-guard", e));
 }).catch((e) => report("settings-ui", e));
 
 // ---- stream the rest of the island in (game page)

@@ -1,0 +1,23 @@
+{
+  "about": "memory.mts --budgets for the low-memory setup (?lowmem=1&geofree=1&farimp=1, the whole island) on SwiftShader: one practice match, sampled at the playable title, as the plane phase starts, and 60 s into the play phase. CI's no-GPU low-memory memory job runs it. A number over its budget fails; a number more than underPct under fails until the budget is lowered (the failure names the new value, measured plus headroomPct), so budgets only go down. residentPois counts the built POI modules, the lobby islet included; peakResidentPois is the most there were at once (polled every 250 ms), which is the cap (lowmemcap 3) plus the islet: it fails over if eviction stops holding the cap and under if nothing streams. Only numbers that repeat between runner instances are budgeted. After the title, which POI is mid-build at the sample varies: between runs the plane moved CPU copies by 50-80 MB and the JS heap 207.0-220.0 MB, and the match moved textures 493-570, geometry CPU copies 279.0-319.8 MB, texture CPU copies 222.8-249.9 MB and evictions 1-2, so those are recorded in result.json but not budgeted. Set 2026-11-07 from five runs on the CI runner (three in run 42331517673 at b62ff65, one each in runs 42332717104 at dae40d3 and 42333659158 at d95771c, all on main 4548a29). Title: WebGL 1312.6-1323.3 MB, textures 243-244, geometry CPU 118.9-119.9 MB, texture CPU 268.6 MB, JS heap 179.0-179.6 MB. Plane: WebGL 2066.3-2073.4 MB, textures 498-500. Match: WebGL 2115.8-2146.3 MB, JS heap 221.7-222.9 MB, 4 resident POIs (peak 4) in every run. Each MB and texture budget is the largest run plus 2%, rounded up; the POI counts are the measured value, exactly.",
+  "config": {
+    "url": "/?lowmem=1&geofree=1&farimp=1&seed=42&vegsplat=0",
+    "profile": "nogpu",
+    "viewport": "640x360",
+    "dpr": 1,
+    "seed": 42,
+    "matches": 1,
+    "matchSecs": 60,
+    "tourS": 0
+  },
+  "underPct": 5,
+  "underPctBy": {
+    "match.webglMB": 10
+  },
+  "headroomPct": 2,
+  "budgets": {
+    "title": { "webglMB": 1350, "textureCount": 249, "geometryCpuMB": 123, "textureCpuMB": 274, "heapUsedMB": 183 },
+    "plane": { "webglMB": 2115, "textureCount": 510 },
+    "match": { "webglMB": 2190, "heapUsedMB": 228, "residentPois": 4, "peakResidentPois": 4 }
+  }
+}
