@@ -24,6 +24,7 @@ import { fleetSpots, type TukSpot } from "../../../shared/sim/tuk-spots";
 import { heliIslet, heliPads, heliRange } from "../../../shared/sim/heli-spots";
 import { TARGET_STRIDE, blendPose, blendYaw, qf16, makeShotResult, shotDir, traceShot, type ShotResult } from "../../../shared/sim/hitscan";
 import type { Link } from "./net";
+import { Phase } from "../../../shared/sim/match";
 import { planeStep } from "../../../shared/sim/plane";
 import type { GameInput } from "./input";
 import { WEAPONS } from "../../../shared/world/map";
@@ -164,6 +165,9 @@ export class ClientMatch {
   planeStart = -1;
   /** ping = RTT ms (smoothed); jitter = 90th-percentile snapshot lateness ms; interpTicks = render delay behind the newest data */
   ping = 0; jitter = 0; interpTicks = SNAP_EVERY + 0.5; spectate = -1;
+  /** input to ack (ms, this tab's clock): from sending the newest input a snapshot acknowledges to handling that
+   *  snapshot. The host's wait for its tick and the next snapshot plus the link both ways; benchmark tools sample it */
+  ackMs = 0;
   /** visual correction offset (pred was corrected; smooth it out) */
   errX = 0; errY = 0; errZ = 0;
   /** previous predicted pose for render interpolation */
@@ -422,6 +426,11 @@ export class ClientMatch {
     // inputs at once, and the newest of them may have waited no longer than usual
     const oldest = this.authSeq + 1;
     if (this.pingN >= 5 && ((this.lastSnapAt > 0 && at - this.lastSnapAt > DEFER_SNAP_GAPS * SNAP_EVERY * DT * 1000) || (h.lastSeq >= oldest && (this.inputSeq - oldest >= PRING || at - this.sentAt[oldest % PRING] > this.ping + DEFER_ACK_SLACK_MS)))) this.lastStallAt = at;
+    // input→ack for the KONGBOT and playtest reports (tools/playtest/ab.mts compares it between WebTransport
+    // arms): every input this snapshot newly acknowledges, so the older ones a stall held back count too (as netlab
+    // and sockets.mts do)
+    for (let s = Math.max(this.authSeq + 1, this.inputSeq - PRING + 1); s <= h.lastSeq; s++) this.link.noteAck?.(at - this.sentAt[s % PRING]);
+    if (h.phase === Phase.Play) this.link.notePlay?.(gGap * DT);
     this.lastSnapTick = h.tick; this.lastSnapAt = at; this.netStats.snapshots++;
     const nowT = at / 1000 / DT;
     this.clockSample(h.tick, nowT, performance.now());
@@ -430,6 +439,7 @@ export class ClientMatch {
     if (!this.haveOffset || est > this.tickOffset) { this.tickOffset = est; this.haveOffset = true; }
     this.snapTicks[this.snapN % TICKS_RING] = h.tick; this.snapN++;
     this.phase = h.phase; this.time = h.time; this.alive = h.alive; this.squads = h.squads; this.flags = h.flags;
+    if (h.lastSeq > this.authSeq && this.inputSeq - h.lastSeq < PRING) this.ackMs = performance.now() - this.sentAt[h.lastSeq % PRING];
     readSelf(r, this.auth); this.authTick = h.tick; this.authSeq = h.lastSeq;
     this.takeRemotes(r, h.count, h.tick, gGap);
     // …and only now the prediction: a replay may drive / sit in a tuk-tuk this very snapshot told us about
@@ -937,7 +947,7 @@ export class ClientMatch {
   predictShot(k: number, out: ShotResult, dir: Float64Array = DIR): ShotResult {
     const p = this.pred, w = weaponDef(p);
     this.predDmg = 0; this.predLeft = Infinity; this.predLate = false; this.predDefer = 0;
-    this.predVeh = -1;
+    this.predVeh = -1; if (k === 0) this.shotDeferred = false;
     // a round of TOP BANANA (I man a helicopter's door gun): along its barrels at the pose I sat at for this input (my
     // seat was put on the helicopter as drawn — the server rewinds to the same blend)
     const gun = gunOf(this.vehs, p);
@@ -972,6 +982,8 @@ export class ClientMatch {
   predLate = false;
   /** why the last predictShot left the hit it drew to the server and reported a miss (linkSlow's bits), 0 = it did not */
   predDefer = 0;
+  /** this shot already told the link it deferred a marker: a shotgun blast draws one marker however many pellets hit */
+  private shotDeferred = false;
   /**
    * Is the link too slow or stalled to trust a predicted hit? Then the hit marker waits for the server. The bits say
    * which signal fired: 1 = the RTT, either past what the rewind cap leaves after the render delay (the server will
@@ -999,7 +1011,7 @@ export class ClientMatch {
    * no sample to judge it by, so the drawn verdict stands. On a slow or stalled link (linkSlow) no hit is predicted.
    */
   private lateVerdict(ox: number, oy: number, oz: number, dir: Float64Array, out: ShotResult) {
-    if (out.victim >= 0 && this.authSeq > 0) { this.predDefer = this.linkSlow(performance.now()); if (this.predDefer) { out.victim = -1; return; } }
+    if (out.victim >= 0 && this.authSeq > 0) { this.predDefer = this.linkSlow(performance.now()); if (this.predDefer) { if (this.phase === Phase.Play && !this.shotDeferred) { this.shotDeferred = true; this.link.noteDeferred?.(); } out.victim = -1; return; } }
     const lo = this.authTick + (this.inputSeq - this.authSeq) - MAX_REWIND_TICKS;
     if (out.victim < 0 || this.authSeq <= 0 || lo > this.lastSnapTick || !(this.viewA + this.viewSpan * this.viewF < lo)) return;
     const T = this.viewTargets, L = LATE_TARGETS, bl = this.blend;

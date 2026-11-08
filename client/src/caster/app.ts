@@ -16,7 +16,7 @@ import { NET_VERSION } from "../../../shared/net/proto";
 import { POIS } from "../../../shared/world/map";
 import { ClientMatch } from "../game/client";
 import { GameRender, type Kits } from "../game/render";
-import { OfflineLink, connectWs, type Link } from "../game/net";
+import { OfflineLink, connectWs, roomUrl, type Link } from "../game/net";
 import type { GameInput } from "../game/input";
 import type { TitleScene } from "../game/title";
 import type { Hud } from "../ui/api";
@@ -58,6 +58,8 @@ export function createCasterApp(d: CasterDeps): CasterApp {
   const panel = document.createElement("div"); panel.className = "kcl"; d.ui.appendChild(panel);
   let myName = (() => { try { return localStorage.getItem("kr-caster-name") || "CASTER"; } catch { return "CASTER"; } })();
   let link: Link | null = null, cm: ClientMatch | null = null, render: GameRender | null = null;
+  /** the room code the server link was opened for (game/index.ts online: a front routes a link by it) */
+  let linkRoom = "";
   let state: CasterState | null = null, rig: CasterRig | null = null, desk: CasterDesk | null = null, director: Director | null = null;
   /** (voice) listen-in on squads + bot callouts (comms.ts): one per match on screen */
   let comms: CasterComms | null = null;
@@ -119,7 +121,8 @@ export function createCasterApp(d: CasterDeps): CasterApp {
     error = ""; busy = true; drawPanel();
     await d.prepareIsland();
     try {
-      if (!link || link.offline) { closeLink(); const l = await connectWs(d.wsUrl); link = l; local = false; wire(l); }
+      const room = first.t === "cast" ? String(first.code ?? "") : "";
+      if (!link || link.offline || (link.proc !== undefined && linkRoom !== room)) { closeLink(); const l = await connectWs(roomUrl(d.wsUrl, room)); link = l; linkRoom = room; local = false; wire(l); }
       link!.sendJSON({ t: "hello", name: myName }); link!.sendJSON(first);
       if (first.t === "exhibit" && flag("caster") === "exhibit") setTimeout(() => link?.sendJSON({ t: "start" }), 400);
     } catch { error = "NO GAME SERVER — start `npm run server`, or cast a match in THIS TAB"; link = null; }

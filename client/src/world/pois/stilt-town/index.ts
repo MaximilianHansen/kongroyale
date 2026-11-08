@@ -73,11 +73,12 @@ const mod: WorldModule = {
     const bottomAt = (x: number, z: number) => Math.min(-0.4, ctx.terrain.height(x, z));
 
     // ---- walkways + hut decks on piles, plank links
-    for (const w of LAYOUT.walks) P.addDeck(Mn(w.x, w.z), w, bottomAt, rng, { planksAlongX: true });
-    for (const d of LAYOUT.decks) P.addDeck(Mn(d.x, d.z), d, bottomAt, rng, {});
-    for (const r of LAYOUT.ropeWalks) L.addPlankBridge(Mn((r.a[0] + r.b[0]) / 2, (r.a[1] + r.b[1]) / 2), r.a, r.b, r.y + 0.05, r.w, rng, bottomAt);
+    for (const w of LAYOUT.walks) { P.addDeck(Mn(w.x, w.z), w, bottomAt, rng, { planksAlongX: true }); await ctx.yield(); }
+    for (const d of LAYOUT.decks) { P.addDeck(Mn(d.x, d.z), d, bottomAt, rng, {}); await ctx.yield(); }
+    for (const r of LAYOUT.ropeWalks) { L.addPlankBridge(Mn((r.a[0] + r.b[0]) / 2, (r.a[1] + r.b[1]) / 2), r.a, r.b, r.y + 0.05, r.w, rng, bottomAt); await ctx.yield(); }
     // stairs up to the tall-stilt decks: chunky treads with a nosing, two stringers, rope-lashed posts + rope rails
     for (const f of LAYOUT.stairs) {
+      await ctx.yield();
       const yaw = Math.atan2(f.dirX, f.dirZ), b = Mn(f.x, f.z), run = f.steps * f.tread;
       for (let i = 0; i < f.steps; i++) {
         const u = (i + 0.5) * f.tread, top = f.yTop - (i + 1) * f.rise;
@@ -103,11 +104,13 @@ const mod: WorldModule = {
     // ---- huts
     // every hut is its own LOD unit — full shell within 75 m, its LOD1 facade box beyond, and the LOD1 box is the
     // hut's (invisible) shadow caster while the full shell shows (TownLod shadow proxy); furniture within 25 m
-    LAYOUT.parts.forEach((parts, i) => {
+    for (const [i, parts] of LAYOUT.parts.entries()) {
+      await ctx.yield();
       const it = lod.item(`h${i}`, parts.b.x, parts.b.z, { mid: 75, near: 60, fine: 25 });
       addBuildingLod1(it.lod1, parts);
       addBuilding(it.main, mats, parts, { extra, dressing: false, near: it.near, fine: it.fine, kitFurniture: true });
-    });
+    }
+    await ctx.yield();
     const veg = new TownVeg(ctx, Nr(CX, CZ), rng);
     /** terracotta pot with a real (veg) banana / monstera / fern in it — agave planters read as cartoon */
     const pottedPlant = (bins: ReturnType<typeof Nr>, x: number, y: number, z: number) => {

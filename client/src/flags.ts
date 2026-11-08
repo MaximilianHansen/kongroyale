@@ -39,10 +39,12 @@ const FLAGS = {
   ctLod: { kind: num(18), owner: "pois", purpose: "Peel Harbor container LOD distance (m)" },
   ctMid: { kind: num(0), owner: "pois", purpose: "Peel Harbor container mid LOD distance (m); 0 = none" },
   cullfov: { kind: on, owner: "engine", purpose: "detail cull distances scale with the camera's field of view" },
+  deferkong: { kind: one, owner: "game", purpose: "compile match-only kong and chest programs after ready" },
   debug: { kind: present, owner: "boot", purpose: "show boot errors on screen" },
   diag: { kind: text, owner: "ui", purpose: "diagnostics recorder; =0 off, absent = VITE_KR_DIAG" },
   dev: { kind: text, owner: "boot", purpose: "dev tools after ready, and the full title (=annotate opens the world annotator)" },
   dither: { kind: on, owner: "engine", purpose: "LOD fades dither; =0 scales instead (always off under Node)" },
+  drawcensus: { kind: present, owner: "engine", purpose: "__kr.drawCensus: per-draw main-thread cost by pass and class" },
   dpr: { kind: num(0), owner: "engine", purpose: "device pixel ratio instead of the screen's (capped at 2); 0 = the screen's" },
   dside: { kind: present, owner: "pois", purpose: "Mist Falls materials render double-sided" },
   dynres: { kind: text, owner: "engine", purpose: "dynamic resolution: =1 on, =0 forced off, absent = the setting" },
@@ -53,7 +55,7 @@ const FLAGS = {
   fullcam: { kind: present, owner: "engine", purpose: "full scene-graph camera updates instead of the camera-only walk" },
   fxlive: { kind: present, owner: "weapons", purpose: "weapon stages play effects live instead of frozen" },
   fxt: { kind: text, owner: "weapons", purpose: "time (s) the fx stage freezes at; default 0.2" },
-  geofree: { kind: one, owner: "engine", purpose: "=1 drops the CPU vertex arrays of static town-kit batches once they are on the GPU" },
+  geofree: { kind: on, owner: "engine", purpose: "drop the CPU vertex arrays of static meshes once they are on the GPU and rebuild them on a context restore; =0 keeps them, and ?dev=annotate keeps them unless =1" },
   geoshare: { kind: on, owner: "engine", purpose: "copies of one asset share their identical vertex arrays (crates per rarity, the two planes); =0 keeps a copy each" },
   gpu: { kind: text, owner: "engine", purpose: "renderer string to classify instead of the real GPU's" },
   guard: { kind: present, owner: "boot", purpose: "run the display frame-rate guard in automated browsers too" },
@@ -63,11 +65,13 @@ const FLAGS = {
   gunrev: { kind: text, owner: "weapons", purpose: "chest stage hero gun muzzle side: =1 up-right, else down-left; absent = up-right" },
   harborhyst: { kind: on, owner: "pois", purpose: "hysteresis on Peel Harbor LOD switches" },
   harborNoCull: { kind: present, owner: "pois", purpose: "turn off Peel Harbor's LOD culling" },
+  hostworker: { kind: one, owner: "game", purpose: "=1 runs an offline practice match's host in a Web Worker instead of on the main thread" },
   harborOnly: { kind: subset, owner: "pois", purpose: "build only these Peel Harbor parts (plus the apron)" },
   headless: { kind: present, owner: "audio", purpose: "audition page without its buttons (scripted runs)" },
   heavyms: { kind: num(Infinity), owner: "boot", purpose: "modules that take longer than this (ms) build behind the match card" },
   helilazy: { kind: text, owner: "actors", purpose: "=1 loads the helicopter model at its first use in a match, =0 when the title is ready (the prefab warm-up); absent = first use on Safari and on devices reporting under 8 GB, else when the title is ready" },
   ice: { kind: text, owner: "voice", purpose: "dev builds: ICE server URLs for voice, comma list" },
+  invariants: { kind: present, owner: "engine", purpose: "dev check: every frame, each POI in view must draw its model, impostor or HLOD; gaps go to __kr.errors" },
   impblend: { kind: on, owner: "veg", purpose: "impostors crossfade between their baked views" },
   impcull: { kind: on, owner: "veg", purpose: "cull impostor cells outside the view; =0 draws every impostor every frame" },
   impgrade: { kind: numbers, owner: "veg", purpose: "four numbers that replace the impostor colour grade uImpGrade" },
@@ -89,11 +93,11 @@ const FLAGS = {
   lodv: { kind: on, owner: "engine", purpose: "the anti-pop LOD path: terrain geomorph, rock and HLOD crossfades, view-dependent detail culling" },
   lootlater: { kind: on, owner: "weapons", purpose: "bake the floor-loot far LODs after the title is ready, before the prefab warm-up a match waits for, instead of during boot; =0 bakes them during boot" },
   lowmem: { kind: text, owner: "boot", purpose: "build POIs only near the player: =1 on, =0 off, absent = auto" },
-  lowmemr: { kind: num(450), owner: "boot", purpose: "lowmem build distance (m, horizontal; in the warm-up and the plane it counts height above the pad too, and in the plane up to lowmemview POIs in view build as well, ahead of nearby ones out of view)" },
+  lowmemr: { kind: num(450), owner: "boot", purpose: "lowmem build distance (m, horizontal; in the warm-up and on the plane it counts height above the pad too, and on the plane up to lowmemview POIs in view build as well, ahead of nearby ones out of view)" },
   lowmemview: { kind: num(2), owner: "boot", purpose: "lowmem: at most this many far POIs build because they are in view during the plane; the rest stay terrain until landing" },
   lowmemcap: { kind: num(3), owner: "boot", purpose: "lowmem: at most this many streamed POIs stay built; past it the farthest is evicted, never the nearest or the one the player is in" },
   lowmembudget: { kind: num(1500), owner: "boot", purpose: "lowmem: estimated MB (vertex arrays + textures) the streamed POIs may hold; past it the farthest is evicted like lowmemcap" },
-  farimp: { kind: present, owner: "boot", purpose: "lowmem: draw a baked far impostor (public/assets/far) for every streamed POI that is not built" },
+  farimp: { kind: on, owner: "boot", purpose: "lowmem: draw a baked far impostor (public/assets/far) for every streamed POI that is not built" },
   lowmemhyst: { kind: num(100), owner: "boot", purpose: "lowmem: at the cap or budget, a pending POI builds only if it is this much nearer (m) than the POI it would evict" },
   manual: { kind: present, owner: "caster", purpose: "caster camera starts in manual instead of autopilot" },
   map: { kind: one, owner: "ui", purpose: "open the full-screen map (view-camera captures)" },
@@ -134,10 +138,12 @@ const FLAGS = {
   rockMerge: { kind: on, owner: "pois", purpose: "Mist Falls merges its near rock sets into meshes; =0 = the old instanced sets" },
   rocks: { kind: on, owner: "terrain", purpose: "draw the terrain rocks" },
   resaudit: { kind: present, owner: "engine", purpose: "__kr.resAudit(): what the renderer holds outside a scope" },
+  resguard: { kind: text, owner: "engine", purpose: "half-rate guard: =1 on, =0 off; absent = on unless automated" },
   scale: { kind: num(0), owner: "engine", purpose: "pin the 3D resolution scale; 0 = not pinned" },
   sculpt: { kind: present, owner: "pois", purpose: "town statue sculpts live instead of loading its baked mesh" },
   seed: { kind: num(0), owner: "game", purpose: "practice match seed (plane line, storm, loot); 0 = random" },
   shadercheck: { kind: present, owner: "game", purpose: "keep three's shader error checks on" },
+  slicelog: { kind: num(50), owner: "engine", purpose: "log build slices over N ms to __kr.sliceLog; 0 = off" },
   shot: { kind: present, owner: "boot", purpose: "capture mode: frozen time, pixel ratio 1, HUD hidden" },
   splasync: { kind: one, owner: "veg", purpose: "read splat captures back from the GPU asynchronously" },
   splcache: { kind: on, owner: "veg", purpose: "keep baked splats in the browser cache; =0 bakes on every load" },
@@ -199,7 +205,7 @@ const FLAGS = {
   wprepass: { kind: present, owner: "water", purpose: "depth pre-pass for water" },
   wripple: { kind: present, owner: "water", purpose: "demo ripples" },
   ws: { kind: text, owner: "game", routing: true, purpose: "game server socket URL (ws:// or wss://) instead of the page's own" },
-  wt: { kind: one, owner: "game", purpose: "WebTransport when the server offers it" },
+  wt: { kind: text, owner: "game", purpose: "WebTransport: =1 on, =0 off, else the A/B arm" },
 } as const satisfies Record<string, Flag>;
 
 export type FlagName = keyof typeof FLAGS;
@@ -230,6 +236,8 @@ const values: Record<string, unknown> = {};
     const v = q.get(name);
     values[name] = v === null ? kind.default : kind.parse(v);
   }
+  // the annotator picks on CPU vertices and its wireframe builds edge indices from them, so it keeps them unless asked
+  if (values.dev === "annotate" && q.get("geofree") === null) values.geofree = false;
 }
 
 export function flag<K extends FlagName>(name: K): FlagValue<K> {

@@ -13,11 +13,14 @@
 //     upload. Those keep drawing as the module drew them.
 //   • the POI module's own visibility is respected: sources are gated through an accessor on `visible` that ANDs the
 //     module's value with the gate (modules keep toggling `visible` unaware), and the proxy only draws while every
-//     POI root is visible.
+//     root it merged sources from is visible.
+//   • the far state is captured once no POI root is hidden by an engine gate (terrain occlusion, the stream's build
+//     gate). A root its module hides at that distance (its near model behind its own far proxy, a glow drawn only up
+//     close) is part of the far state, not a reason to wait: the plantation waited for every root at once.
 //   • ?nohlod disables it (A/B); it is off in ?shot captures (view-camera stills stay module-exact).
 import * as THREE from "three";
 import type { Engine } from "./engine";
-import { gate as gateVisible, type Gate } from "./scene-hooks";
+import { gate as gateVisible, ownVisible, type Gate } from "./scene-hooks";
 import { programMergeSafe, releaseShaderRecorder } from "./shader-src";
 import { DITHER, clearDither, setDither } from "./dither";
 import { flag } from "../flags";
@@ -30,6 +33,8 @@ export interface FarPoi {
   gate: Gate;
   proxies: THREE.Mesh[];
   sources: THREE.Object3D[];
+  /** the roots the proxies merged sources from: the proxy draws only while all of them are visible */
+  merged: THREE.Object3D[];
   state: "wait" | "preparing" | "compiling" | "built" | "none";
   readyAt: number;                // frame after which the proxy may be built (module LOD state settled)
   /** ms = main-thread time of the (time-sliced) preparation; elapsedMs = wall time across its slices */
@@ -124,7 +129,7 @@ export class FarMerge {
       for (const r of roots) r.traverse((o) => { if ((o as THREE.Mesh).isMesh && !snap.has(o)) { snap.set(o, Float32Array.from(o.matrixWorld.elements)); n++; } });
       return n > 0;
     };
-    this.pois.push({ id, roots, cx: centre.x, cy: centre.y, cz: centre.z, near, gate: { active: false }, proxies: [], sources: [], state: "wait", readyAt: this.engine.frames + 90, moved, late, tries: 0 });
+    this.pois.push({ id, roots, cx: centre.x, cy: centre.y, cz: centre.z, near, gate: { active: false }, proxies: [], sources: [], merged: [], state: "wait", readyAt: this.engine.frames + 90, moved, late, tries: 0 });
   }
 
   drop(p: FarPoi) {
@@ -165,11 +170,11 @@ export class FarMerge {
     if (!this.enabled) return true;
     if (this.building) return false;
     if (!this.pois.some((q) => q.state === "wait")) { if (!this.engine.streaming) releaseShaderRecorder(); return true; }
-    // capture a POI's FAR state only: the camera beyond its near distance, every POI root drawn (a module that hides
-    // its POI at that distance is retried later), and every mesh observed static for ≥ 90 frames
+    // capture a POI's FAR state only: the camera beyond its near distance, some POI root drawn and none hidden by an
+    // engine gate (an occluded POI is retried later), and every mesh observed static for ≥ 90 frames
     const c = this.engine.camera.position, f = this.engine.frames;
     const p = this.pois.find((q) => q.state === "wait" && f >= q.readyAt && Math.hypot(c.x - q.cx, c.y - q.cy, c.z - q.cz) > q.near + HYST * 2
-      && q.roots.every((r) => r.visible && r.parent));
+      && q.roots.some((r) => r.visible && r.parent) && q.roots.every((r) => r.parent && (r.visible || !ownVisible(r))));
     if (!p) return false;
     if (p.late()) { p.readyAt = f + 90; return false; }
     this.prepare(p);
@@ -213,7 +218,8 @@ export class FarMerge {
 
   private *build(p: FarPoi): Generator<void> {
     // the POI's far state: effectively visible meshes right now (instanced meshes with few instances expand)
-    const groups = new Map<string, THREE.Mesh[]>();
+    const groups = new Map<string, THREE.Mesh[]>(), rootOf = new Map<THREE.Mesh, THREE.Object3D>();
+    let root: THREE.Object3D;
     const walk = function* (this: FarMerge, o: THREE.Object3D): Generator<void> {
       if (!o.visible || o.userData.krDynamic || o.userData.noMerge) return;
       // this node only (its parent was just updated): a recursive root update would run the whole POI in one slice
@@ -230,14 +236,14 @@ export class FarMerge {
           if (sig) {
             const key = `${mat.uuid}|${sig}|${o.castShadow ? 1 : 0}${o.receiveShadow ? 1 : 0}|${o.layers.mask}|${o.renderOrder}`;
             let arr = groups.get(key); if (!arr) groups.set(key, (arr = []));
-            arr.push(m);
+            arr.push(m); rootOf.set(m, root);
           }
         }
       }
       yield;
       for (const c of o.children) yield* walk.call(this, c);
     };
-    for (const r of p.roots) { r.updateWorldMatrix(true, false); yield* walk.call(this, r); }
+    for (const r of p.roots) { root = r; r.updateWorldMatrix(true, false); yield* walk.call(this, r); }
     if (HLOD_LODV) {
       // the smallest bounding radius DetailCull keeps at the switch distance (current view-distance setting, canvas, fov)
       const cam = this.engine.camera, cull = this.engine.cull, hpx = this.engine.renderer.domElement.height || 1440;
@@ -303,6 +309,7 @@ export class FarMerge {
       try { this.engine.warmDraw(list); } catch (e) { console.warn("[far-merge] warm", e); }
       if (!this.pois.includes(p)) { for (const [proxy] of made) { proxy.removeFromParent(); proxy.geometry.dispose(); } return; }
       for (const [proxy, meshes] of made) { p.proxies.push(proxy); for (const m of meshes) { gateVisible(m, p.gate); p.sources.push(m); } }
+      p.merged = [...new Set(p.sources.map((m) => rootOf.get(m as THREE.Mesh)!))];
       p.state = "built";
     });
   }
@@ -318,9 +325,10 @@ export class FarMerge {
       if (p.state !== "built") continue;
       const d = Math.hypot(c.x - p.cx, c.y - p.cy, c.z - p.cz);
       const want = p.gate.active ? d > p.near : d > p.near + HYST;
-      // the module's own POI-level culling wins: no proxy while any POI root is hidden
+      // the module's own culling wins: no proxy while a root it merged from is hidden (roots that were hidden when it
+      // was captured draw as built on top: none of their meshes is gated)
       let rootsVisible = true;
-      for (const r of p.roots) if (!r.visible || !r.parent) { rootsVisible = false; break; }
+      for (const r of p.merged) if (!r.visible || !r.parent) { rootsVisible = false; break; }
       const active = want && rootsVisible;
       if (active !== p.gate.active) {
         p.gate.active = active;

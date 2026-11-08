@@ -69,7 +69,8 @@ export function cleanBundle(raw: unknown): Saved | null {
   const replay = isRec(b.replay) && Array.isArray(b.replay.events) && isRec(b.replay.opts)
     ? { ticks: finite(b.replay.ticks) ?? 0, events: b.replay.events, opts: { seed: finite(b.replay.opts.seed) ?? undefined, mode: text(b.replay.opts.mode, 40) ?? undefined } }
     : null;
-  const ctx = isRec(raw.ctx) ? raw.ctx : null;
+  // the tools read diagnostics as ctx.diag, where reports sent them before the server validated them as bundle.diag
+  const ctx = isRec(b.diag) ? { ...(isRec(raw.ctx) ? raw.ctx : {}), diag: b.diag } : isRec(raw.ctx) ? raw.ctx : null;
   return {
     id: text(raw.id, 64) ?? "unknown", message: text(raw.message, 2000) ?? "", receivedAt: text(raw.receivedAt, 40) ?? "",
     reporter: { name: text(dig(raw, "reporter", "name"), 40), clientId: text(dig(raw, "reporter", "clientId"), 64) },

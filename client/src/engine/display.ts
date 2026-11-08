@@ -2,7 +2,8 @@
 // One persisted object (localStorage "kr-video"), five presets (Auto / Low / Medium / High / Epic) and per-option
 // overrides ("Custom"). Everything applies LIVE through the engine and the atmos area's `video()` API:
 //   3D resolution  → engine.setResolution (TAAU inside the post chain; the canvas stays at the screen's native pixels)
-//   dynamic res    → engine.setDynamicRes (opt-in; 0.75 × … 1 × the 3D resolution, aiming at the frame cap)
+//   dynamic res    → engine.setDynamicRes (opt-in; 0.75 × … 1 × the 3D resolution, aiming at the frame cap). With it
+//                    off, the half-rate guard (res-guard.ts) steps the 3D resolution down in a match that misses vsync
 //   frame limit    → engine.setFrameCap (30 … 240 / Unlimited = every display refresh; default = the measured refresh)
 //   AA / AO / post / shadows / effects → atmos `video()` (post.ts configure, shadows.ts setQuality)
 //   view distance  → engine.cull (screen-size culling) + the veg area's distances (VegApi.setQuality, when present)
@@ -56,9 +57,11 @@ export interface VideoSettings {
 /** AUTO only, on laptop-class GPUs: an internal-resolution budget (megapixels). An M1 Pro's 3024×1964 backing store
  *  renders 81 % at Medium and 67 % at Low; a 1080p / 1440p screen stays at 100 %; High and Epic are always native. */
 const AUTO_MPX: Record<Level, number> = { low: 2.7, medium: 3.9, high: Infinity, epic: Infinity };
+/** the lowest 3D resolution Auto picks; the half-rate guard (res-guard.ts) never steps below it either */
+export const AUTO_RES_FLOOR = 0.67;
 export function presetRes(level: Level, backingPx: number) {
   const r = Math.sqrt((AUTO_MPX[level] * 1e6) / Math.max(1, backingPx));
-  return Math.min(1, Math.max(0.67, Math.floor(r * 100) / 100));
+  return Math.min(1, Math.max(AUTO_RES_FLOOR, Math.floor(r * 100) / 100));
 }
 
 /** a preset's options. `auto` = this is AUTO's pick (the only case that may lower the 3D resolution, and only on

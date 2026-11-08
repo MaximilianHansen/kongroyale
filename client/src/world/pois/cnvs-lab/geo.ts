@@ -26,12 +26,12 @@ function norm(g: THREE.BufferGeometry, uv: boolean, uvScale = 1): THREE.BufferGe
 export const EPS_COPLANAR = 0.004;
 let BOX_REG: Array<{ g: THREE.BufferGeometry; lo: V3; hi: V3 }> | null = null;
 export function trackBoxes(on: boolean) { BOX_REG = on ? [] : null; }
-export function resolveCoplanar(): { boxes: number; pairs: number; moved: number } {
+export async function resolveCoplanar(y: () => Promise<void>): Promise<{ boxes: number; pairs: number; moved: number }> {
   const R = BOX_REG; BOX_REG = null;
   if (!R) return { boxes: 0, pairs: 0, moved: 0 };
   // (a face can sit in several overlaps: passes until no coplanar pair is left — the moved faces leave their planes)
   const out = { boxes: R.length, pairs: 0, moved: 0 };
-  for (let pass = 0; pass < 4; pass++) { const r = coplanarPass(R); if (pass === 0) out.pairs = r.pairs; out.moved += r.moved; if (!r.moved) break; }
+  for (let pass = 0; pass < 4; pass++) { const r = coplanarPass(R); if (pass === 0) out.pairs = r.pairs; out.moved += r.moved; if (!r.moved) break; await y(); }
   return out;
 }
 function coplanarPass(R: Array<{ g: THREE.BufferGeometry; lo: V3; hi: V3 }>): { pairs: number; moved: number } {

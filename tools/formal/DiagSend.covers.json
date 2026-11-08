@@ -1,6 +1,6 @@
 {
   "skill": ".agents/skills/verify-diagnostics/SKILL.md",
-  "note": "SEND_GAP_MS (a send within 10 s of the last one is turned away on screen) is left out of the model: it never sends, and it always says so.",
+  "note": "SEND_GAP_MS (a send within 10 s of the last one is turned away on screen) is left out of the model: it never sends, and it always says so. The automatic summary is modelled as ShowNotice, SettingsToggle and AutoSend: consent.ts holds the choice, auto.ts shows the toast (showNotice) and sends (emit, beacon, and installAuto's flush of rows that waited for the notice). Which event makes a row, its rate limits and its size are not modelled.",
   "regions": [
     "client/src/playtest/report.ts#CONSENT_KEY",
     "client/src/playtest/report.ts#CONSENT_V",
@@ -12,7 +12,22 @@
     "client/src/playtest/report.ts#quickSend",
     "client/src/playtest/report.ts#createSheet",
     "client/src/playtest/report.ts#crashCard",
-    "client/src/playtest/report.ts#installReport"
+    "client/src/playtest/report.ts#installReport",
+    "client/src/playtest/consent.ts#AUTO_KEY",
+    "client/src/playtest/consent.ts#TOLD_KEY",
+    "client/src/playtest/consent.ts#mem",
+    "client/src/playtest/consent.ts#read",
+    "client/src/playtest/consent.ts#write",
+    "client/src/playtest/consent.ts#privacySignal",
+    "client/src/playtest/consent.ts#autoOn",
+    "client/src/playtest/consent.ts#autoTold",
+    "client/src/playtest/consent.ts#autoMaySend",
+    "client/src/playtest/consent.ts#markTold",
+    "client/src/playtest/consent.ts#setAuto",
+    "client/src/playtest/auto.ts#beacon",
+    "client/src/playtest/auto.ts#emit",
+    "client/src/playtest/auto.ts#showNotice",
+    "client/src/playtest/auto.ts#installAuto"
   ],
   "writes": [
     {
@@ -28,22 +43,51 @@
       "files": [
         "client/src/playtest/"
       ]
+    },
+    {
+      "what": "the stored automatic-summary choice and the told mark (kr.diag.auto, kr.diag.auto.told), through AUTO_KEY and TOLD_KEY",
+      "pattern": "\\b(AUTO_KEY|TOLD_KEY)\\b",
+      "files": [
+        "client/src/"
+      ]
+    },
+    {
+      "what": "any beacon: automatic summaries leave the browser only through auto.ts beacon, which emit calls after autoMaySend",
+      "pattern": "sendBeacon\\s*\\?*\\.?\\(",
+      "files": [
+        "client/src/"
+      ]
     }
   ],
   "verified": {
-    "model": "ae49c34183880f47",
+    "model": "185cd069f6ce5010",
     "regions": {
       "client/src/playtest/report.ts#CONSENT_KEY": "b9b9ab7fc86d2ce8",
       "client/src/playtest/report.ts#CONSENT_V": "ad446d36a602eb80",
       "client/src/playtest/report.ts#consented": "32843bfaa24c26f0",
       "client/src/playtest/report.ts#minimise": "5fe30ceb40b0f56d",
-      "client/src/playtest/report.ts#body": "933e71e195dbc1be",
-      "client/src/playtest/report.ts#send": "2284df0ec6b8727f",
+      "client/src/playtest/report.ts#body": "c572b371b56f1b23",
+      "client/src/playtest/report.ts#send": "726bb1fb1db7a789",
       "client/src/playtest/report.ts#notSent": "a1c9ed1f367a2b8e",
       "client/src/playtest/report.ts#quickSend": "ce02c344dd8a9aae",
       "client/src/playtest/report.ts#createSheet": "b17b7f407773df55",
       "client/src/playtest/report.ts#crashCard": "b8b6bae683d0bdb4",
-      "client/src/playtest/report.ts#installReport": "063887050037aa8b"
+      "client/src/playtest/report.ts#installReport": "063887050037aa8b",
+      "client/src/playtest/consent.ts#AUTO_KEY": "2a313c3461373111",
+      "client/src/playtest/consent.ts#TOLD_KEY": "736204a0a2bc7fa7",
+      "client/src/playtest/consent.ts#mem": "b102ff49e2eeffdb",
+      "client/src/playtest/consent.ts#read": "9291ddc7db376ef1",
+      "client/src/playtest/consent.ts#write": "9a2194db75f5afc0",
+      "client/src/playtest/consent.ts#privacySignal": "73392d7eba02e89a",
+      "client/src/playtest/consent.ts#autoOn": "f011c37c8bcd1392",
+      "client/src/playtest/consent.ts#autoTold": "aad1c8ef0d851093",
+      "client/src/playtest/consent.ts#autoMaySend": "592ad0ff217c069a",
+      "client/src/playtest/consent.ts#markTold": "61fc9f7c58f2b362",
+      "client/src/playtest/consent.ts#setAuto": "81aaa530fdf5590d",
+      "client/src/playtest/auto.ts#beacon": "3c6001a00f897fb9",
+      "client/src/playtest/auto.ts#emit": "f158377a15e4e388",
+      "client/src/playtest/auto.ts#showNotice": "7ca3407b3a320863",
+      "client/src/playtest/auto.ts#installAuto": "520f346852cd968d"
     }
   }
 }
