@@ -128,6 +128,9 @@ npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?lowmem=1&
 ```
 
 Every sample also records `residentPois`, `peakResidentPois` and `evictions`. `--budgets` can be given more than once.
+A budget file can set `underPctBy` (`{ "match.webglMB": 10 }`) to widen one number's floor when its run-to-run spread is
+wider than `underPct`: the low-memory match's WebGL total moves about 4% with which POIs are resident at the sample.
+Ceilings never widen.
 Calibrate a budget from CI's own runs (the `memory-result` and `memory-lowmem-result` artifacts), never from a local
 machine: the plane phase and stream timing differ.
 

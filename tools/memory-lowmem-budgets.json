@@ -11,6 +11,9 @@
     "tourS": 0
   },
   "underPct": 5,
+  "underPctBy": {
+    "match.webglMB": 10
+  },
   "headroomPct": 2,
   "budgets": {
     "title": { "webglMB": 1350, "textureCount": 249, "geometryCpuMB": 123, "textureCpuMB": 274, "heapUsedMB": 183 },
