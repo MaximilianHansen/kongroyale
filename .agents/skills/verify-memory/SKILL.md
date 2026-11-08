@@ -117,6 +117,20 @@ budget (the measured value plus `headroomPct`, 2%), so a cut lands together with
 you pass `--budgets`). The file's `config` must match the run's, so a budget never applies to a different viewport or
 profile. Process totals are not budgeted: they move by a gigabyte between runs.
 
+Two more files budget the match the same way (see docs/memory-architecture.md, "In-match and low-memory budgets"):
+[tools/memory-warmup-budgets.json](../../../tools/memory-warmup-budgets.json) for the first warm-up of the
+match-to-match run below, and [tools/memory-lowmem-budgets.json](../../../tools/memory-lowmem-budgets.json) for CI's
+"no-GPU low-memory memory" job:
+
+```sh
+npx tsx tools/performance/memory.mts run --url "http://127.0.0.1:3140/?lowmem=1&geofree=1&farimp=1" --matches 1 \
+  --max-mb 9000 --budgets tools/memory-lowmem-budgets.json
+```
+
+Every sample also records `residentPois`, `peakResidentPois` and `evictions`. `--budgets` can be given more than once.
+Calibrate a budget from CI's own runs (the `memory-result` and `memory-lowmem-result` artifacts), never from a local
+machine: the plane phase and stream timing differ.
+
 ## Match to match and resource ownership
 
 [tools/memory-leak-budgets.json](../../../tools/memory-leak-budgets.json) is checked by CI's "no-GPU match-to-match

@@ -5,9 +5,9 @@
    tab. Abstracted: the match's phases are one step each; positions, loot and timers are left out; the reload timers
    are a step that can happen while the context is lost.
 
-   Online: CREATE/JOIN, the room, host START. Offline: PLAY vs bots (a practice match on an OfflineLink). Left out: a
-   link that drops mid-match and the reconnect card (index.ts linkLost, reconnectTry), which end in the same exitToRoom
-   rewire as MatchOver. *)
+   Online: CREATE/JOIN, the room, host START. Offline: PLAY vs bots (a practice match on an OfflineLink, or under
+   ?hostworker=1 a WorkerLink whose host can die: PracticeHostLost). Left out: an online link that drops mid-match and
+   the reconnect card (index.ts linkLost, reconnectTry), which end in the same exitToRoom rewire as MatchOver. *)
 EXTENDS Naturals
 
 CONSTANTS Online   \* TRUE: include the online room paths; FALSE: practice only (a smaller chart)
@@ -104,6 +104,14 @@ Leave ==
   /\ scope' = (IF render THEN 0 ELSE scope) /\ render' = FALSE
   /\ UNCHANGED <<boot, prefabs, phase, ctx, restores>>
 
+(* the practice host worker dies mid-match (host-worker.ts HostWorker.fail): the WorkerLink closes, wire()'s onClose runs
+   linkLost, which for an offline link is leaveAll plus the reason on the title (setBusy) *)
+PracticeHostLost ==
+  /\ view \in {"match", "results"} /\ link = "offline"
+  /\ link' = "none" /\ view' = "title" /\ err' = TRUE /\ seated' = FALSE /\ why' = FALSE /\ silent' = FALSE
+  /\ scope' = (IF render THEN 0 ELSE scope) /\ render' = FALSE
+  /\ UNCHANGED <<boot, prefabs, phase, ctx, restores>>
+
 (* the server takes this client out of a running match for inactivity (Lobby.housekeeping in server/index.ts, any lobby): unseat (a bot
    plays the seat, the room frame still lists us), then error "REMOVED FOR INACTIVITY" with afk:true. The client shows
    the text, keeps it as the room's reason (roomReason) and runs backToRoom: exitToRoom (dispose, wire: a new idle
@@ -138,7 +146,7 @@ Reload ==
   /\ ctx' = "ok" /\ restores' = 0
 
 Next == Ready \/ Prefabs \/ Play \/ Connect \/ JoinFails \/ SocketClosesAtTitle \/ Start \/ NextPhase \/ MatchOver
-  \/ Leave \/ RemovedAfk \/ Crashed \/ Dismiss \/ Lose \/ Restored \/ RestoreDone \/ Reload
+  \/ Leave \/ PracticeHostLost \/ RemovedAfk \/ Crashed \/ Dismiss \/ Lose \/ Restored \/ RestoreDone \/ Reload
 
 Spec == Init /\ [][Next]_vars
 

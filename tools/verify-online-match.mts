@@ -316,6 +316,10 @@ function checkOutcome(planeRejoin: Client, playRejoin: Client) {
   for (const c of finishers) {
     if (!c.phases.has(3)) fail(`${c.name}: never saw the RESULTS phase`);
     if (!c.victoryTeams.size) fail(`${c.name}: never saw the Victory announcement`);
+    // the link's report (KONGBOT and playtest bundles): its A/B arm (the server offers no WebTransport here) and the
+    // input→ack samples and play seconds ClientMatch gave it
+    const rep = c.link?.report?.();
+    if (!rep || rep.arm !== "off" || !(rep.ackMs.n > 0) || rep.ackMs.p50 === null || !(rep.playS > 0) || !Number.isFinite(rep.since)) fail(`${c.name}: the link's report lacks its arm, input→ack samples, play seconds or start: ${JSON.stringify(rep && { arm: rep.arm, ackMs: rep.ackMs, playS: rep.playS, since: rep.since })}`);
     const last = c.results[c.results.length - 1];
     if (!last) { fail(`${c.name}: got no result message`); continue; }
     if (last.outcomeTime === null || !(last.placement >= 1)) fail(`${c.name}: result not final: ${JSON.stringify(last)}`);
