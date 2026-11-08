@@ -1,5 +1,5 @@
 {
-  "about": "memory.mts --budgets: what the game holds at the playable title on SwiftShader (the CI no-GPU boot smoke job runs it after boot). A number over its budget fails; a number more than underPct under fails until the budget is lowered (the failure names the new value, measured plus headroomPct), so budgets only go down. Set 2026-11-07 with #119-#232 merged, from the highest of three CI runs of the same code plus headroomPct, because the title's texture set varies by run: WebGL 1299.8-1323.3 MB, textures 1142.3-1165.8 MB in 238-244, buffers 135.8, geometry CPU 169.3-170.5 MB, texture CPU 268.6 MB.",
+  "about": "memory.mts --budgets: what the game holds at the playable title on SwiftShader (the CI no-GPU boot smoke job runs it after boot). A number over its budget fails; a number more than underPct under fails until the budget is lowered (the failure names the new value, measured plus headroomPct), so budgets only go down. Budgets come from CI's own runs. The runs and reason behind each change go in its PR description and commit message, never here: git log -p tools/memory-budgets.json is the history.",
   "config": {
     "url": "/?seed=42&vegsplat=0",
     "profile": "nogpu",
@@ -14,8 +14,8 @@
       "webglMB": 1350,
       "textureMB": 1190,
       "bufferMB": 140,
-      "textureCount": 249,
-      "geometryCpuMB": 175,
+      "textureCount": 244,
+      "geometryCpuMB": 114,
       "textureCpuMB": 274
     }
   }

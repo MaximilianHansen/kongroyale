@@ -539,6 +539,10 @@ class KongManager {
       this.addBatch("shadow-lo", "proxy", whole(lo.parts), this.proxyMat, true);
       this.addBatch("shadow-min", "proxy", whole(min.parts), this.proxyMat, true);
     }
+    // the batches no frame before ready draws (the lo tier, every dither twin, the hats and tops; the min tier's solid
+    // batch draws in the boot warm frames): ?deferkong=1 compiles them after ready (game/index.ts prewarmMatch) instead
+    // of in the boot compile and the title's warm-up
+    for (const b of this.batches) if (typeof b.tier === "number" && (b.tier === 1 || b.fade || b.acc !== undefined)) b.mesh.userData.krMatchOnly = true;
     ctx.scene.add(this.group);
     ctx.onUpdate((dt) => this.frame(dt));
     // body motion vectors: every colour batch (solid + dither twins) shares its geometry with a velocity mesh

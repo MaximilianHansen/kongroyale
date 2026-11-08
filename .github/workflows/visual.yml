@@ -1,0 +1,123 @@
+# Visual diffs on a pull request, report-only: never fails on what it finds.
+# lobby: the six lobby-islet views (tools/performance/visual.mts VIEWS) captured on SwiftShader from main's build and the
+# PR's, then the share of pixels that differ per view. An A/A of two captures of one build differs by at most 0.15%.
+# far: each baked far impostor (public/assets/far) against the POI it stands in for, from one camera, on the PR's build
+# (dark terraces, white alpha speckle and the like show as a number), in four shards because each POI takes ~4 min.
+# lobby runs when a PR changes the client, the shared world or the assets; far when it changes a POI, the map, the
+# impostors or low-mem.ts; the "visual" label runs both. Images and summaries are the run's artifacts; the tables are on its page.
+# Like "checks", it runs the PR's code with a read-only token and no secrets.
+name: visual
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  decide:
+    name: visual diffs needed?
+    runs-on: ubuntu-latest
+    outputs:
+      lobby: ${{ steps.d.outputs.lobby }}
+      far: ${{ steps.d.outputs.far }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: d
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          files=$(git diff --name-only HEAD^1 HEAD)
+          lobby=false; far=false
+          if [[ " $LABELS " == *" visual "* ]]; then lobby=true; far=true; fi
+          if grep -qE '^(client/|shared/(world|pois)/|public/assets/|tools/performance/visual\.mts$|\.github/workflows/visual\.yml$)' <<<"$files"; then lobby=true; fi
+          if grep -qE '^(client/src/world/pois/|shared/(pois|world)/|public/assets/far/|client/src/low-mem\.ts$|tools/performance/visual\.mts$|\.github/workflows/visual\.yml$)' <<<"$files"; then far=true; fi
+          echo "lobby=$lobby" >> "$GITHUB_OUTPUT"; echo "far=$far" >> "$GITHUB_OUTPUT"
+          echo "lobby views: $lobby, far impostors: $far (base is main at $(git rev-parse --short HEAD^1))"
+
+  lobby:
+    name: visual diff (lobby views)
+    needs: decide
+    if: needs.decide.outputs.lobby == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: build the PR, and main beside it (the merge commit's first parent)
+        run: |
+          npm run build
+          git worktree add ../kong-base HEAD^1 && ln -s "$PWD/node_modules" ../kong-base/node_modules
+          (cd ../kong-base && npm run build)
+      - name: capture main, then the PR, with the PR's visual.mts
+        run: |
+          (cd ../kong-base && node tools/kr-verify.mjs up --prod --port 3121)
+          npx tsx tools/performance/visual.mts capture --url http://127.0.0.1:3121 --out shots/visual/main || true
+          (cd ../kong-base && node tools/kr-verify.mjs down)
+          node tools/kr-verify.mjs up --prod --port 3122
+          npx tsx tools/performance/visual.mts capture --url http://127.0.0.1:3122 --out shots/visual/pr || true
+          node tools/kr-verify.mjs down
+      - name: the diff on the run's page (report-only)
+        if: always()
+        run: |
+          npx tsx tools/performance/visual.mts diff --base shots/visual/main --cand shots/visual/pr --out shots/visual/diff || true
+          { echo "### Visual diff, lobby views (report-only)"; cat shots/visual/diff/summary.md 2>/dev/null || echo "no summary"; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: visual-lobby
+          path: shots/visual/
+          retention-days: 14
+
+  far:
+    name: far impostors vs built POIs (${{ matrix.shard }}/4)
+    needs: decide
+    if: needs.decide.outputs.far == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: every fourth far impostor against its built POI (report-only)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pois=$(node -e 'const k=Object.keys(require("./public/assets/far/index.json").pois).sort();console.log(k.filter((_,i)=>i%4===process.env.SHARD-1).join(","))')
+          node tools/kr-verify.mjs up --prod --port 3123
+          npx tsx tools/performance/visual.mts far --url http://127.0.0.1:3123 --out shots/visual/far --pois "$pois" || true
+          node tools/kr-verify.mjs down
+          { echo "### Far impostors vs built POIs, shard $SHARD of 4 (report-only)"; cat shots/visual/far/summary.md 2>/dev/null || echo "no summary"; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: visual-far-${{ matrix.shard }}
+          path: shots/visual/far/
+          retention-days: 14

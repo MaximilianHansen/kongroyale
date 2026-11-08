@@ -332,6 +332,8 @@ export class Match {
   }
   /** inputs waiting for player `id` (telemetry) */
   queued(id: number) { return this.qLen[id]; }
+  /** the newest input seq queued for player `id` (telemetry: the server counts inputs per WebTransport A/B arm) */
+  lastSeq(id: number) { return this.lastQueued[id]; }
   /** one tick of a human: simulate queued inputs 1:1 (paced by credit); if the link is silent for too long, step a neutral input */
   private runHuman(p: Player) {
     const id = p.id, q = this.qBuf[id], last = this.lastInput[id];

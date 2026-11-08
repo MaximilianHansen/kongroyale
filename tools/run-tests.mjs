@@ -11,8 +11,9 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-// reports go to a temp folder: `npm test` never changes a tracked file
-const tmp = (f) => path.join(os.tmpdir(), `kong-royale-${f}`);
+// reports go to a temp folder: `npm test` never changes a tracked file. CI sets KR_REPORT_DIR to keep them for the PR
+// metrics comment (tools/ci/pr-report.mts reads size.json and alloc.json from there)
+const tmp = (f) => (process.env.KR_REPORT_DIR ? path.join(process.env.KR_REPORT_DIR, f) : path.join(os.tmpdir(), `kong-royale-${f}`));
 
 /** id: the name --only takes; slow: skipped by --fast (each takes 10 s or more) */
 const checks = [
@@ -20,9 +21,12 @@ const checks = [
   { id: "formal", name: "TLA+ models re-verified since the code they describe changed", cmd: "node", args: ["tools/formal/drift.mjs"] },
   { id: "lint", name: "lint", cmd: "npx", args: ["tsx", "tools/lint/check.mts"] },
   { id: "bundles", name: "playtest bundles (hostile input, caps, rate limit)", cmd: "npx", args: ["tsx", "tools/playtest/bundles.test.mts"] },
+  { id: "auto", name: "automatic summaries (hostile rows, dedupe, own limits, folder cap)", cmd: "npx", args: ["tsx", "tools/playtest/diag-auto.test.mts"] },
   { id: "triage", name: "playtest triage (fingerprints, clusters, ticker, no private text)", cmd: "npx", args: ["tsx", "tools/playtest/triage.test.mts"] },
+  { id: "ab", name: "WebTransport A/B split by arm (playtest bundles, /health)", cmd: "npx", args: ["tsx", "tools/playtest/ab.test.mts"] },
   { id: "gate", name: "verifier flag and empty-input gates", cmd: "npx", args: ["tsx", "tools/gate.test.mts"] },
-  { id: "size", name: "download size (against tools/size-budgets.json)", cmd: "npx", args: ["tsx", "tools/check-size.mts", "--budgets", "tools/size-budgets.json"] },
+  { id: "size", name: "download size (against tools/size-budgets.json)", cmd: "npx", args: ["tsx", "tools/check-size.mts", "--budgets", "tools/size-budgets.json", "--json", tmp("size.json")] },
+  { id: "prreport", name: "PR metrics comment (tools/ci/pr-report.mts)", cmd: "npx", args: ["tsx", "tools/ci/pr-report.test.mts"] },
   { id: "farbake", name: "far impostors match their POI sources", cmd: "npx", args: ["tsx", "tools/world/far-bake.test.mts"] },
   { id: "assets", name: "asset sources (against tools/verify-assets.baseline.json)", cmd: "npx", args: ["tsx", "tools/verify-assets.mts", "--baseline", "tools/verify-assets.baseline.json"] },
   { id: "dmath", name: "deterministic math (shared/sim/dmath.ts)", cmd: "npx", args: ["tsx", "tools/dmath/test.mts"] },
@@ -32,19 +36,25 @@ const checks = [
   { id: "anim", name: "kong animation", cmd: "npx", args: ["tsx", "tools/actors/anim-test.mts"] },
   { id: "walkgraph", name: "building walk graph", cmd: "npx", args: ["tsx", "tools/buildings/walkgraph.test.mts"] },
   { id: "flags", name: "feature flags", cmd: "npx", args: ["tsx", "tools/flags/test.mts"] },
+  { id: "fuzz", name: "protocol fuzz (seeded malformed packets: decoders, MatchHost, the real server)", cmd: "npx", args: ["tsx", "tools/net/fuzz.test.mts"] },
   { id: "solver", name: "path solver", slow: true, cmd: "npx", args: ["tsx", "tools/play/solver-tests.mts", "--json", tmp("solver-tests.json")] },
   { id: "glass", name: "glass", slow: true, cmd: "npx", args: ["tsx", "tools/glass/test.mts"] },
   { id: "planeview", name: "low-memory plane queues the POIs in view", slow: true, cmd: "npx", args: ["tsx", "tools/world/plane-view.test.mts"] },
   { id: "res", name: "resource scopes", cmd: "npx", args: ["tsx", "tools/res/test.mts"] },
   { id: "raycast", name: "raycast ties", cmd: "npx", args: ["tsx", "tools/world/raycast-test.mts"] },
   { id: "refresh", name: "display refresh estimate", cmd: "npx", args: ["tsx", "tools/engine/refresh.test.mts"] },
+  { id: "resguard", name: "half-rate guard decisions", cmd: "npx", args: ["tsx", "tools/engine/res-guard.test.mts"] },
+  { id: "scenegate", name: "visibility gate lifecycle", cmd: "npx", args: ["tsx", "tools/engine/scene-gate.test.mts"] },
+  { id: "hlod", name: "HLOD captures a POI's far state", cmd: "npx", args: ["tsx", "tools/engine/hlod-far-state.test.mts"] },
   { id: "parity", name: "wire / matrix / geometry / http / splat parity", slow: true, cmd: "npm", args: ["run", "bench:verify"] },
+  { id: "alloc", name: "host allocation per tick (against tools/alloc-budgets.json)", slow: true, cmd: "npx", args: ["tsx", "tools/performance/alloc.mts", "--budgets", "tools/alloc-budgets.json", "--out", tmp("alloc.json")] },
   { id: "sim", name: "headless match (seed 42)", slow: true, cmd: "npx", args: ["tsx", "tools/sim-smoke.mts", "trios", "42", "--check"] },
   { id: "replay", name: "replay round trip (raw and packed logs)", slow: true, cmd: "npx", args: ["tsx", "tools/replay/roundtrip.test.mts"] },
   { id: "nettail", name: "network tails (against tools/performance/net-budgets.json)", slow: true, cmd: "npx", args: ["tsx", "tools/performance/net-tail.mts", "--check", "--out", tmp("net-tail.json")] },
   { id: "afk", name: "AFK removal returns the player to the room (real server)", slow: true, cmd: "npx", args: ["tsx", "tools/verify-afk.mts"] },
   { id: "redteam", name: "admin lobby red team", slow: true, cmd: "node", args: ["tools/admin-lobby/redteam.mjs", "--md", tmp("redteam.md")] },
   { id: "wt", name: "WebTransport endpoint (loopback, Node client)", slow: true, cmd: "npx", args: ["tsx", "tools/net/wt-endpoint.test.mts"] },
+  { id: "procs", name: "one process per core: front, routing, limits (real server, two processes)", slow: true, cmd: "npx", args: ["tsx", "tools/net/procs.test.mts"] },
   { id: "wtbrowser", name: "WebTransport in a browser (loopback, headless Chromium; SKIP without one)", slow: true, cmd: "npx", args: ["tsx", "tools/net/wt-browser.test.mts"] },
 ];
 
