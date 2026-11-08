@@ -1,4 +1,4 @@
-// With ?geofree=1 a streamed location's static batches drop their CPU vertex arrays after upload, so a WebGL context
+// With geofree on (the default) a streamed location's static batches drop their CPU vertex arrays after upload, so a WebGL context
 // restore cannot re-upload them. low-mem.ts loads this module only then: on a restore it evicts every streamed location,
 // waits for the new context and builds each one again through the stream's build queue, so a rebuild never runs beside
 // a streaming build. A location that does not come back reloads the page rather than leave a hole in the world.
