@@ -220,20 +220,24 @@ function* bakeSteps(renderer: THREE.WebGLRenderer): Generator<void, SkinMaps | n
   const cam = new THREE.OrthographicCamera(-T / 2, T / 2, T / 2, -T / 2, 0.1, 20);
   cam.position.set(T / 2, 10, T / 2); cam.up.set(0, 0, -1); cam.lookAt(T / 2, 0, T / 2); cam.updateMatrixWorld(true);
   const rt = new THREE.WebGLRenderTarget(R, R, { depthBuffer: true, type: THREE.UnsignedByteType, format: THREE.RGBAFormat });
-  const prevRT = renderer.getRenderTarget(), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha(), prevAuto = renderer.autoClear;
   const px: Uint8Array[] = [];
+  // (one pass per step, the renderer's state restored before each yield: the three 2048² render + readback passes in one
+  // step were a single 8 s task on SwiftShader)
   try {
-    renderer.autoClear = true;
     for (const [mode, clear] of [[0, 0x9a6c0e], [1, 0x80ff80], [2, 0x000000]] as Array<[number, number]>) {
-      mat.uniforms.mode.value = mode;
-      renderer.setRenderTarget(rt); renderer.setClearColor(clear, 1); renderer.clear(true, true, true);
-      renderer.render(scene, cam);
-      const buf = new Uint8Array(R * R * 4);
-      renderer.readRenderTargetPixels(rt, 0, 0, R, R, buf);
-      px.push(buf);
+      const prevRT = renderer.getRenderTarget(), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha(), prevAuto = renderer.autoClear;
+      try {
+        renderer.autoClear = true;
+        mat.uniforms.mode.value = mode;
+        renderer.setRenderTarget(rt); renderer.setClearColor(clear, 1); renderer.clear(true, true, true);
+        renderer.render(scene, cam);
+        const buf = new Uint8Array(R * R * 4);
+        renderer.readRenderTargetPixels(rt, 0, 0, R, R, buf);
+        px.push(buf);
+      } finally { renderer.setRenderTarget(prevRT); renderer.setClearColor(prevClear, prevAlpha); renderer.autoClear = prevAuto; }
+      yield;
     }
   } catch (err) { console.warn("[bananas] heap bake failed", err); return null; } finally {
-    renderer.setRenderTarget(prevRT); renderer.setClearColor(prevClear, prevAlpha); renderer.autoClear = prevAuto;
     rt.dispose(); g.dispose(); mat.dispose();
   }
   // downsample 2048 → 1024 (2×2 box) into float planes; the rows stay as read (row 0 = world z = T: with the canvas

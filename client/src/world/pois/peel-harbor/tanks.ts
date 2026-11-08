@@ -152,7 +152,7 @@ export const part: Part = {
   id: "tanks",
   async build({ ctx, mats, group, lod, c1 }) {
     const b = new Builder(true);
-    TANKS.forEach((t, i) => tank(b, mats, t.x, t.z, t.r, t.h, i));
+    for (const [i, t] of TANKS.entries()) { tank(b, mats, t.x, t.z, t.r, t.h, i); await ctx.yield(); }
     // bund wall (low concrete) with a gap on the east side for access
     const B = TANK_BUND, bh = B.h, bt = 0.35, y = APRON_Y + bh / 2;
     b.box(mats.concrete, [(B.x0 + B.x1) / 2, y, B.z0], [B.x1 - B.x0, bh, bt], { bevel: 0.05 });
@@ -167,12 +167,14 @@ export const part: Part = {
     // pump house (a real room — door, windows, pumps + panel inside, a stair to the roof: shared pieces = colliders)
     drawPieces(b, pumpHousePieces(), roomMats(mats));
     for (let i = 0; i < PUMP_SETS.length; i++) pumpSet(b, mats, i);
+    await ctx.yield();
     drawPieces(b, tankStairPieces(), roomMats(mats));
     // pipe rack: portal frames every ~6 m carrying three pipes
     const rackMat = paint("#8d9296", { rough: 0.5, name: "rack-steel" });
     const pts = PIPE_RACK.pts, ry = APRON_Y + PIPE_RACK.y;
     const pipeMats = [mats.yellowPaint, mats.galv, paint("#b9bdbf", { name: "pipe-silver" })];
     for (let i = 0; i < pts.length - 1; i++) {
+      await ctx.yield();
       const [ax, az] = pts[i], [cx, cz] = pts[i + 1], len = Math.hypot(cx - ax, cz - az), n = Math.max(1, Math.round(len / 6));
       const ux = (cx - ax) / len, uz = (cz - az) / len, px = -uz, pz = ux;
       for (let k = 0; k <= n; k++) {
