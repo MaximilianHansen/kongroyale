@@ -7,6 +7,7 @@ import type { WorldModule } from "../world/module";
 import { CONSUMABLES, POIS, RARITIES, WEAPONS, type ConsumableId, type WeaponId } from "../../../shared/world/map";
 import { staticWorld } from "../engine/static-world";
 import { adoptWorkerLootSpots } from "../engine/lootspots";
+import { hostWorker, startHostWorker } from "./host-worker";
 import { terrainData } from "../world/terrain/load";
 import { placeLoot, type Chest, type Item } from "../../../shared/sim/loot";
 import { lootSpotsIdle } from "../../../shared/sim/loot-spots";
@@ -77,6 +78,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   // objects alive for the whole session (the world has its own packed copy)
   const worldBoxes = { length: worldBoxesAll.length };
   adoptWorkerLootSpots(world, worldHashV); // (perf: the loot spots built off the main thread, hash-checked)
+  startHostWorker(worldHashV); // (?hostworker=1: the practice host off the main thread, hash-checked)
   gameStage("kits", 0.1);
 
   // ---- kits (contracts)
@@ -259,14 +261,17 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     const generation = nextSessionGeneration();
     await prepareIsland();
     if (generation !== sessionGeneration) return;
+    // (?hostworker=1) the host in its worker, which built its own loot spots; null = this tab hosts
+    const hw = await hostWorker();
+    if (generation !== sessionGeneration) return;
     // the loot spots: if the click beat their idle build, finish it in 12 ms slices here — the host's
     // placeLoot would otherwise run the rest as ONE 2-3 s synchronous task (a frozen frame at match start)
-    if (!range) await lootSpotsIdle(world, () => new Promise<void>((r) => setTimeout(r, 0)), 12);
+    if (!range && !hw) await lootSpotsIdle(world, () => new Promise<void>((r) => setTimeout(r, 0)), 12);
     if (generation !== sessionGeneration) return;
     leaveAll();
     // the bots' tier (EASY = 10% damage, accurate only within ~8 m) is the Match's to apply
     botDifficulty = difficulty; lobbyState.difficulty = difficulty;
-    const l = new OfflineLink(world, lobby.name, 1, Infinity, range, difficulty); link = l; wire(l);
+    const l = hw ? hw.link(lobby.name, range, difficulty) : new OfflineLink(world, lobby.name, 1, Infinity, range, difficulty); link = l; wire(l);
     lobbyState.offline = true; lobbyState.mode = mode; myUid = 1;
     l.sendJSON({ t: "hello", name: lobby.name }); l.sendJSON({ t: "practice", mode });
     setTimeout(() => l.sendJSON({ t: "start", mode }), 50);
