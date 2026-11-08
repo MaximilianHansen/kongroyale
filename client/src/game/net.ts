@@ -17,6 +17,7 @@ import type { BotDifficulty } from "../ui/api";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { MatchHost, matchInfo, type HostPeer } from "../../../shared/net/host";
 import { flag } from "../flags";
+import { ReplayRecorder, packLog } from "../../../shared/net/replay";
 import { countSent, makeTransportStats, sendFrame, type Channel, type FallbackReason, type Path, type Transport } from "../../../shared/net/transport";
 import type { WtOffer } from "./wt";
 
@@ -166,6 +167,11 @@ export class OfflineLink implements Link {
         const opts: MatchOpts & { botDifficulty: BotDifficulty } = { seed: this.seed, mode: this.range ? "solo" : mode, world: this.world, humans: this.caster ? [] : [{ id: 0, name: this.name, team: 0 }], botDamageToHumans: this.botDamageToHumans, botAimRange: this.botAimRange, botDifficulty: this.difficulty, range: this.range };
         const match = this.match = new Match(opts);
         match.endAfterResults = true;
+        if ((globalThis as { __kr?: { recordReplay?: boolean } }).__kr?.recordReplay) {
+          const { world: _world, ...recOpts } = opts;
+          const rec = match.rec = new ReplayRecorder(recOpts);
+          this.setReplay(() => packLog(rec.log(match)));
+        }
         const host = this.host = new MatchHost(match); host.peers.push(this.peer); host.holdForStream();
         match.onPhase = (ph) => this.emit({ t: "phase", phase: ph, plane: match.plane, time: match.time, tick: match.tick, plan: match.plan });
         this.emit(this.caster ? { ...matchInfo(match, this.seed, {}), caster: true, seat: 0 } : matchInfo(match, this.seed, { 1: 0 }));
@@ -191,7 +197,7 @@ export class OfflineLink implements Link {
       this.acc -= DT; this.stamp = now - this.acc * 1000; h.tick();
       if (h.m.over) {
         // results done: back to the practice room (START again, switch mode, or LEAVE)
-        if (this.timer) clearInterval(this.timer); this.timer = 0; this.match = null; this.host = null;
+        if (this.timer) clearInterval(this.timer); this.timer = 0; this.match = null; this.host = null; this.setReplay(undefined);
         this.emit(this.room(this.mode, false, -1));
         return;
       }
@@ -203,7 +209,11 @@ export class OfflineLink implements Link {
     if (this.closed) return;
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
-    this.timer = 0; this.match = null; this.host = null; this.queued.length = 0;
+    this.timer = 0; this.match = null; this.host = null; this.queued.length = 0; this.setReplay(undefined);
     this.onClose("left");
+  }
+  private setReplay(log: (() => unknown) | undefined) {
+    const kr = (globalThis as { __kr?: Record<string, unknown> }).__kr;
+    if (kr) kr.replayLog = log;
   }
 }

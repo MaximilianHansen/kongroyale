@@ -1,0 +1,49 @@
+{
+  "skill": ".agents/skills/verify-diagnostics/SKILL.md",
+  "note": "SEND_GAP_MS (a send within 10 s of the last one is turned away on screen) is left out of the model: it never sends, and it always says so.",
+  "regions": [
+    "client/src/playtest/report.ts#CONSENT_KEY",
+    "client/src/playtest/report.ts#CONSENT_V",
+    "client/src/playtest/report.ts#consented",
+    "client/src/playtest/report.ts#minimise",
+    "client/src/playtest/report.ts#body",
+    "client/src/playtest/report.ts#send",
+    "client/src/playtest/report.ts#notSent",
+    "client/src/playtest/report.ts#quickSend",
+    "client/src/playtest/report.ts#createSheet",
+    "client/src/playtest/report.ts#crashCard",
+    "client/src/playtest/report.ts#installReport"
+  ],
+  "writes": [
+    {
+      "what": "the player's agreement to the consent text (kr.diag.consent), through CONSENT_KEY",
+      "pattern": "localStorage\\.(setItem|removeItem)\\(\\s*CONSENT_KEY",
+      "files": [
+        "client/src/"
+      ]
+    },
+    {
+      "what": "any localStorage write with a literal key in the playtest code: the scan blanks string literals, so a literal kr.diag.consent elsewhere can't be told from the game's other keys",
+      "pattern": "localStorage\\.(setItem|removeItem)\\(\\s+,",
+      "files": [
+        "client/src/playtest/"
+      ]
+    }
+  ],
+  "verified": {
+    "model": "ae49c34183880f47",
+    "regions": {
+      "client/src/playtest/report.ts#CONSENT_KEY": "b9b9ab7fc86d2ce8",
+      "client/src/playtest/report.ts#CONSENT_V": "ad446d36a602eb80",
+      "client/src/playtest/report.ts#consented": "32843bfaa24c26f0",
+      "client/src/playtest/report.ts#minimise": "5fe30ceb40b0f56d",
+      "client/src/playtest/report.ts#body": "933e71e195dbc1be",
+      "client/src/playtest/report.ts#send": "2284df0ec6b8727f",
+      "client/src/playtest/report.ts#notSent": "a1c9ed1f367a2b8e",
+      "client/src/playtest/report.ts#quickSend": "ce02c344dd8a9aae",
+      "client/src/playtest/report.ts#createSheet": "b17b7f407773df55",
+      "client/src/playtest/report.ts#crashCard": "b8b6bae683d0bdb4",
+      "client/src/playtest/report.ts#installReport": "063887050037aa8b"
+    }
+  }
+}

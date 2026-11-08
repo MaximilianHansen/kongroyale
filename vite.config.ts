@@ -1,6 +1,7 @@
 import { build, defineConfig, type Plugin } from "vite";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import { agentBridge } from "./tools/agent-bridge";
 
 // (admin lobby) `vite build` also builds the admin console bundles into dist-admin/ (vite.admin.config.ts) — never into
 // dist/, which is served to everyone
@@ -24,7 +25,7 @@ const https = process.env.KR_HTTPS_KEY && process.env.KR_HTTPS_CERT ? { key: fs.
 // mid-screenshot because some other file was saved. Every navigation loads fresh modules instead.
 export default defineConfig({
   base: process.env.DEPLOY_BASE || "/",
-  plugins: [adminBundles()],
+  plugins: [adminBundles(), agentBridge()],
   server: {
     port: 5317,
     strictPort: true,
@@ -45,7 +46,7 @@ export default defineConfig({
     // and never dotfiles such as the admin key
     fs: {
       allow: [fileURLToPath(new URL(".", import.meta.url)), ...(fs.existsSync("refs") ? [fs.realpathSync("refs")] : [])],
-      deny: [".env", ".env.*", "*.{crt,pem,key}", "**/.git/**", ".admin-key*", "**/.kongbot/**", "**/.claude/**"],
+      deny: [".env", ".env.*", "*.{crt,pem,key}", "**/.git/**", ".admin-key*", "**/.kongbot/**", "**/playtest-bundles/**", "**/.claude/**"],
     },
   },
   // module workers (every `new Worker(url, { type: "module" })` in the client): ES output lets a worker code-split —

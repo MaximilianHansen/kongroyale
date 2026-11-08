@@ -1,0 +1,32 @@
+{
+  "plain": "How much memory the game makes the browser use, second by second, from launch through a match. Each line is one run of tools/performance/memory.mts.",
+  "charts": [
+    {
+      "id": "v020",
+      "title": "Chrome on Windows (D3D11): v0.2.0",
+      "caption": "The baseline for later runs. Three runs of v0.2.0 standing still, with the measuring script that reads the page over CDP. The medians were 8,409 MB for the whole browser at the title, 14,426 MB thirty seconds into a match and 14,506 MB after leaving the second match, and memory didn't grow from one match to the next. On Auto, v0.2.0 boots at ultra quality on this machine, so compare later builds at the same quality.",
+      "series": [
+        "total"
+      ],
+      "x": "time",
+      "runs": [
+        {
+          "file": "d3d11-v3-v0.2.0-1.json",
+          "label": "v0.2.0 (Auto boots ultra)"
+        }
+      ],
+      "source": "tools/performance/memory.mts, 3 runs of v0.2.0 (medians above); the chart shows run 1"
+    },
+    {
+      "id": "main",
+      "title": "Chrome on Windows (D3D11): main",
+      "caption": "Main hasn't been measured with the same script yet. To add a run, convert its result with npx tsx tools/dashboard/memory-chart.mts <result.json> --emit tools/dashboard/memory and list the file in tools/dashboard/memory/charts.json.",
+      "series": [
+        "total"
+      ],
+      "x": "time",
+      "runs": [],
+      "source": "not measured yet"
+    }
+  ]
+}

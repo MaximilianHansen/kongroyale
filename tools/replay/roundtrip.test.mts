@@ -4,7 +4,8 @@ import { decodeTerrainFile } from "../../shared/world/terrain-gen";
 import { buildStaticWorld } from "../../shared/sim/static-world";
 import { Match } from "../../shared/sim/match";
 import { B, makeInput, PS } from "../../shared/sim/player";
-import { RE, ReplayRecorder, replayMatch, type ReplayLog, type ReplayOpts } from "../../shared/net/replay";
+import { RE, ReplayRecorder, packLog, replayMatch, unpackEvents, type ReplayLog, type ReplayOpts } from "../../shared/net/replay";
+import { quantizeInput } from "../../shared/net/proto";
 import { stateHash } from "../state-hash.mts";
 
 const TICKS = 5000;
@@ -28,6 +29,7 @@ for (let t = 0; t < TICKS; t++) {
     if (p.bot || t % 3 === id) continue;
     inp.seq = ++seq; inp.mx = Math.sin(t / 40 + id); inp.mz = 1; inp.yaw = (t / 300) % 6; inp.pitch = 0; inp.slot = 0; inp.lerpA = m.tick;
     inp.buttons = (t % 7 === 0 ? B.JUMP : 0) | (t % 11 === 0 ? B.FIRE : 0) | (p.st === PS.Plane && t % 2 === 1 ? B.JUMP : 0);
+    if (id === 0) quantizeInput(inp);
     m.pushInput(id, inp);
     if (t % 5 === 0) m.pushInput(id, inp);
   }
@@ -45,6 +47,12 @@ for (const [k, name] of [[RE.Input, "inputs"], [RE.Inv, "inventory ops"], [RE.Cl
 const got = stateHash(replayMatch(viaJson(log), world));
 console.log(`recorded ${log.ticks} ticks, ${log.events.length} events: state hash ${want}; replayed: ${got}`);
 if (got !== want) fail.push(`replay ended on ${got}, the recorded match on ${want}`);
+const packed = viaJson(packLog(log)), kinds = (l: ReplayLog, k: RE) => l.events.filter((x) => x[1] === k).length;
+console.log(`packed: ${kinds(packed, RE.Packed)} packed and ${kinds(packed, RE.Input)} raw inputs, ${JSON.stringify(packed).length} characters against ${JSON.stringify(log).length}`);
+if (!kinds(packed, RE.Packed) || !kinds(packed, RE.Input)) fail.push("the packed log needs both packed inputs (player A's quantized ones) and raw ones (player B's) to prove anything");
+if (JSON.stringify(unpackEvents(packed.events)) !== JSON.stringify(viaJson(log).events)) fail.push("unpacking a packed log does not give back the recorded events");
+const gotPacked = stateHash(replayMatch(packed, world));
+if (gotPacked !== want) fail.push(`the packed log replayed to ${gotPacked}, the recorded match ended on ${want}`);
 if (process.argv.includes("--write")) fs.writeFileSync(process.argv[process.argv.indexOf("--write") + 1], JSON.stringify(log));
 
 const bad = viaJson(log);

@@ -1,0 +1,55 @@
+{
+  "skill": ".agents/skills/verify-diagnostics/SKILL.md",
+  "note": "main.ts calls beat.ts startBeat on a game page under diag (not ?shot), once the boot JS has run and before the world loads: that is the model's BootBeat, so a tab killed while it boots leaves a record. The call in main.ts is not a region: read it against BootBeat when it moves. The lazy playtest chunk (client/src/playtest/index.ts installPlaytest) loads diag.ts and report.ts after boot; installDiag's findDeadSession is Check. Browsers without Web Locks keep no heartbeat (startBeat and writeBeat return early), which the model leaves out.",
+  "regions": [
+    "client/src/playtest/beat.ts#BEAT_KEY",
+    "client/src/playtest/beat.ts#locks",
+    "client/src/playtest/beat.ts#sid",
+    "client/src/playtest/beat.ts#beat",
+    "client/src/playtest/beat.ts#live",
+    "client/src/playtest/beat.ts#diagOn",
+    "client/src/playtest/beat.ts#writeBeat",
+    "client/src/playtest/beat.ts#startBeat",
+    "client/src/playtest/diag.ts#CLAIM_KEY",
+    "client/src/playtest/diag.ts#readBeats",
+    "client/src/playtest/diag.ts#findDeadSession",
+    "client/src/playtest/diag.ts#installDiag",
+    "client/src/playtest/report.ts#crashCard",
+    "client/src/playtest/report.ts#installReport"
+  ],
+  "writes": [
+    {
+      "what": "the per-session heartbeat records (kr.diag.hb.<sid>), through BEAT_KEY",
+      "pattern": "localStorage\\.(setItem|removeItem)\\(\\s*BEAT_KEY",
+      "files": [
+        "client/src/"
+      ]
+    },
+    {
+      "what": "any localStorage write with a literal key in the playtest code: the scan blanks string literals, so a literal kr.diag.hb.<sid> elsewhere can't be told from the game's other keys",
+      "pattern": "localStorage\\.(setItem|removeItem)\\(\\s+,",
+      "files": [
+        "client/src/playtest/"
+      ]
+    }
+  ],
+  "verified": {
+    "model": "a44eed7e2376bf15",
+    "regions": {
+      "client/src/playtest/beat.ts#BEAT_KEY": "b4126ea16d1676c0",
+      "client/src/playtest/beat.ts#locks": "1c97b49cccbbbafa",
+      "client/src/playtest/beat.ts#sid": "17917ebf4d9949ae",
+      "client/src/playtest/beat.ts#beat": "21ea30387e84a3bd",
+      "client/src/playtest/beat.ts#live": "d6047844e293b3ce",
+      "client/src/playtest/beat.ts#diagOn": "e500410d1a3e4108",
+      "client/src/playtest/beat.ts#writeBeat": "ba32a51d64dd9dd5",
+      "client/src/playtest/beat.ts#startBeat": "739d849f3d74f7a8",
+      "client/src/playtest/diag.ts#CLAIM_KEY": "aa656f45bd2acd64",
+      "client/src/playtest/diag.ts#readBeats": "24deab261c980dfe",
+      "client/src/playtest/diag.ts#findDeadSession": "bad175e32c33f372",
+      "client/src/playtest/diag.ts#installDiag": "783f9d398d16dd8c",
+      "client/src/playtest/report.ts#crashCard": "b8b6bae683d0bdb4",
+      "client/src/playtest/report.ts#installReport": "063887050037aa8b"
+    }
+  }
+}

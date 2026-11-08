@@ -1,0 +1,64 @@
+{
+  "title": "What changed and why it matters",
+  "firstWords": [
+    {
+      "term": "Memory",
+      "plain": "The working space a program uses while it runs. A browser tab that uses too much of it gets slow, or gets closed."
+    },
+    {
+      "term": "Location",
+      "plain": "A named place on the island, such as a harbor or a temple. The game builds each one as the player gets close, which is called streaming it in."
+    },
+    {
+      "term": "Texture",
+      "plain": "A picture wrapped around a 3D object, like the stone pattern on a temple wall. Big textures look sharper and use more memory, mostly on the graphics card (GPU memory)."
+    },
+    {
+      "term": "Frame time",
+      "plain": "How long the computer takes to draw one picture of the game. Smaller is smoother, and a long one shows up as a stutter. The Performance tab is full of these."
+    }
+  ],
+  "cards": [
+    {
+      "head": "The first moment of a match no longer freezes",
+      "plain": "The game now prepares the effects and far-weapon graphics a match needs before you press Play, instead of the moment you drop in. The processor's part of that first frame went from 919 ms to 153 ms, and the graphics card's from 470 ms to 41 ms.",
+      "notice": "What you'll notice: no long freeze as the match starts.",
+      "prs": [
+        32
+      ],
+      "method": "First match frame, CPU step, median [851-1461] to [146-160]; GPU time median [442-1051] to [23-47]. Windows PC, Chrome, D3D11. Before/after A/B recorded in #32.",
+      "before": "919 ms",
+      "after": "153 ms",
+      "label": "first match frame, processor time"
+    },
+    {
+      "head": "Slow computers finish loading",
+      "plain": "The title screen used to wait for a cosmetic far-tree effect that a computer without a graphics card could take minutes to finish. The game no longer waits for it, so those computers now reach the title.",
+      "notice": "What you'll notice: on a slow or software-only computer, the game loads instead of hanging.",
+      "prs": [
+        34
+      ],
+      "method": "SwiftShader (software graphics) at 1600x900, 3 boots before and 3 after. Before/after boots recorded in #34.",
+      "before": "0 of 3 loads",
+      "after": "3 of 3 loads",
+      "label": "software-only boots that reached the title"
+    },
+    {
+      "head": "Coming back to the game after minimising is faster in Safari",
+      "plain": "Safari stops drawing frames for a hidden window, and the game used to wait for those frames before it carried on loading. It now keeps going without them. After a window had been minimised for 120 seconds, the time until the game was ready again went from 9.9 s to 2.2 s.",
+      "notice": "What you'll notice: switching away and back lands you in the game in about 2 seconds instead of about 10.",
+      "prs": [],
+      "method": "Safari A/B of the off-screen fix (it arrived with #118): window minimised for 120 s, then time to ready. The machine and number of runs were recorded with the change, not on this page.",
+      "before": "9.9 s",
+      "after": "2.2 s",
+      "label": "time to ready after 120 s minimised"
+    },
+    {
+      "head": "Chrome and Windows numbers",
+      "plain": "The other measured work (title screen load, match warm-up, water, server work per tick) is in the Summary and Performance tabs, each with a before and after.",
+      "notice": "What you'll notice: a faster title screen and a smoother start to each match; the Summary tab lists each one in the same words.",
+      "prs": [],
+      "method": "Each number on those tabs carries its own method and source."
+    }
+  ]
+}

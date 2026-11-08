@@ -1,0 +1,37 @@
+[
+  {
+    "name": "a match starts without its renderer",
+    "why": "index.ts enterMatch: START no longer keeps the GameRender that wire() built for the room",
+    "find": "/\\ seated' = TRUE\n  /\\ UNCHANGED <<boot, prefabs, link, scope, render, err",
+    "replace": "/\\ seated' = TRUE /\\ render' = FALSE\n  /\\ UNCHANGED <<boot, prefabs, link, scope, err",
+    "expect": "Invariant NoMatchWithoutRenderer is violated"
+  },
+  {
+    "name": "leaving keeps the seat",
+    "why": "index.ts leaveAll(): the leave message is no longer sent, so the server keeps the seat",
+    "find": "/\\ view' = \"title\" /\\ link' = \"none\" /\\ seated' = FALSE",
+    "replace": "/\\ view' = \"title\" /\\ link' = \"none\" /\\ seated' = seated",
+    "expect": "Invariant LeaveFreesTheSeat is violated"
+  },
+  {
+    "name": "PLAY runs before ready",
+    "why": "index.ts prepareIsland: no longer waits for dataset.ready, so Enter, a controller's A or a focused button presses PLAY before the prefabs exist: GameRender throws and nothing visible happens",
+    "find": "  /\\ prefabs   \\* after ready, kr.prepare() waits for the prefabs (main.ts:508-554)",
+    "replace": "  /\\ boot = \"loading\" \\/ prefabs",
+    "expect": "Invariant ButtonsAnswer is violated"
+  },
+  {
+    "name": "CREATE or JOIN runs before ready",
+    "why": "index.ts prepareIsland: no longer waits for dataset.ready, so an early CREATE or JOIN (an invite link, the event lobby's Join) wires a GameRender before the prefabs exist and strands the match scope",
+    "find": "  /\\ Online /\\ view = \"title\"\n  /\\ prefabs\n",
+    "replace": "  /\\ Online /\\ view = \"title\"\n  /\\ boot = \"loading\" \\/ prefabs\n",
+    "expect": "Invariant ScopeHasOwner is violated"
+  },
+  {
+    "name": "an AFK removal leaves the match on screen",
+    "why": "server/index.ts Lobby.housekeeping drops the player from the lobby again (no afk flag, no room frame), or index.ts no longer runs backToRoom on afk: the client stays on a match the server no longer plays for it",
+    "find": "/\\ seated' = FALSE /\\ err' = TRUE /\\ why' = TRUE /\\ view' = \"room\"\n  /\\ scope' = WireScopeAfter /\\ render' = WireOk\n  /\\ UNCHANGED <<boot, prefabs, phase, link, silent, ctx, restores>>",
+    "replace": "/\\ seated' = FALSE /\\ err' = TRUE /\\ why' = TRUE\n  /\\ UNCHANGED <<boot, prefabs, view, phase, link, scope, render, silent, ctx, restores>>",
+    "expect": "Invariant NoFrozenMatch is violated"
+  }
+]

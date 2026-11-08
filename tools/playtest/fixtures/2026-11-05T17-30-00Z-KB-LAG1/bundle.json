@@ -1,0 +1,89 @@
+{
+  "id": "KB-LAG1",
+  "message": "rubber banding all match",
+  "receivedAt": "2026-11-05T17:30:00.000Z",
+  "reporter": {
+    "name": "LAGGYLARRY"
+  },
+  "server": {
+    "sha": "b9840d6"
+  },
+  "ctx": {
+    "env": {
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+      "dpr": 1,
+      "memoryGB": 8,
+      "cores": 8
+    },
+    "gpu": {
+      "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "level": "medium"
+    },
+    "video": {
+      "preset": "auto"
+    },
+    "perf": {
+      "heapMB": {
+        "used": 300,
+        "total": 600,
+        "limit": 4096
+      }
+    },
+    "boot": {
+      "readyAtMs": 9000
+    },
+    "game": {
+      "match": {
+        "phase": "play",
+        "time": 100
+      },
+      "player": {
+        "pos": [600, 10, 360],
+        "poi": {
+          "id": "peel-harbor",
+          "name": "peel-harbor",
+          "dist": 20,
+          "inside": true
+        }
+      }
+    },
+    "diag": {
+      "v": 1,
+      "sid": "sid-lag-1",
+      "longFrames": 0,
+      "events": [],
+      "path": {
+        "fields": ["t", "x", "y", "z", "yawDeg", "pitchDeg", "phase"],
+        "rows": []
+      },
+      "prev": null
+    }
+  },
+  "logs": [],
+  "trail": [],
+  "bundle": {
+    "mark": false,
+    "timeline": {
+      "fields": ["t", "fps", "p50Ms", "p95Ms", "maxMs", "over50", "over100", "gpuMs", "pingMs", "jitterMs", "heapMB", "textures", "geometries", "programs", "renderScale", "phase"],
+      "rows": [
+        [1, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [2, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [3, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [4, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [5, 60, 16.7, 18, 22, 0, 0, 6, 320, 40, 300, 120, 200, 40, 1, 2],
+        [6, 60, 16.7, 18, 22, 0, 0, 6, 320, 40, 300, 120, 200, 40, 1, 2],
+        [7, 60, 16.7, 18, 22, 0, 0, 6, 320, 40, 300, 120, 200, 40, 1, 2],
+        [8, 60, 16.7, 18, 22, 0, 0, 6, 320, 40, 300, 120, 200, 40, 1, 2],
+        [9, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [10, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [11, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2],
+        [12, 60, 16.7, 18, 22, 0, 0, 6, 40, 3, 300, 120, 200, 40, 1, 2]
+      ],
+      "dropped": 0
+    },
+    "flags": {
+      "perfhud": ""
+    },
+    "replay": null
+  }
+}

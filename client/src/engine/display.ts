@@ -365,12 +365,14 @@ async function measure(e: Engine, ms: number): Promise<{ gpuMs: number; frameMs:
   const pending: WebGLQuery[] = [];
   const step = e.step;
   let epoch = contextEpoch();
+  const own = !!ext && !e.dynamicRes;
+  e.gpuHold = own;
   let last = performance.now();
   e.step = function (this: Engine, dt: number) {
     const now = performance.now(); dts.push(now - last); last = now;
     let q: WebGLQuery | null = null;
     if (epoch !== contextEpoch()) { epoch = contextEpoch(); pending.length = 0; gl.getExtension("EXT_disjoint_timer_query_webgl2"); }
-    if (ext && !e.dynamicRes && !(globalThis as { __stormTimer?: unknown }).__stormTimer && !pending.length) { q = gl.createQuery(); if (q) gl.beginQuery(ext.TIME_ELAPSED_EXT, q); }
+    if (ext && own && !(globalThis as { __stormTimer?: unknown }).__stormTimer && !pending.length) { q = gl.createQuery(); if (q) gl.beginQuery(ext.TIME_ELAPSED_EXT, q); }
     try { step.call(this, dt); } finally { if (q && ext) { gl.endQuery(ext.TIME_ELAPSED_EXT); pending.push(q); } }
     while (pending.length && gl.getQueryParameter(pending[0], gl.QUERY_RESULT_AVAILABLE)) {
       const pq = pending.shift()!;
@@ -381,6 +383,7 @@ async function measure(e: Engine, ms: number): Promise<{ gpuMs: number; frameMs:
   };
   await sleep(ms);
   e.step = step;
+  e.gpuHold = false;
   if (epoch === contextEpoch()) for (const q of pending) gl.deleteQuery(q);
   const med = (a: number[]) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
   return { gpuMs: med(gpu), frameMs: med(dts.slice(5)), timer: gpu.length >= 5 };

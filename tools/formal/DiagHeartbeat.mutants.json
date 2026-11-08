@@ -1,0 +1,30 @@
+[
+  {
+    "name": "a live tab's session looks dead",
+    "why": "findDeadSession no longer checks the session's Web Lock before calling it a crash",
+    "find": "LockSuspects == {s \\in Sessions : hbs[s] = \"running\" /\\ ~Running(s)}",
+    "replace": "LockSuspects == {s \\in Sessions : hbs[s] = \"running\"}",
+    "expect": "Invariant NoFalseCrash is violated"
+  },
+  {
+    "name": "pageshow does not beat",
+    "why": "a page back from the back/forward cache stays marked clean until its next 5 s beat",
+    "find": "/\\ hbs' = IF Design = \"plan\" \\/ cur[t] \\notin started THEN hbs ELSE [hbs EXCEPT ![cur[t]] = \"running\"]",
+    "replace": "/\\ hbs' = hbs",
+    "expect": "Invariant NoLostCrash is violated"
+  },
+  {
+    "name": "the claim keeps the record",
+    "why": "findDeadSession reads the dead records but no longer deletes them, so a second load asks about the same crash again",
+    "find": "IF x \\in LockSuspects THEN \"none\" ELSE hbs[x]",
+    "replace": "hbs[x]",
+    "expect": "Invariant OneReportPerCrash is violated"
+  },
+  {
+    "name": "the first beat is written outside the lock",
+    "why": "startBeat writes the record at boot but the page takes its Web Lock only later (as when the lock was taken in the lazy chunk), so another tab that loads while this one boots slowly asks about a crash that did not happen",
+    "find": "/\\ held' = held \\cup {cur[t]}",
+    "replace": "/\\ held' = held",
+    "expect": "Invariant NoFalseCrash is violated"
+  }
+]

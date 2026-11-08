@@ -663,13 +663,16 @@ export async function startGame(engine: Engine, boot: GameBoot) {
       first: () => video.querySelector<HTMLElement>(".preference-tabs button[aria-pressed=true]"),
     };
   }
+  const sheets = document.getElementsByClassName("kd-sheet"), cards = document.getElementsByClassName("kd-card");
   function openGuide(): HTMLElement | null {
     for (let i = 0; i < guides.length; i++) if (!(guides[i] as HTMLElement).hidden) return guides[i] as HTMLElement;
-    return null;
+    for (let i = 0; i < sheets.length; i++) if (!(sheets[i] as HTMLElement).hidden) return sheets[i] as HTMLElement;
+    return (cards[0] as HTMLElement | undefined) ?? null;
   }
   function padLayer(): PadLayer | null {
     const video = openVideoMenu();
     if (video) return settingsLayer(video);
+    // the onboarding guide, or the ?diag send sheet and crash prompt (playtest/report.ts): a dialog whose .close button is B
     const guide = openGuide();
     if (guide) return { root: guide, back: () => guide.querySelector<HTMLButtonElement>(".close")?.click() };
     if (inMatch) {

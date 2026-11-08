@@ -37,6 +37,7 @@ import { WARMUP_S } from "../../shared/sim/const";
 import { resources, type Scope } from "./engine/res/scope";
 import { flag } from "./flags";
 import { afterPaint as nextFrame, noFrameWaitCount } from "./engine/frame";
+import { diagOn, startBeat } from "./playtest/beat";
 import { asOwner, contextEpoch, onRestore } from "./engine/res/restore";
 
 const shot = flag("shot");
@@ -64,6 +65,8 @@ const bootFail = (where: string, e: unknown) => { report(where, e); if (gameMode
 
 const viewId = flag("view"), camArg = flag("cam");
 const gameMode = !viewId && !camArg;
+// diagnostics: the crash heartbeat's first beat, before the world loads (playtest/beat.ts)
+if (gameMode && !shot && diagOn()) startBeat();
 const streamOn = gameMode && !flag("nostream");
 const only = flag("modules");
 const entries = MODULES.filter(([id]) => !only || only.some((o) => id === o || id.startsWith(o)));
@@ -114,8 +117,11 @@ engine.renderer.debug.onShaderError = (gl, program, vs, fs) => {
 kr.bench = (n?: number) => import("./engine/dev-probes").then((m) => m.bench(engine, n));
 kr.fps = () => engine.liveFps();
 kr.info = () => ({ ...engine.renderer.info.render, geometries: engine.renderer.info.memory.geometries, textures: engine.renderer.info.memory.textures, programs: engine.renderer.info.programs?.length });
+// AGENT LINK (dev server only): a coding agent can read and change this tab's live state (tools/agent-bridge.ts)
+if (import.meta.env.DEV && !shot) { kr.THREE = THREE; void import("./dev/agent-link").then((m) => m.startAgentLink(kr), (e) => report("agent-link", e)); }
 // bug reports: `/` → /kongbot <message> (screenshot + context → the server)
 if (gameMode && !shot) installKongbot(engine);
+if (!shot) void import("./playtest").then((m) => m.installPlaytest(engine, gameMode), (e) => report("playtest", e));
 
 // ---- loading progress, weighted by measured cost (ms on an RTX 4080 desktop, cold dev loads). The loading
 // screen (index.html) reads __kr.progress (the percentage) and the current step's time estimate as a line

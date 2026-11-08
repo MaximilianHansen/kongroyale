@@ -1,0 +1,23 @@
+[
+  {
+    "name": "a fading-in location can be evicted",
+    "why": "low-mem.ts residents(): a POI that is not live yet gets its real distance instead of -Infinity",
+    "find": "Evictable == {p \\in Pois : st[p] = \"live\" /\\ dist[p] # \"inside\"}",
+    "replace": "Evictable == {p \\in Pois : st[p] \\in {\"live\", \"integrating\"} /\\ dist[p] # \"inside\"}",
+    "expect": "Invariant NoEvictWhileBuilding is violated"
+  },
+  {
+    "name": "the queue picks outside a match",
+    "why": "low-mem.ts nearModule: the inMatch || casting check is gone",
+    "find": "/\\ loop = \"pick\" /\\ inMatch",
+    "replace": "/\\ loop = \"pick\"",
+    "expect": "Invariant NothingPickedOutsideMatch is violated"
+  },
+  {
+    "name": "no back-pressure on integrations",
+    "why": "main.ts stream(): the loop no longer waits when two integrations are in flight",
+    "find": "/\\ loop' = IF Cardinality(Integrating) + 1 > 1 THEN \"wait\" ELSE \"pick\"",
+    "replace": "/\\ loop' = \"pick\"",
+    "expect": "Invariant AtMostCapPlusOne is violated"
+  }
+]
