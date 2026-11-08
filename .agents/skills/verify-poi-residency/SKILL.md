@@ -17,12 +17,14 @@ for four locations and a cap of 2.
 | AtMostCapPlusOne | At most the cap + 1 streamed locations hold memory, counting the one being built. | Memory grows without bound as you move; Safari kills the tab. |
 | NoEvictWhileBuilding | A location is never evicted while it is building or fading in. | A half-built location's resources are freed under it; errors or a leak. |
 | NothingPickedOutsideMatch | Nothing new is picked to build at the title, in the room or on the results lobby. | Memory spent where no one plays. |
+| GlideTargetFirst | While the player falls or glides, the location the glide heads for is picked before any queued one behind or to the side. | From the parachute, what you fly toward stays an impostor. |
+| GlideTargetKept | Making room never evicts the location the glide heads for while one behind or to the side stays. | The location ahead is thrown away for one you have left behind. |
 | AtMostCap | At most the cap, counting the one being built. | Today: one over while every resident is protected (the one you stand in, one fading in). |
 | NothingBuiltOutsideMatch | No build starts outside a match. | Today: a location picked just before you leave is still built. |
 
 `MaxInside` is how many location circles the camera can stand in at once. `PoiResidency.cfg` (`MaxInside = 1`) checks
-the first three, which hold. `PoiResidency.findings.cfg` (`MaxInside = 2`, as where two circles overlap on the map)
-checks all five: AtMostCap and NothingBuiltOutsideMatch break, and so does AtMostCapPlusOne, because both locations you
+the first five, which hold. `PoiResidency.findings.cfg` (`MaxInside = 2`, as where two circles overlap on the map)
+checks all seven: AtMostCap and NothingBuiltOutsideMatch break, and so does AtMostCapPlusOne, because both locations you
 stand in are kept whatever the cap (docs/statecharts/poi-residency.md has the paths). If the code changes so that a
 rule holds, move it into `PoiResidency.cfg` and add a mutant that takes the change out.
 
@@ -32,7 +34,7 @@ rule holds, move it into `PoiResidency.cfg` and add a mutant that takes the chan
 node tools/formal/tlc.mjs PoiResidency --mutants
 ```
 
-Java 11 or newer on PATH; the first run downloads the pinned TLA+ tools jar. About 2 seconds, 38,880 distinct states.
+Java 11 or newer on PATH; the first run downloads the pinned TLA+ tools jar. About 2 seconds, 115,425 distinct states.
 Expected output: one `PASS PoiResidency` line and one `PASS ... mutant` line per entry in `PoiResidency.mutants.json`.
 A mutant that passes means the model can no longer see the guard it removes: fix the model, not the mutant.
 
@@ -48,6 +50,10 @@ see the next one.
   `?lowmem=1&lowmemcap=2` (and `?seed=N` to replay one plane path), and move the camera between locations in the
   path's order (the memory tool's `--tour` teleport in `tools/performance/memory.mts` does this from a script). Log
   `residents()` and the build queue, and compare with the path. On a no-GPU machine this runs on SwiftShader, slowly.
+- **A pick-order question on the descent.** `npx tsx tools/performance/descent-residency.mts [other/low-mem.ts]` runs the real
+  `nextNearModule` and `trimStreamed` on a fake clock along a recorded glide (plane over peel-harbor and mango,
+  over mango at about 515 m) and prints when each POI is picked, built and evicted, with the altitude. Give it a main
+  worktree's low-mem.ts to compare.
 - **A modelling error.** A step the code cannot take. Fix the model to say what the code does, citing the line.
 
 ## Keep the model in step with the code
@@ -58,6 +64,7 @@ see the next one.
 | low-mem.ts `trimStreamed` (and its `residents()`: locations in `modOf` only), `evictionsFor`, `over`, `evictStreamed` | Counted, TrimEvict, TrimDone |
 | main.ts `buildStreamed`, `buildOne`, the back-pressure in `stream` | Built, Integrated |
 | main.ts `stream`'s 2 s timer (`trim(null)`) | Timer |
+| low-mem.ts `distM` (the rank: inside, ahead of the 5 s lookahead, near, far) and `nearModule`'s airborne test (cm.pred.st Freefall or Glide: the build range stops counting height) | Rank, Move's "ahead" class, Jump, Land |
 | the camera; `enterMatch` / leaving | Move, EnterMatch, LeaveMatch |
 
 main.ts fills the queue (`streamList`, which low-mem.ts calls `pending`) in top-level boot code that no region can
@@ -78,8 +85,7 @@ node tools/formal/tlc.mjs PoiResidency --mutants --record
 
 ## What it does not cover
 
-Distances are three classes (inside, near, far) and the camera jumps between them at any time. Picks are by distance
-only: the plane's overview builds (`lowmemview` locations in view during the plane) and the caster's admission
+Distances are four classes (inside, ahead of the glide, near, far) and the camera jumps between them at any time. Picks are by distance only: the plane's overview builds (`lowmemview` locations in view during the plane) and the caster's admission
 (`nearModule` also picks while casting) are left out. Memory is a count of
 locations, not bytes, so the `lowmembudget` path and how much memory an eviction actually frees are out of scope;
 `tools/performance/memory.mts` measures that. Desktop mode (no eviction) is not modelled.

@@ -42,9 +42,9 @@
     }
   ],
   "verified": {
-    "model": "2c1b4232c89bcc39",
+    "model": "cf2cc340f7f1d582",
     "regions": {
-      "client/src/low-mem.ts#nearModule": "51ae29ea9b2f6da8",
+      "client/src/low-mem.ts#nearModule": "41f0028835647fd7",
       "client/src/low-mem.ts#nextNearModule": "ec86e5a21cca6356",
       "client/src/low-mem.ts#evictStreamed": "a09acc000ea7af2c",
       "client/src/low-mem.ts#over": "46885f6c04ab472c",

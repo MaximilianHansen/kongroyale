@@ -93,7 +93,7 @@ const FLAGS = {
   lodv: { kind: on, owner: "engine", purpose: "the anti-pop LOD path: terrain geomorph, rock and HLOD crossfades, view-dependent detail culling" },
   lootlater: { kind: on, owner: "weapons", purpose: "bake the floor-loot far LODs after the title is ready, before the prefab warm-up a match waits for, instead of during boot; =0 bakes them during boot" },
   lowmem: { kind: text, owner: "boot", purpose: "build POIs only near the player: =1 on, =0 off, absent = auto" },
-  lowmemr: { kind: num(450), owner: "boot", purpose: "lowmem build distance (m, horizontal; in the warm-up and the plane it counts height above the pad too, and in the plane up to lowmemview POIs in view build as well, ahead of nearby ones out of view)" },
+  lowmemr: { kind: num(450), owner: "boot", purpose: "lowmem build distance (m, horizontal; in the warm-up and on the plane it counts height above the pad too, and on the plane up to lowmemview POIs in view build as well, ahead of nearby ones out of view)" },
   lowmemview: { kind: num(2), owner: "boot", purpose: "lowmem: at most this many far POIs build because they are in view during the plane; the rest stay terrain until landing" },
   lowmemcap: { kind: num(3), owner: "boot", purpose: "lowmem: at most this many streamed POIs stay built; past it the farthest is evicted, never the nearest or the one the player is in" },
   lowmembudget: { kind: num(1500), owner: "boot", purpose: "lowmem: estimated MB (vertex arrays + textures) the streamed POIs may hold; past it the farthest is evicted like lowmemcap" },

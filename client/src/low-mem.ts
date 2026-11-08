@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { Poi } from "../../shared/world/map";
 import { Phase } from "../../shared/sim/match";
+import { PS } from "../../shared/sim/player";
 import type { Engine } from "./engine/engine";
 import type { StaticCache } from "./engine/static-cache";
 import type { WorldModule } from "./world/module";
@@ -17,7 +18,7 @@ export function lowMemoryDevice(forced: string | null, fullPrepare: boolean): bo
   return on;
 }
 
-type Session = { game?: { inMatch?: boolean; cm?: { phase: number } | null }; caster?: { casting?: boolean } };
+type Session = { game?: { inMatch?: boolean; cm?: { phase: number; pred?: { st: number } } | null }; caster?: { casting?: boolean } };
 
 const VIEW_HALF_H_M = 150;
 const OFFSCREEN_RANK_M = 1e6;
@@ -48,10 +49,13 @@ function nearModule(pending: string[], camera: THREE.Camera, pois: readonly Poi[
   const kr = (globalThis as unknown as { __kr?: Session }).__kr;
   const casting = !!kr?.caster?.casting;
   if (!kr?.game?.inMatch && !casting) return null;
-  const phase = kr?.game?.cm?.phase ?? Phase.Play;
-  const airborne = !casting && phase <= Phase.Plane;
+  const cm = kr?.game?.cm, phase = cm?.phase ?? Phase.Play, st = cm?.pred?.st;
+  // on the plane (and in the warm-up) the build range counts height above the pad and POIs in view may build first; once
+  // the player falls or glides both stop and it is the horizontal 5 s lookahead like on foot, so the POI the glide heads
+  // for builds as soon as it is within lowmemr and those behind are the first evicted
+  const airborne = !casting && phase <= Phase.Plane && st !== PS.Freefall && st !== PS.Glide;
   if (phase !== Phase.Plane) viewBuilds = 0;
-  const overview = !casting && phase === Phase.Plane && viewBuilds < viewCap;
+  const overview = airborne && phase === Phase.Plane && viewBuilds < viewCap;
   if (overview) view.setFromProjectionMatrix(viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
   const e = camera.matrixWorld.elements;
   if (!track(camera)) return null;
