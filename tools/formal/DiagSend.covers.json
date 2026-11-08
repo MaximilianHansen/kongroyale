@@ -85,9 +85,9 @@
       "client/src/playtest/consent.ts#markTold": "61fc9f7c58f2b362",
       "client/src/playtest/consent.ts#setAuto": "81aaa530fdf5590d",
       "client/src/playtest/auto.ts#beacon": "3c6001a00f897fb9",
-      "client/src/playtest/auto.ts#emit": "8693bc15ac45e41d",
+      "client/src/playtest/auto.ts#emit": "f158377a15e4e388",
       "client/src/playtest/auto.ts#showNotice": "7ca3407b3a320863",
-      "client/src/playtest/auto.ts#installAuto": "d28a19ec831588a7"
+      "client/src/playtest/auto.ts#installAuto": "520f346852cd968d"
     }
   }
 }
