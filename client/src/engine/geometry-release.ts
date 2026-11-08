@@ -1,4 +1,4 @@
-// Behind ?geofree=1, drops the CPU copy of vertex and index arrays once three.js has uploaded them, the geometry half of
+// By default (?geofree=0 turns it off), drops the CPU copy of vertex and index arrays once three.js has uploaded them, the geometry half of
 // releasing CPU copies after upload (texture-release.ts is the texture half). A geometry that can rebuild its arrays refills them
 // in a context restore's `source` phase, before the first draw on the new context; one that can't (a town-kit batch)
 // marks itself unrestorable, so the restore rebuilds its module or reloads the page.

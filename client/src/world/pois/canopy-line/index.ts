@@ -108,10 +108,12 @@ async function build(ctx: WorldCtx) {
     if (c.kind === "tree") {
       addTrunk(k.main, c, rings.map((g) => g.y));
       addFlanges(k.main, c);
+      await ctx.yield();
       const cr = addCrown(k.main, c, mats, ci);
       if (cr) { crowns.push(cr.mesh); crownTris += cr.tris; }
     } else addTower(k.main, k.det, rng);
-    for (const g of rings) addRing(k.main, k.det, g, helix, rng);
+    for (const g of rings) { await ctx.yield(); addRing(k.main, k.det, g, helix, rng); }
+    await ctx.yield();
     if (helix) addHelix(k.main, k.det, helix, rng);
   }
   // (the crowns stay one mesh per tree: the foliage wind is weighted by the object-space height over the trunk top)
@@ -121,12 +123,10 @@ async function build(ctx: WorldCtx) {
     return cl(`ground:${Math.floor(x / 60)},${Math.floor(z / 60)}`);
   };
   for (const h of LAYOUT.huts) { await ctx.yield(); const k = clusterAt(h.x, h.y, h.z); addHut(k.main, k.det, h, rng); }
-  for (const s of LAYOUT.shelters) { const k = clusterAt(s.x, s.y, s.z); addShelter(k.main, k.det, s, rng); }
-  await ctx.yield();
-  LAYOUT.props.forEach((p, i) => { const k = clusterAt(p.x, p.y, p.z); addProp(k.main, k.det, p, rng); void i; });
-  await ctx.yield();
-  for (const b of LAYOUT.bridges) { const k = cl(b.a[1] > 55 ? "links:high" : "links:low"); addBridge(k.main, k.det, b, rng); }
-  for (const z of LAYOUT.zips) { const k = cl("links:zip"); addZip(k.main, k.det, z, rng); }
+  for (const s of LAYOUT.shelters) { await ctx.yield(); const k = clusterAt(s.x, s.y, s.z); addShelter(k.main, k.det, s, rng); }
+  for (const p of LAYOUT.props) { await ctx.yield(); const k = clusterAt(p.x, p.y, p.z); addProp(k.main, k.det, p, rng); }
+  for (const b of LAYOUT.bridges) { await ctx.yield(); const k = cl(b.a[1] > 55 ? "links:high" : "links:low"); addBridge(k.main, k.det, b, rng); }
+  for (const z of LAYOUT.zips) { await ctx.yield(); const k = cl("links:zip"); addZip(k.main, k.det, z, rng); }
   await ctx.yield();
 
   // ---- flush: MAIN groups always drawn; DETAIL groups within DETAIL_FAR of their bounds

@@ -79,4 +79,24 @@ async function load(env: Env): Promise<typeof Flags> {
   assert.equal(flag("splres"), 64);
 }
 
+{
+  // every flag says what it does: a non-empty /** ... */ doc comment on its FLAGS entry (comments, so the text stays out of
+  // the bundles)
+  const ts = (await import("typescript")).default;
+  const file = new URL("../../client/src/flags.ts", import.meta.url);
+  const src = ts.createSourceFile("flags.ts", (await import("node:fs")).readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  let entries: readonly import("typescript").ObjectLiteralElementLike[] = [];
+  src.forEachChild(function find(n): void {
+    if (ts.isVariableDeclaration(n) && n.name.getText(src) === "FLAGS" && n.initializer) {
+      let e: import("typescript").Expression = n.initializer;
+      while (ts.isSatisfiesExpression(e) || ts.isAsExpression(e)) e = e.expression;
+      if (ts.isObjectLiteralExpression(e)) entries = e.properties;
+    }
+    n.forEachChild(find);
+  });
+  assert.ok(entries.length > 100, "FLAGS not found in client/src/flags.ts");
+  const missing = entries.filter((p) => !ts.getJSDocCommentsAndTags(p).some((d) => ts.isJSDoc(d) && typeof d.comment === "string" && d.comment.trim().length > 0)).map((p) => p.name?.getText(src));
+  assert.deepEqual(missing, [], "flags without a /** purpose */ doc comment in client/src/flags.ts");
+}
+
 console.log("flags: ok");

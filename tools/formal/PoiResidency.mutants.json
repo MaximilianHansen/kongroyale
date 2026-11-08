@@ -19,5 +19,19 @@
     "find": "/\\ loop' = IF Cardinality(Integrating) + 1 > 1 THEN \"wait\" ELSE \"pick\"",
     "replace": "/\\ loop' = \"pick\"",
     "expect": "Invariant AtMostCapPlusOne is violated"
+  },
+  {
+    "name": "the slant range rules the descent again",
+    "why": "low-mem.ts nearModule: while falling or gliding the slant range from the camera rules again, so the POI ahead waits until the player is low",
+    "find": "/\\ st[p] = \"queued\" /\\ dist[p] \\in {\"inside\", \"ahead\", \"near\"}",
+    "replace": "/\\ st[p] = \"queued\" /\\ dist[p] \\in {\"inside\", \"near\"}",
+    "expect": "Invariant GlideTargetFirst is violated"
+  },
+  {
+    "name": "eviction ignores where the glide heads",
+    "why": "low-mem.ts evictionsFor: making room stops popping the farthest by distM, so it may throw away the POI ahead before one behind",
+    "find": "Farthest(v) == \\A q \\in Evictable : Rank(q) <= Rank(v)",
+    "replace": "Farthest(v) == dist[v] = \"far\" \\/ \\A q \\in Evictable : dist[q] # \"far\"",
+    "expect": "Invariant GlideTargetKept is violated"
   }
 ]
