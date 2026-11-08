@@ -1,6 +1,7 @@
 // "A location is never invisible": the per-frame scan behind ?invariants (engine/invariants.ts installs it after the
 // cull update, right before the draw, so it reads exactly the state that renders). A POI is drawn by its built model, a
-// far impostor (?farimp) or an HLOD proxy (engine/hlod.ts). Each counts with what is left of it after the cull's fades
+// far impostor (?farimp), an HLOD proxy (engine/hlod.ts) or its module's own far proxy (a root tagged userData.farForm,
+// shown while its near model is hidden: the coast kit's CoastLod). Each counts with what is left of it after the cull's fades
 // and reveals and the dither's dissolve (engine/cull.ts, engine/dither.ts); the model counts with its most opaque drawn
 // mesh that writes colour, and each piece counts only when it is on the camera's layers and in its frustum, as the
 // renderer culls it. The POI's coverage is their sum, capped at 1: a hand-over dissolves one out with the complementary mask of the
@@ -31,7 +32,7 @@ export interface PoiWatch {
   since: Float64Array;
   /** frames each POI was in view with something to draw it */
   seen: Float64Array;
-  /** frames each POI was drawn at the floor or more by its impostor and HLOD proxies alone */
+  /** frames each POI was drawn at the floor or more by its far forms alone: impostor, HLOD proxies, its module's far proxy */
   farSeen: Float64Array;
   /** at the last gap check, what would be in view were it shown: 1 the impostor, 2 an HLOD proxy, 4 a model mesh */
   inView: Uint8Array;
@@ -49,7 +50,7 @@ export interface PoiWatch {
 type Dithered = THREE.Object3D & { __krDith?: { a: number } };
 
 const view = new THREE.Frustum(), viewProj = new THREE.Matrix4(), sphere = new THREE.Sphere();
-const stack: THREE.Object3D[] = [];
+const stack: THREE.Object3D[] = [], one: THREE.Object3D[] = [];
 
 function shown(o: THREE.Object3D, scene: THREE.Object3D): boolean {
   for (let p: THREE.Object3D | null = o; p; p = p.parent) {
@@ -139,7 +140,13 @@ export function scanPois(w: PoiWatch, camera: THREE.Camera, scene: THREE.Object3
     const near = built && other < 1 ? nearOpacity(roots, scene, mask, cull, 1 - other, false) : 0;
     w.near[i] = near; w.imp[i] = ip; w.hlod[i] = hl;
     const cover = Math.min(1, near + other);
-    if (other >= w.floor) w.farSeen[i]++;
+    let own = 0;
+    if (built) for (let k = 0; k < roots.length; k++) {
+      if (!roots[k].userData.farForm || !shown(roots[k], scene)) continue;
+      one[0] = roots[k]; one.length = 1;
+      own = Math.max(own, nearOpacity(one, scene, mask, cull, 1, false));
+    }
+    if (other + own >= w.floor) w.farSeen[i]++;
     if (cover >= w.floor) { w.shownOnce[i] = 1; end(w, i, frame); continue; }
     if (!w.shownOnce[i]) continue;
     if (!couldDraw(w, i, built, merged ? proxy : null, scene, mask, cull)) { end(w, i, frame); continue; }

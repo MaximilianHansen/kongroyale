@@ -5,7 +5,7 @@
 // being drawn (__kr.invariants.violations), on any other __kr.errors entry or uncaught page error (a failed shader draws
 // nothing the scan can see), when the check never ran, when a stop's frames stopped advancing, when a route POI never
 // built at its nearest stop (its hand-over to the model was not exercised), when its far stop never saw it drawn by
-// its impostor or HLOD proxy (its far form was not exercised), or when a route POI was never in view with
+// a far form (impostor, HLOD proxy or its module's own far proxy: its far form was not exercised), or when a route POI was never in view with
 // something to draw it. The browser only loads a server you started on 127.0.0.1 (AGENTS.md rule 7), for example:
 //
 //   node .agents/skills/verify-kongroyale/scripts/kr-verify.mjs up --prod --port 3140
@@ -14,7 +14,7 @@
 // Options: --url (default http://127.0.0.1:3140), --query "a=1&b=2" (the arm's flags), --pois a,b (route POIs, default
 // ROUTE), --seed 42, --viewport 640x360, --hold-frames 12 (frames at each stop; the middle stop also waits out a
 // build of the route POI already under way but not one still queued, so the model hand-over may land there or at the
-// nearest stop, which counts its frames from the build; the far stop counts from when its impostor or proxy draws it),
+// nearest stop, which counts its frames from the build; the far stop counts from when a far form draws it, and steps in 60 m at a time while the terrain hides its POI),
 // --hold-max-s 120 (longest wait at one stop), --near-max-s 240 (longest wait for the nearest stop's build), --far-warn
 // <issue> (the far stop holds its frames without waiting for the far form, and warns, naming the open issue, instead of
 // failing when it never came), --out <file> (the JSON verdict), --headed, --gpu (the machine's GPU instead of
@@ -32,6 +32,8 @@ const ROUTE = ["the-plantation"];
 const hlodNear = (r: number) => Math.max(240, r * 2.2), HLOD_HYST_M = 25;
 /** the low-memory build distance from a POI's rim (flags.ts lowmemr) */
 const LOWMEM_R_M = 450;
+/** how far the far stop steps in at a time while its POI is behind a hill (m) */
+const FAR_STEP_M = 60;
 
 const argv = process.argv.slice(2);
 const opt = (k: string, d: string) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d; };
@@ -55,7 +57,7 @@ const log = (s: string) => console.log("[invariants " + ((Date.now() - t0) / 100
 function stops(r: number): Array<[number, string]> {
   const h = hlodNear(r);
   return [
-    [r + LOWMEM_R_M + 250, "far: impostor or proxy"],
+    [r + LOWMEM_R_M + 250, "far: impostor, HLOD proxy or own far proxy"],
     [Math.min(r + LOWMEM_R_M - 120, Math.max(h + HLOD_HYST_M + 40, r + 60)), "inside the low-memory build distance, outside the HLOD switch"],
     [Math.min(h - 40, r + 40), "inside the HLOD switch"],
   ];
@@ -77,6 +79,8 @@ const built = (id: string): Promise<string> => page.evaluate((m) => { const k = 
 /** frames the route POI was drawn by its impostor and HLOD proxies alone */
 const farFrames = (id: string): Promise<number> => page.evaluate((m) => (window as any).__kr.invariants?.farSeen[m] ?? 0, "poi:" + id);
 /** the route POI's HLOD entry (engine/hlod.ts): "<state>, active|inactive, <proxies> proxies", or "none" */
+/** true while the terrain occludes the POI (engine/occlusion.ts), which the check then skips */
+const occludedNow = (id: string): Promise<boolean> => page.evaluate((m) => (window as any).__kr.engine.occlusion.hidden.includes(m), "poi:" + id);
 const hlodOf = (id: string): Promise<string> => page.evaluate((m) => { const f = (window as any).__kr.engine.far.info().find((p: { id: string }) => p.id === m); return f ? f.state + ", " + (f.active ? "active" : "inactive") + ", " + (f.proxies ?? 0) + " proxies" : "none"; }, "poi:" + id);
 let reported = 0;
 const newViolations = async () => {
@@ -113,10 +117,20 @@ try {
   log("play phase, " + s.frames + " frames checked through the warm-up and the plane; route " + ONLY.join(", "));
   for (const id of ONLY) {
     const p = POIS.find((q) => q.id === id)!, n = Math.hypot(p.x, p.z) || 1, ux = -p.x / n, uz = -p.z / n;
-    for (const [d, what] of stops(p.r)) {
-      const x = p.x + ux * d, z = p.z + uz * d, yaw = Math.atan2(-(p.x - x), -(p.z - z));
-      if (!(await place(x, z, yaw))) throw Error("no practice host to teleport on");
-      const [far, , nearest] = stops(p.r).map(([dd]) => dd === d), f0 = (await status()).frames, h0 = Date.now(), far0 = await farFrames(id);
+    for (const [stopD, what] of stops(p.r)) {
+      const [far, , nearest] = stops(p.r).map(([dd]) => dd === stopD);
+      let d = stopD, x = 0, z = 0, yaw = 0;
+      const at = (dd: number) => { d = dd; x = p.x + ux * d; z = p.z + uz * d; yaw = Math.atan2(-(p.x - x), -(p.z - z)); return place(x, z, yaw); };
+      if (!(await at(d))) throw Error("no practice host to teleport on");
+      // behind a hill a POI is not checked at all (engine/occlusion.ts): the far stop steps in until the POI is in sight
+      // (the plantation's 870 m stop is occluded once it is built), staying outside the HLOD switch
+      if (far) for (let n = 0; n < 8; n++) {
+        // (the occlusion test runs once the camera has moved: two frames after the teleport)
+        for (const f = (await status()).frames, t = Date.now(); (await status()).frames < f + 2 && Date.now() - t < 30_000;) { await sleep(500); await place(x, z, yaw); }
+        if (!(await occludedNow(id)) || d - FAR_STEP_M < hlodNear(p.r) + HLOD_HYST_M + 40) break;
+        await at(d - FAR_STEP_M);
+      }
+      const f0 = (await status()).frames, h0 = Date.now(), far0 = await farFrames(id);
       const maxS = nearest ? NEAR_MAX_S : HOLD_MAX_S;
       let state = "", from = nearest || (far && !FAR_WARN) ? -1 : f0;
       for (;;) {
@@ -131,7 +145,7 @@ try {
       else if (nearest && from < 0) harness.push(id + " at " + Math.round(d) + " m: not built after " + maxS + " s, so its hand-over to the model was not exercised");
       else if (from >= 0 && s.frames - from < HOLD_FRAMES) harness.push(id + " at " + Math.round(d) + " m: " + (s.frames - from) + " of " + HOLD_FRAMES + " hold frames in " + maxS + " s");
       if (far && (await farFrames(id)) === far0) {
-        const msg = id + " at " + Math.round(d) + " m: never drawn by its impostor or HLOD proxy at this stop, so its far form was not exercised";
+        const msg = id + " at " + Math.round(d) + " m: never drawn by a far form (impostor, HLOD proxy, own far proxy) at this stop, so its far form was not exercised";
         if (FAR_WARN) { warnings.push(msg + " (" + FAR_WARN + ")"); console.log("::warning title=invariant far form (" + FAR_WARN + ")::" + msg); }
         else harness.push(msg);
       }

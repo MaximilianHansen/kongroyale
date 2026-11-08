@@ -216,11 +216,10 @@ jobs:
             query: lowmem=1&geofree=1&farimp=1
             args: ""
           # the default: every POI built, HLOD proxies far away (title modules plus the route POI: SwiftShader runs out of
-          # memory with the whole island past the warm-up). HLOD does not build the plantation's proxy, so its
-          # far stop warns instead of failing; drop --far-warn once it does
+          # memory with the whole island past the warm-up). The plantation's far form is its own proxy
           - arm: default
             query: modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage,poi:the-plantation
-            args: --far-warn plantation-hlod
+            args: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
