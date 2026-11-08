@@ -1,4 +1,5 @@
-// Player diagnostics (?diag): what a stream player's report needs beyond the per-second metrics ring.
+// Player diagnostics (?diag; also loaded by default for the automatic summaries' crash rows): what a stream
+// player's report needs beyond the per-second metrics ring.
 //   events     the moments that explain a hitch, newest 500: long animation frames with the script that ran longest
 //              (Chrome and Edge; plain long tasks where only those exist), match phase changes, world modules streamed in
 //              or evicted, shader-program jumps, 3D-resolution steps, a heap drop over 50 MB (a collection), WebGL context

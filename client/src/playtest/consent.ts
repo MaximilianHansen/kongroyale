@@ -1,5 +1,5 @@
-// The player's choice about automatic performance summaries (auto.ts). On by default for a build that has
-// player diagnostics and asking nothing, but nothing is sent until the one-time toast has been shown (auto.ts shows it
+// The player's choice about automatic performance summaries (auto.ts). On by default for every player of a
+// production build (not under automation, beat.ts summariesOn) and asking nothing, but nothing is sent until the one-time toast has been shown (auto.ts shows it
 // once the title is ready), and never while the browser's privacy signal (Global Privacy Control or Do Not Track) is on
 // or the player has turned it off in Settings. The choice and the "has been told" mark are per device, in localStorage; when storage is blocked they
 // last for the page's life. The toast (markTold) and the settings row (ui/settings-model.ts, setAuto) are the only writers. Model:

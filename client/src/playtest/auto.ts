@@ -1,5 +1,6 @@
-// Automatic performance summaries, the player's side (server/diag-auto.ts is the endpoint). Under player
-// diagnostics, a build sends small anonymous rows, by navigator.sendBeacon to POST /api/diag/auto, when:
+// Automatic performance summaries, the player's side (server/diag-auto.ts is the endpoint). A production
+// build outside automation runs this for every player by default (beat.ts summariesOn; ?diag runs it anywhere, ?diag=0
+// nowhere), and sends small anonymous rows, by navigator.sendBeacon to POST /api/diag/auto, when:
 //   hitch      a frame over 250 ms in a match, or lowfps: 5 s in a row under 20 fps (together: at most one a minute, five a session)
 //   ctxlost    the WebGL context is lost (at most two a session)
 //   error      the same uncaught error a second time (a short hash of its first line, never its text; at most three a session)

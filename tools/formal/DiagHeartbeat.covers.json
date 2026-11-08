@@ -42,7 +42,7 @@
       "client/src/playtest/beat.ts#beat": "21ea30387e84a3bd",
       "client/src/playtest/beat.ts#live": "d6047844e293b3ce",
       "client/src/playtest/beat.ts#diagOn": "e500410d1a3e4108",
-      "client/src/playtest/beat.ts#writeBeat": "ba32a51d64dd9dd5",
+      "client/src/playtest/beat.ts#writeBeat": "100380694d0c14fe",
       "client/src/playtest/beat.ts#startBeat": "739d849f3d74f7a8",
       "client/src/playtest/diag.ts#CLAIM_KEY": "aa656f45bd2acd64",
       "client/src/playtest/diag.ts#readBeats": "24deab261c980dfe",

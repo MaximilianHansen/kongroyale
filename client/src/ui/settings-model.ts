@@ -7,7 +7,7 @@
 import type { Engine } from "../engine/engine";
 import { FPS_CAPS, LEVELS, type Display, type Level, type VideoSettings } from "../engine/display";
 import type { PadAction } from "../settings/pad";
-import { diagOn } from "../playtest/beat";
+import { diagOn, summariesDefault } from "../playtest/beat";
 import { autoOn, privacySignal, setAuto } from "../playtest/consent";
 
 export type CatId = "kbm" | "pad" | "audio" | "video" | "a11y";
@@ -102,7 +102,7 @@ export function videoCategory(engine: Engine, display: Display): Category {
       help: () => ({ eb: "Diagnostics", body: ["When the game stutters, crashes, or a match ends, Kong Royale sends a small summary of how it ran: frame rate, stall times, memory use, your graphics setup, and the game version. It never includes your callsign, chat, screenshots, or anything you type. Turn this off any time."] }) },
   ] };
   return {
-    id: "video", name: "Video", sections: diagOn() ? [display_, graphics, diagnostics] : [display_, graphics],
+    id: "video", name: "Video", sections: diagOn() || summariesDefault() ? [display_, graphics, diagnostics] : [display_, graphics],
     reset: {
       body: "The quality preset goes back to Auto (picked for your GPU), with 3D resolution, the frame rate limit and dynamic resolution at their defaults. Field of view and Show FPS are kept. Other categories are not changed.",
       run: () => display.set({ preset: "auto", res3d: undefined, resUser: false, fpsCap: -1, dynres: false }),

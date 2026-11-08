@@ -1,10 +1,11 @@
-// The playtest chunk, loaded after boot on every game page. When the perf HUD (?perfhud) or player diagnostics (?diag,
-// or a build made with VITE_KR_DIAG=1) is on, it starts the metrics recorder, has the match record its input replay
-// (__kr.recordReplay, read by game/net.ts, which hands it over packed) and gives KONGBOT reports a bundle. Under
-// diagnostics, report.ts adds the player's send sheet and auto.ts the automatic summaries. F8 marks a moment under ?perfhud.
+// The playtest chunk, loaded after boot on every game page. When the perf HUD (?perfhud)
+// or the automatic summaries are on (by default in a production build outside automation, see beat.ts summariesOn; and
+// under ?diag, or a build made with VITE_KR_DIAG=1), it starts the metrics recorder and auto.ts. Under ?perfhud or full
+// diagnostics (?diag) it also has the match record its input replay (__kr.recordReplay, read by game/net.ts, which hands
+// it over packed) and gives KONGBOT reports a bundle, and report.ts adds the player's send sheet. F8 marks a moment under ?perfhud.
 import type { Engine } from "../engine/engine";
 import { flag, flagQuery } from "../flags";
-import { diagOn } from "./beat";
+import { diagOn, summariesOn } from "./beat";
 import type { ReplayLog } from "../../../shared/net/replay";
 
 /** MAX_REPLAY_EVENTS: server/playtest-bundles.ts refuses a whole bundle whose replay holds more events */
@@ -38,12 +39,12 @@ function markMessage(): string {
 }
 
 export function installPlaytest(engine: Engine, game: boolean): void {
-  const hud = flag("perfhud"), diag = diagOn();
-  if (!game || (!hud && !diag)) return;
+  const hud = flag("perfhud"), diag = diagOn(), summaries = summariesOn();
+  if (!game || (!hud && !summaries)) return;
+
   if (!flag("notimer")) engine.timeGpu();
-  kr().recordReplay = true;
-  kr().playtestBundle = bundle;
-  void Promise.all([import("./recorder"), hud ? import("./perf-hud") : null, diag ? import("./diag") : null, diag ? import("./report") : null, diag ? import("./auto") : null]).then(([rec, hudMod, diagMod, reportMod, autoMod]) => {
+  if (hud || diag) { kr().recordReplay = true; kr().playtestBundle = bundle; }
+  void Promise.all([import("./recorder"), hud ? import("./perf-hud") : null, summaries ? import("./diag") : null, diag ? import("./report") : null, summaries ? import("./auto") : null]).then(([rec, hudMod, diagMod, reportMod, autoMod]) => {
     const draw = hudMod?.installPerfHud(rec.ring), sample = diagMod?.installDiag(engine, rec.ring), auto = autoMod?.installAuto(engine, rec.ring);
     if (diagMod) kr().diag = { snapshot: diagMod.snapshot };
     rec.startRecorder(engine, (at) => { draw?.(at); sample?.(at); auto?.(at); });
