@@ -223,7 +223,7 @@ const mod: WorldModule = {
       await Y(":gm");
       if (!OFF.has("roots")) await addRoots((x, z) => Mn(x, z), it.lod1, rng, (x, z) => Nr(x, z), Y);
       // the sculpted root masses at every tree / tangle / mangrove foot (their colliders: shared massBoxes)
-      if (!OFF.has("roots")) addRootMasses((x, z) => Mn(x, z), [...rootMasses(), ...LAYOUT.plants.filter((p) => p.kind === "mangrove").map(massOfPlant)]);
+      if (!OFF.has("roots")) await addRootMasses((x, z) => Mn(x, z), [...rootMasses(), ...LAYOUT.plants.filter((p) => p.kind === "mangrove").map(massOfPlant)], () => ctx.yield());
     }
     // ---- props
     const signMat = mats.sign("BANANA CO.", "#2f4a3a", "#f2e6c2");

@@ -143,6 +143,7 @@ const FLAGS = {
   sculpt: { kind: present, owner: "pois", purpose: "town statue sculpts live instead of loading its baked mesh" },
   seed: { kind: num(0), owner: "game", purpose: "practice match seed (plane line, storm, loot); 0 = random" },
   shadercheck: { kind: present, owner: "game", purpose: "keep three's shader error checks on" },
+  slicelog: { kind: num(50), owner: "engine", purpose: "log build slices over N ms to __kr.sliceLog; 0 = off" },
   shot: { kind: present, owner: "boot", purpose: "capture mode: frozen time, pixel ratio 1, HUD hidden" },
   splasync: { kind: one, owner: "veg", purpose: "read splat captures back from the GPU asynchronously" },
   splcache: { kind: on, owner: "veg", purpose: "keep baked splats in the browser cache; =0 bakes on every load" },
