@@ -25,6 +25,11 @@ export type TransportKind = "ws" | "wt";
 /** why a link that could have used WebTransport stayed on (or went back to) the WebSockets */
 export type FallbackReason = "flag-off" | "server-off" | "unsupported" | "connect-failed" | "timeout" | "auth" | "closed" | "no-datagrams";
 export const FALLBACK_REASONS: readonly FallbackReason[] = ["flag-off", "server-off", "unsupported", "connect-failed", "timeout", "auth", "closed", "no-datagrams"];
+/** a link's arm in the WebTransport A/B (KR_WT_SHARE, HOSTING.md): "wt" or "ws" as the server assigned it (a tab keeps
+ *  its first one for its session), "forced-wt" / "forced-ws" when the page's ?wt=1 / ?wt=0 overrode it, "off" when the
+ *  server offered no WebTransport. Only "wt" and "ws" are the experiment */
+export type WtArm = "wt" | "ws" | "forced-wt" | "forced-ws" | "off";
+export const WT_ARMS: readonly WtArm[] = ["wt", "ws", "forced-wt", "forced-ws", "off"];
 
 /** per-transport counters, the same fields for every kind, so sessions compare across transports */
 export interface TransportStats {
