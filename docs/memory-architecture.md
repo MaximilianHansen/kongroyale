@@ -366,8 +366,9 @@ doesn't wait samples whatever happens to be mid-build.
 `memory.mts --budgets` prints each failure as `phase.metric measured, budget: over budget by N MB (+P%)`, or names
 the lower budget to set when a number is more than 5% under. On GitHub Actions each failure is also an `::error`
 annotation on the budget file, and the job summary has a table of every budgeted number with its change. `--budgets`
-takes several files; each one's `config` must match the run. Each file's `about` records its calibration runs and the
-margin over their largest value.
+takes several files; each one's `config` must match the run. Each file's `about` says what it measures and how its
+budgets are set. The runs and reason behind each change go in that change's PR description and commit message, not in
+`about`, so two PRs that move different budgets don't conflict on one line.
 
 Geometry constructors are not in the lint rule. Most of the roughly 1,400 `new THREE.*Geometry` calls build temporary
 inputs that are merged and never reach the GPU, so a lint would mostly flag harmless code. The "no unowned resource"
