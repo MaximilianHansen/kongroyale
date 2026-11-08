@@ -1,0 +1,18 @@
+{
+  "about": "compare.mts --budgets for the perf workflow (.github/workflows/perf.yml) on GitHub's ubuntu-latest runner: per scenario/metric/statistic change (%) that counts. A change must also clear the range test (every candidate run outside the baseline runs' range, 5 runs a side). Thresholds are about twice the largest A/A median delta, with a 3% floor at p50 and 5% at p99. Recalibrate with the perf-aa label when the runner image or Node changes.",
+  "calibration": {
+    "host/real-play": "2026-11-07, ubuntu-latest (AMD EPYC 7763, 4 vCPU), Node 22.23.4, main at bedca2b, two A/A rounds of 5+5 interleaved real-play runs (perf-aa label): |median delta| p50 <= 0.8%, p99 <= 1.9% on every row; run-to-run spread 0.8-14.5% (one slow first baseline run in round 1). About 4.5 min a round."
+  },
+  "thresholdPct": {
+    "host/real-play": {
+      "hostTickMs": {
+        "p50": 3,
+        "p99": 5
+      },
+      "simulationMs": {
+        "p50": 3,
+        "p99": 5
+      }
+    }
+  }
+}

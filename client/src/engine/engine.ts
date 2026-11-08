@@ -12,7 +12,7 @@ import { onStructure, ownVisible, activeGates, type Gate } from "./scene-hooks";
 import { installShaderRecorder } from "./shader-src";
 import { installDitherChunks } from "./dither";
 import { afterPaint } from "./frame";
-import { refreshFromIntervals } from "./refresh";
+import { RefreshEstimate, WEBKIT_CEILING_HZ } from "./refresh";
 import { flag } from "../flags";
 import { contextEpoch, watchContext } from "./res/restore";
 import "./geometry-release"; // in boot: the geofree owners in lazy chunks share this copy, fewer bytes than a chunk of its own
@@ -95,8 +95,17 @@ export class Engine implements WorldCtx {
   private holds = new Map<number, string>();
   private holdSeq = 0;
   private last = performance.now();
-  private frameMs = new Float32Array(240);
+  /** the newest drawn frames' intervals (ms), a ring indexed by frameCount (res-guard.ts reads it) */
+  readonly frameMs = new Float32Array(240);
+  /** 1 where module streaming ran in that interval of frameMs (a build or integration slice, engine.yield): its length
+   *  is main-thread work between frames, not the frame's own cost (res-guard.ts leaves these out) */
+  readonly frameStream = new Uint8Array(240);
+  /** module builds and integrations in flight (main.ts); while > 0 every frame interval counts as a stream frame */
+  streamJobs = 0;
+  private streamTouched = false;
   private frameIdx = 0;
+  /** frames drawn so far; frameMs[(frameCount - 1) % frameMs.length] is the newest */
+  get frameCount() { return this.frameIdx; }
   frames = 0;
   /** static-transform cache for world-module content (engine/static-cache.ts) */
   readonly statics: StaticCache;
@@ -109,6 +118,11 @@ export class Engine implements WorldCtx {
   /** time-slicing budget (ms) and the start of the current slice */
   sliceMs = 40;
   private sliceT0 = performance.now();
+  /** ?slicelog=N (default 50): main-thread slices of build or stream work over N ms between two yields, newest last */
+  readonly sliceLog: Array<{ at: number; ms: number; stage: string; where: string }> = [];
+  private readonly sliceLogMs = flag("slicelog");
+  /** when the last requestAnimationFrame task ended: build work after it runs in a later task */
+  private rafEnd = 0;
   private builtIds = new Set<string>();
   private builtWaiters = new Map<string, Array<() => void>>();
   private streamOpen = false;
@@ -274,10 +288,26 @@ export class Engine implements WorldCtx {
     return workLeftMs > 0 && warmLeftMs > 0 ? cap : Math.min(base, cap);
   }
   yield(): Promise<void> {
-    if (performance.now() - this.sliceT0 < this.sliceMs) return RESOLVED;
+    this.streamTouched = true;
+    const now = performance.now();
+    if (now - this.sliceT0 < this.sliceMs) return RESOLVED;
+    if (this.sliceLogMs > 0) this.logSlice(now);
     // let the next frame (or the loading screen) paint, then continue in a fresh task right after it (engine/frame.ts:
     // without waiting for a frame the browser isn't painting)
     return afterPaint().then(() => { this.sliceT0 = performance.now(); });
+  }
+  /** ?slicelog: the slice this yield ends (the no-op yields before it included; only a yield that gives way ends one),
+   *  measured from the slice's start or the end of the last animation frame task, whichever is later: an await that
+   *  spans a frame (a worker, a fetch) ends in a later task, so only the work after it counts, and the window can then be
+   *  shorter than sliceMs (N is the floor). Before engine.start() no frame marks those tasks, so boot builds are not
+   *  logged. "where" is the stack of the yield that ended it */
+  private logSlice(now: number) {
+    const ms = now - Math.max(this.sliceT0, this.rafEnd);
+    if (ms < this.sliceLogMs || !this.started) return;
+    const kr = (globalThis as { __kr?: { streamStage?: string; stage?: string } }).__kr;
+    const where = (new Error().stack ?? "").split("\n").slice(3, 7).join(" <").slice(0, 400);
+    this.sliceLog.push({ at: Math.round(now), ms: Math.round(ms), stage: String(kr?.streamStage || kr?.stage || ""), where });
+    if (this.sliceLog.length > 500) this.sliceLog.shift();
   }
   afterPaint() { return afterPaint(); }
 
@@ -610,13 +640,13 @@ export class Engine implements WorldCtx {
       // after start, then every 20 s again (a window moved to another monitor); see refresh.ts
       if (prevRaf) this.sampleRefresh(frameT - prevRaf);
       prevRaf = frameT;
-      if (this.suspended || this.contextLost) { this.last = now; requestAnimationFrame(loop); return; }
+      if (this.suspended || this.contextLost) { this.last = now; this.rafEnd = performance.now(); requestAnimationFrame(loop); return; }
       requestAnimationFrame(loop);
       // frame limiter (display settings): draw only when the cap's interval has elapsed (a 0.6 ms slack absorbs vsync
       // jitter; the cadence advances by whole intervals so 144 on a 240 Hz screen alternates 1-2 vsyncs evenly)
       if (this.capMs > 0) {
         const since = now - this.lastDraw;
-        if (since < this.capMs - 0.6) return;
+        if (since < this.capMs - 0.6) { this.rafEnd = performance.now(); return; }
         this.lastDraw = since > this.capMs * 2 ? now : this.lastDraw + this.capMs;
       }
       const dt = (now - this.last) / 1000;
@@ -625,7 +655,10 @@ export class Engine implements WorldCtx {
         this.hitchLog.push({ at: Math.round(now), gapMs: +(now - this.last).toFixed(1), lastStepMs: +this.lastStepMs.toFixed(1), stream: kr?.streamStage ?? "" });
       }
       if (this.onDraw) this.onDraw(now - this.last);
-      this.frameMs[this.frameIdx++ % this.frameMs.length] = now - this.last;
+      const fi = this.frameIdx++ % this.frameMs.length;
+      this.frameMs[fi] = now - this.last;
+      this.frameStream[fi] = this.streamTouched || this.streamJobs > 0 ? 1 : 0;
+      this.streamTouched = false;
       this.last = now;
       const c0 = performance.now();
       const q = this.gpuBegin();
@@ -634,6 +667,7 @@ export class Engine implements WorldCtx {
       if (this.lastStepMs < 60) this.stepEma = this.stepEma ? this.stepEma + (this.lastStepMs - this.stepEma) * 0.05 : this.lastStepMs;
       this.gpuEnd(q);
       this.dynamicResolution(dt * 1000, performance.now() - c0);
+      this.rafEnd = performance.now();
     };
     requestAnimationFrame(loop);
   }
@@ -659,6 +693,7 @@ export class Engine implements WorldCtx {
   refreshHz = 0;
   private rafSamples: number[] = [];
   private rafNext = 0;
+  private refreshEst = new RefreshEstimate(/^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent) ? WEBKIT_CEILING_HZ : 0);
   private refreshListeners: Array<(hz: number) => void> = [];
   onRefresh(fn: (hz: number) => void) { this.refreshListeners.push(fn); if (this.refreshHz) fn(this.refreshHz); }
   private sampleRefresh(d: number) {
@@ -666,7 +701,8 @@ export class Engine implements WorldCtx {
     if (now < this.rafNext || d <= 0 || d > 100) return;
     this.rafSamples.push(d);
     if (this.rafSamples.length < 90) return;
-    const v = refreshFromIntervals(this.rafSamples);
+    const sc = globalThis.screen as (Screen & { availLeft?: number; availTop?: number }) | undefined;
+    const v = this.refreshEst.add(this.rafSamples, sc ? [sc.width, sc.height, sc.availLeft, sc.availTop].join() : "");
     this.rafSamples = [];
     this.rafNext = now + 20000;
     if (v !== this.refreshHz) {
@@ -718,6 +754,13 @@ export class Engine implements WorldCtx {
     const v = this.postTaa() ? s : 1;
     this.renderScale = +v.toFixed(3);
     post?.setRenderScale?.(this.renderScale);
+  }
+  /** the half-rate guard (res-guard.ts) sets the render scale while dynamic resolution is off; false = not here (dynamic
+   *  resolution on, ?dynres=0, a pinned ?scale, capture mode, or no post chain to upscale in) */
+  guardScale(s: number): boolean {
+    if (this.dynOn || this.dynForcedOff || this.dynPin > 0 || this.shotMode || !this.postTaa()) return false;
+    this.applyScale(Math.min(this.resBase, Math.max(0.5, s)));
+    return true;
   }
   private emaDt = 0; private emaCpu = 0; private dynHold = 0;
   // GPU time per frame (EXT_disjoint_timer_query_webgl2 when the browser exposes it): the controller then knows the

@@ -1,0 +1,43 @@
+# Posts one comment on each pull request with every budgeted number on main and on the PR (tools/ci/pr-report.mts), so a
+# number that moves shows up before it crosses its budget. It never fails a PR; the budgets fail in their own checks.
+# Runs after "checks" finishes, from main's copy of this file and of tools/ci/: GitHub runs a workflow_run workflow from the
+# default branch only. It never checks out or runs a pull request's code and reads the PR run's artifacts as data, which
+# is what lets it hold a token that can comment while "checks" stays read-only and safe for strangers' pull requests.
+name: PR metrics
+
+on:
+  workflow_run:
+    workflows: [checks]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: pr-metrics-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: PR metrics comment
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: compare this PR's metrics with main's and post the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_CREATED: ${{ github.event.workflow_run.created_at }}
+        run: bash tools/ci/pr-metrics.sh

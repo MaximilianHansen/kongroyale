@@ -52,6 +52,10 @@ The server reads these environment variables. Leave a variable unset to get its 
 | `KR_SERVE` | `1` with `npm start` | Also serve the built client from `dist/`. Without it the server only answers WebSockets and the API. |
 | `KR_EVENT_MODE` | on | Players can only join lobbies by link. Set `0` to let players create rooms and caster exhibitions. |
 | `KR_PLAYTEST_BUNDLES` | off | `1` (or a folder path) saves playtest bundles (F8 and KONGBOT reports with `?perfhud`) to disk. `npm run server` defaults it to `1`; `npm start` does not. `0` switches it off. `npx tsx tools/playtest/cli.mts list` reads the folder. |
+| `KR_PLAYTEST_BUNDLES_MAX` | `500` | Most bundles the folder holds. At the cap the server keeps taking reports but writes no more bundles until the folder is cleared. |
+| `KR_PLAYTEST_BUNDLES_MB` | `1024` | Most megabytes the folder holds, with the same rule. A report with its replay and picture is a few MB, so 1 GB holds about 200 to 300. Raise both for a long stream on a big disk. |
+| `KR_DIAG_AUTO` | off | `1` (or a folder path) accepts automatic performance summaries from players of a diagnostics build (`?diag` or `VITE_KR_DIAG=1`) who have seen the one-time notice and not turned it off, at `/api/diag/auto`, and appends them to `<UTC date>.jsonl` in that folder (`1` is `.kongbot/diag-auto/`). `npm run server` defaults it to `1`; `npm start` does not. See "Bug reports" below. |
+| `KR_DIAG_AUTO_MB` | `256` | Most megabytes of summaries the folder holds. At the cap the server refuses new rows until the folder is cleared. |
 | `KR_ADMIN_KEY_SHA256` | unset (admin off) | SHA-256 of the admin key, from `node tools/admin-lobby/key.mjs --hash`. Never the key itself. |
 | `KR_ADMIN_ALLOW_IPS` | empty | Comma list of addresses that skip the global wrong-key brake. Per-address lockouts still apply. |
 | `KR_ADMIN_ORIGINS` | `KR_ORIGINS` | Origins allowed to use the admin pages, if they differ from the site's own. |
@@ -70,11 +74,13 @@ The server reads these environment variables. Leave a variable unset to get its 
 | `KR_MONGO_DB` | `kong_royale` | Database name for bug reports. |
 | `KR_PERF_METRICS` | off | Set `1` to add tick times, event-loop delay and memory use to `/health`. |
 | `KR_WARMUP_S` | `25` | Length of the pre-match warm-up in seconds. For test servers. |
-| `KR_WT` | off | Set `1` to open the WebTransport endpoint (QUIC datagrams for inputs and snapshots). See "WebTransport" below. |
+| `KR_WT` | off | Set `1` to open the WebTransport endpoint (QUIC datagrams for inputs and snapshots) for the share of players `KR_WT_SHARE` names. See "WebTransport" below. |
+| `KR_WT_SHARE` | `1` | With `KR_WT=1`: the share of players, `0` to `1`, the server puts in the WebTransport arm of its A/B. The rest stay on WebSockets. |
 | `KR_WT_PORT` | `KR_PORT` | UDP port of the WebTransport endpoint. |
 | `KR_WT_HOST` | `KR_HOST`, or `0.0.0.0` when `KR_TRUST_PROXY=1` and `KR_HOST` is loopback | Address the WebTransport endpoint listens on. Behind a proxy on loopback it listens on every address, because UDP comes straight from players. |
 | `KR_WT_CERT`, `KR_WT_KEY` | unset (self-signed) | PEM certificate and key for the WebTransport endpoint, valid for the page's host name. |
 | `KR_WT_URL` | `https://<page host>:<KR_WT_PORT>/wt` | The address players dial, if it differs. |
+| `KR_PROCS` | `1` | Match processes: a number, or `auto` for one per CPU core. Above `1`, a front process hands each room's players to the process that holds the room. See "One process per core" below. |
 | `KR_ANNOTATE` | off | Set `1` to accept developer notes from other machines. A local dev tool; leave it off on a public server. |
 
 These are read when you build or run the dev server, not by the game server:
@@ -90,6 +96,20 @@ These are read when you build or run the dev server, not by the game server:
 KONGBOT is the in-game bug reporter (`/kongbot <message>` in the chat bar). Without MongoDB, reports pile up in
 `.kongbot/spool/`; delete them if you don't want them.
 
+Reports from the player diagnostics sheet (`?diag`) arrive gzip-compressed (`Content-Encoding: gzip`). The server
+inflates them itself, up to the same 12 MB as an uncompressed report, so a proxy in front must pass the body through
+unchanged (nginx and Caddy do by default) and allow bodies that large (nginx: `client_max_body_size 12m;` on the
+`/api/kongbot` location).
+
+Automatic performance summaries (`KR_DIAG_AUTO`) are a separate endpoint, `/api/diag/auto`, with its own limits, so
+they never use up the budget for players' own reports. A row is at most 4 KB of numbers and short keys, with no
+picture, logs, callsign or note. The server takes at most 60 rows per address per 10 minutes, 30 per install per hour
+and 6000 per hour in total, and stores a row sent twice (same install, session, kind, time and signature) once. The game makes the install id at random for each page load and keeps it nowhere, so "per install" means per visit; a row holds no address, name, picture, logs or note, and the server keeps addresses only in memory for the limits.
+
+The player's side: a diagnostics build sends summaries by default, but only after a small one-time toast on the title ("Kong Royale sends anonymous performance stats to help fix lag. Change this in Settings.", gone after about 6 s, asking nothing), never while the browser's Global Privacy Control or Do Not Track is on, and not after the player turns it off in Settings → Video → Diagnostics. A server with `KR_DIAG_AUTO` unset answers 404 and the game's beacons are dropped.
+`/health` counts them under `diagAuto`. Without `KR_TRUST_PROXY=1` behind a proxy every player shares one address, so the per-address
+limit becomes a server-wide one.
+
 ## Be careful with these
 
 - **`KR_TRUST_PROXY`**: set it only when a reverse proxy (nginx, Caddy) runs on the same machine, or at an address you
@@ -101,15 +121,65 @@ KONGBOT is the in-game bug reporter (`/kongbot <message>` in the chat bar). With
 - **`KR_EVENT_MODE=0`** on a public server lets anyone create rooms (at most 4 per address and 400 in total).
 - **Raising `KR_MAX_CONNS` or `KR_MAX_PER_IP`** makes it easier for one address to exhaust the server.
 
+## One process per core
+
+The server runs every match on one thread, so one process uses one CPU core however big the machine is.
+`KR_PROCS=4` (or `auto`, one per core) starts a front and four match processes:
+
+- The front listens on `KR_PORT`. It serves the page, the API and `/health`, and hands each game
+  WebSocket to a match process. After that it never sees the socket's traffic.
+- A room lives in one process, and its code says which. A player who joins a room dials `/ws?room=CODE` and lands on
+  that process. A new room goes to the process with the fewest rooms.
+- A match process that exits is started again after a second. Its players lose their match; the other processes and
+  their matches carry on.
+- The limits are for the whole server: the front counts `KR_MAX_CONNS` and `KR_MAX_PER_IP` over every process, an
+  address owns at most 4 rooms across them and the 400 rooms are split evenly between the processes.
+- With `KR_WT=1`, process *i* listens for WebTransport on UDP `KR_WT_PORT + i`. Open the whole range, from
+  `KR_WT_PORT` to `KR_WT_PORT + KR_PROCS - 1`. Each player's welcome names their port, and with `KR_WT_URL` set,
+  process *i* gives that URL with its port plus *i*.
+- `/health` adds the processes up and lists each one under `procs` (whether it is up, its rooms and sockets, and with
+  `KR_PERF_METRICS=1` its tick times). While any process is down it answers 503 with `ok: false`, because the rooms
+  that process holds can't be reached.
+- Each match process builds its own copy of the island when it starts: about 5 s and 600 MB of memory each, so
+  `auto` on a machine with many cores and little memory can run out of memory. Pick a number there.
+- A reverse proxy needs no change: it talks to the front only.
+
+Players make their own rooms behind a front, so it needs `KR_EVENT_MODE=0` and refuses to start without it. Leave
+`KR_PROCS` unset for development: the server is then the single process it always was.
+
 ## WebTransport
 
-With `KR_WT=1` the server also listens for WebTransport (HTTP/3 over QUIC, so UDP) on `KR_WT_PORT`. Players who
-open the page with `?wt=1` send their inputs and get snapshots and pings as datagrams there, so one lost packet no longer
-stalls the ones behind it; the other frames ride the session's reliable stream. The WebSocket stays open as the control channel and is the fallback: a player whose network blocks UDP, or
-whose browser has no WebTransport, plays over WebSockets as before.
+Players use WebSockets unless the deployment turns WebTransport on. With `KR_WT=1` the server also listens for
+WebTransport (HTTP/3 over QUIC, so UDP) on `KR_WT_PORT`, and `KR_WT_SHARE` picks the share of players who use it, so
+the two transports can be compared in real play (an A/B test). A player in the WebTransport arm sends inputs and gets
+snapshots and pings as datagrams, so one lost packet no longer stalls the ones behind it; the other frames ride the
+session's reliable stream. The WebSocket stays open as the control channel and is the fallback: a player whose network
+blocks UDP, or whose browser has no WebTransport, plays over WebSockets as before.
 
-- **UDP**: open `KR_WT_PORT` for UDP in the firewall. Nothing may sit in front of it: CDNs and the usual reverse proxies
-  don't forward WebTransport.
+### Turn it on
+
+Set both on the game server and restart it:
+
+```sh
+KR_WT=1 KR_WT_SHARE=0.5 npm start    # WebTransport for half the players, WebSockets for the other half
+```
+
+- `KR_WT_SHARE` goes from `0` to `1`. Unset, it is `1`: every player. `0` keeps the endpoint open but puts no new
+  player in the WebTransport arm.
+- The server draws each player's arm when they connect and tells their browser in `welcome`. A browser tab keeps the
+  first arm it gets for as long as it is open, through reconnects and reloads, so a player never switches transport
+  mid-session. A new share applies to tabs opened after the restart.
+- `?wt=1` in the page address always tries WebTransport and `?wt=0` never does, whatever the arm. They are for testing,
+  and those players are counted as `forced-wt` and `forced-ws`, outside the experiment.
+- To turn it off, unset `KR_WT`. Everyone is then on WebSockets.
+- A match on WebTransport costs the server about twice the CPU of the same match on WebSockets (the QUIC library runs
+  on the server's main thread), so at `KR_WT_SHARE=1` one server process holds about half as many matches.
+
+### What the server needs
+
+- **UDP**: open `KR_WT_PORT` for UDP in the firewall (by default the same number as the HTTP port, 3020). Nothing may
+  sit in front of it: CDNs and the usual reverse proxies don't forward WebTransport. Players who can't reach it still
+  play: their link gives up on WebTransport within about 3 s and stays on WebSockets.
 - **Certificate**: either set `KR_WT_CERT` and `KR_WT_KEY` to a real certificate for the page's host name (the
   same one the HTTPS proxy uses works), or leave them unset. The server then makes its own certificate, valid 13 days
   and renewed in place, and tells each player its SHA-256 so the browser can check it (`serverCertificateHashes`).
@@ -118,9 +188,23 @@ whose browser has no WebTransport, plays over WebSockets as before.
   skips scripts (`npm ci --ignore-scripts`, or Bun, which runs no dependency scripts unless told to) leaves it out:
   run `npm rebuild @fails-components/webtransport-transport-http3-quiche` afterwards. Where it doesn't install, the server logs why, says so
   in `/health` (`transports.webtransport.off`) and runs WebSocket-only.
+
+### Read the A/B
+
 - `/health` counts clients per transport (`transports.clients`), sessions opened and refused, by reason, and how links
-  settled (`transports.settled`: on `wt`, or on `ws` with why: `flag-off`, `server-off`, `unsupported`,
-  `connect-failed`, `timeout`, `auth`, `closed`, `no-datagrams`), as each player's browser reports it.
+  settled (`transports.settled`: on `wt`, or on `ws` with why: `flag-off` (the page or the arm chose WebSockets),
+  `server-off`, `unsupported`, `connect-failed`, `timeout`, `auth`, `closed`, `no-datagrams`), as each player's
+  browser reports it. `transports.arms` splits that by arm (`wt`, `ws`, `forced-wt`, `forced-ws`, `off`) and adds
+  each arm's inputs in running matches as the server queued them: `seqs`, `lost` and `recovered` (from the input
+  window). `transports.webtransport.share` is the share in force. The arm and the fallback reason are what each
+  browser reports: the server takes only a known arm, once per link, but a kept arm and a made-up one look the same
+  to it, so a player can move their own links between arms. That skews the counts by their share of the links and
+  touches nothing in the match.
+- Every KONGBOT report, F8 mark and diagnostics bundle carries the link's arm, transport, fallback reason, input→ack
+  times and the hit markers that waited for the server (`ctx.game.net`).
+- `npx tsx tools/playtest/ab.mts --health http://<your server>:3020/health` splits the saved bundles by arm
+  (input→ack, deferred markers per minute of play, ping, lag spikes, fallbacks) and adds the server's input gaps per
+  arm. Compare `wt` with `ws`; the forced and off rows are not part of the experiment.
 
 ## Behind a reverse proxy
 

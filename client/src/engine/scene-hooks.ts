@@ -46,10 +46,17 @@ export function gate(o: THREE.Object3D, g: Gate) {
   }
   if (!O.__krGates.includes(g)) O.__krGates.push(g);
 }
+/** remove one gate; the last one gone puts `visible` back as a plain value. A leftover accessor marked the object
+ *  "gated" for good, so the cull never faded its visibility switches: a streamed POI's roots (all behind the build gate
+ *  once) switched in one frame, and the lighthouse's far proxy vanished under the near model's 0.5 s dissolve-in. */
 export function ungate(o: THREE.Object3D, g: Gate) {
-  const O = o as unknown as { __krGates?: Gate[] };
+  const O = o as unknown as { __krGates?: Gate[]; __krOwnVis?: () => boolean };
   if (!O.__krGates) return;
   const i = O.__krGates.indexOf(g); if (i >= 0) O.__krGates.splice(i, 1);
+  if (O.__krGates.length) return;
+  const v = O.__krOwnVis!();
+  delete O.__krGates; delete O.__krOwnVis;
+  Object.defineProperty(o, "visible", { configurable: true, enumerable: true, writable: true, value: v });
 }
 /** the value `o`'s owner last wrote to `visible` (its gates aside). Code that saves and restores `visible` around a
  *  forced draw must save THIS: saving the gated read (false while a gate is active) and writing it back hid the POI for
