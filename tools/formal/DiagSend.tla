@@ -52,6 +52,8 @@ SheetCancel == screen = "sheet" /\ screen' = back /\ UNCHANGED <<consented, sent
 DismissCrash == screen = "crash" /\ screen' = "title" /\ UNCHANGED <<consented, sent, via, back>>
 
 (* the server answers (report.ts send). Accepted: "SENT, THANKS · <id>", and a send from the sheet stores the consent.
+   A 200 JSON answer whose body the TIMEOUT_MS abort cut off is accepted too (without the id): the server only answers
+   that way once the report is stored.
    Refused (a non-OK answer, no connection, or the TIMEOUT_MS abort): the sheet stays open with "Not sent: <why>", and
    a one-tap send shows a "NOT SENT" toast *)
 Accepted ==
