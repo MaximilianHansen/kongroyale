@@ -13,6 +13,7 @@ const argv = process.argv.slice(2);
 const cmd = argv[0] ?? "help";
 const opt = (k: string, d: string) => { const i = argv.lastIndexOf(k); return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d; };
 const flag = (k: string) => argv.includes(k);
+const opts = (k: string) => argv.flatMap((a, i) => a === k && argv[i + 1] !== undefined ? [argv[i + 1]] : []);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MB = 2 ** 20;
 const mb = (b: number) => Math.round((b / MB) * 10) / 10;
@@ -177,6 +178,8 @@ const PROBE = `(function () {
     if (img.data && img.data.byteLength !== undefined) return { kind: "typed array", bytes: img.data.byteLength };
     return null;
   }
+  M.peakPois = 0;
+  setInterval(function () { var ids = (window.__kr && window.__kr.modules) || [], n = 0; for (var i = 0; i < ids.length; i++) if (String(ids[i]).indexOf("poi:") === 0) n++; if (n > M.peakPois) M.peakPois = n; }, 250);
   M.totals = function () {
     var t = 0, b = 0, k = window.__kr || {}, cm = k.game && k.game.cm;
     M.tex.forEach(function (rr) { for (var key in rr.levels) t += rr.levels[key]; });
@@ -393,7 +396,7 @@ async function takeSample(name: string, browserCdp: CDPSession, pageCdp: CDPSess
   const procs = await processes(browserCdp);
   const game = await evalIn<GameSample>(pageCdp, "window.__krMem.sample(80)");
   const audit = await evalIn<Audit | null>(pageCdp, "(window.__kr && window.__kr.resAudit) ? window.__kr.resAudit() : null");
-  const kr = await evalIn<{ stage: string; inMatch: boolean; phase: number }>(pageCdp, "(() => { const k = window.__kr; return { stage: String(k && k.stage), inMatch: !!(k && k.game && k.game.inMatch), phase: k && k.game && k.game.cm && k.game.cm.phase !== undefined ? k.game.cm.phase : -1 }; })()");
+  const kr = await evalIn<{ stage: string; inMatch: boolean; phase: number; pois: number; peakPois: number; evictions: number }>(pageCdp, "(() => { const k = window.__kr; return { stage: String(k && k.stage), inMatch: !!(k && k.game && k.game.inMatch), phase: k && k.game && k.game.cm && k.game.cm.phase !== undefined ? k.game.cm.phase : -1, pois: ((k && k.modules) || []).filter((x) => x.startsWith('poi:')).length, peakPois: window.__krMem.peakPois, evictions: ((k && k.evictions) || []).length }; })()");
   const byType: Record<string, number> = {};
   for (const p of procs) byType[p.type] = Math.round(((byType[p.type] ?? 0) + (procMB(p) ?? 0)) * 10) / 10;
   const unmeasured = procs.filter((p) => procMB(p) === null).map((p) => `${p.type} ${p.pid}`);
@@ -407,7 +410,7 @@ async function takeSample(name: string, browserCdp: CDPSession, pageCdp: CDPSess
     geometryCpuMB: mb(game.cpu.geometry), textureCpuMB: mb(Object.values(game.cpu.textureCopies).reduce((a, c) => a + c.bytes, 0)), audioMB: mb(game.audio.bytes), audioCount: game.audio.count,
     game, audit, heap: null as Awaited<ReturnType<typeof heapSnapshot>> | null,
   };
-  console.log(`  ${name.padEnd(7)} ${s.atS} s: total ${s.totalMB} MB (${Object.entries(byType).map(([k, v]) => `${k} ${v}`).join(", ")}), JS heap ${s.heapUsedMB}, WebGL ${s.webglMB} (textures ${s.textureMB} in ${s.textureCount}, buffers ${s.bufferMB}), CPU copies: geometry ${s.geometryCpuMB} textures ${s.textureCpuMB}, audio ${s.audioMB}`);
+  console.log(`  ${name.padEnd(7)} ${s.atS} s: total ${s.totalMB} MB (${Object.entries(byType).map(([k, v]) => `${k} ${v}`).join(", ")}), JS heap ${s.heapUsedMB}, WebGL ${s.webglMB} (textures ${s.textureMB} in ${s.textureCount}, buffers ${s.bufferMB}), CPU copies: geometry ${s.geometryCpuMB} textures ${s.textureCpuMB}, audio ${s.audioMB}, POIs ${kr.pois} (peak ${kr.peakPois}), ${kr.evictions} evictions`);
   return s;
 }
 
@@ -465,7 +468,7 @@ async function run() {
     const end = Date.now() + secs * 1000;
     for (let i = 0; Date.now() < end && !overCap; i++) {
       const p = stops[i % stops.length];
-      const moved = await evalIn<boolean>(pageCdp, `(() => { const k = window.__kr, me = k.game && k.game.link && k.game.link.match && k.game.link.match.players.find((q) => q && !q.bot); if (!me) return false; Object.assign(me, { x: ${p.x}, z: ${p.z}, y: k.engine.terrain.height(${p.x}, ${p.z}) + 1.5, vx: 0, vy: 0, vz: 0, hp: ${MAX_HP}, shield: ${MAX_SHIELD} }); return true; })()`);
+      const moved = await evalIn<boolean>(pageCdp, `(() => { const g = window.__kr.game, l = g && g.link; if (!l || !l.hostTool || !g.cm) return false; l.hostTool({ op: "place", pid: g.cm.me, x: ${p.x}, z: ${p.z}, yaw: 0 }); l.hostTool({ op: "heal", pid: g.cm.me, hp: ${MAX_HP}, shield: ${MAX_SHIELD} }); return true; })()`);
       if (!moved) { errors.push("--tour needs a practice match (no local host to move the player in)"); break; }
       console.log(`    tour: ${p.id}`);
       await hold(Math.min(tourS * 1000, Math.max(0, end - Date.now())));
@@ -548,6 +551,7 @@ async function run() {
       ...Object.fromEntries(Object.entries(s.byType).map(([k, v]) => [`${k}MB`, value(v)])), heapUsedMB: value(s.heapUsedMB),
       webglMB: value(s.webglMB), textureMB: value(s.textureMB), bufferMB: value(s.bufferMB), renderbufferMB: value(s.renderbufferMB), drawingMB: value(s.drawingMB),
       geometryCpuMB: value(s.geometryCpuMB), textureCpuMB: value(s.textureCpuMB), audioMB: value(s.audioMB), textureCount: value(s.textureCount, "count"),
+      residentPois: value(s.kr.pois, "count"), peakResidentPois: value(s.kr.peakPois, "count"), evictions: value(s.kr.evictions, "count"),
       ...(s.audit ? { ownedMB: value(mb(s.audit.owned.bytes)), unownedMB: value(mb(s.audit.unowned.bytes)), unownedCount: value(s.audit.unowned.count, "count"),
         ...Object.fromEntries(Object.entries(s.audit.ledger.byCategory).map(([k, v]) => [`ledger.${k}MB`, value(mb(v.bytes))])) } : {}),
     },
@@ -571,8 +575,8 @@ async function run() {
   const file = path.join(out, "result.json");
   save(file, result);
   console.log(`wrote ${file}${errors.length ? `\nerrors:\n  ${errors.join("\n  ")}` : ""}`);
-  const budgets = opt("--budgets", "");
-  process.exitCode = errors.length || !samples.length ? 1 : budgets && !checkBudgets(result, budgets) ? 1 : 0;
+  const budgets = opts("--budgets");
+  process.exitCode = errors.length || !samples.length ? 1 : budgets.length && !checkBudgets(result, budgets) ? 1 : 0;
 }
 
 function leakCase(samples: Sample[], seed: number): CaseResult | null {
@@ -593,22 +597,35 @@ function leakCase(samples: Sample[], seed: number): CaseResult | null {
   return { scenario: { id: "memory/leak", version: SCENARIO_VERSION, seed, workload: "page-load" }, windows: { from: a.name, to: b.name }, load: {}, metrics, gates: [], detail: { names } };
 }
 
-function checkBudgets(r: RunResult, file: string): boolean {
-  const b = JSON.parse(fs.readFileSync(file, "utf8")) as { config: Record<string, string | number>; underPct: number; headroomPct: number; budgets: Record<string, Record<string, number>> };
-  const wrongConfig = Object.entries(b.config).filter(([k, v]) => r.config[k] !== v).map(([k, v]) => `${k} ${String(r.config[k])} (budgets are for ${v})`);
-  if (wrongConfig.length) { console.log(`FAIL ${file} doesn't apply to this run: ${wrongConfig.join(", ")}`); return false; }
-  if (r.errors.length) { console.log(`FAIL the run had errors:\n  ${r.errors.join("\n  ")}`); return false; }
-  let ok = true;
-  for (const [phase, metrics] of Object.entries(b.budgets)) {
-    const c = r.cases.find((x) => x.scenario.id === `memory/${phase}`);
-    for (const [metric, budget] of Object.entries(metrics)) {
-      const m = c?.metrics[metric], v = m && m.status === "ok" && "value" in m ? m.value : NaN;
-      const verdict = !Number.isFinite(v) ? "not measured" : v > budget ? "over budget" : v < budget * (1 - b.underPct / 100) ? `more than ${b.underPct}% under: lower the budget to ${Math.ceil(v * (1 + b.headroomPct / 100))}` : "ok";
-      if (verdict !== "ok") ok = false;
-      console.log(`${verdict === "ok" ? "ok  " : "FAIL"} ${phase}.${metric} ${v}, budget ${budget}: ${verdict}`);
+function checkBudgets(r: RunResult, files: string[]): boolean {
+  if (r.errors.length) { console.log(`FAIL the run had errors, so no budget was checked:\n  ${r.errors.join("\n  ")}`); return false; }
+  const ci = !!process.env.GITHUB_ACTIONS, rows: string[] = [], failed: string[] = [];
+  for (const file of files) {
+    const b = JSON.parse(fs.readFileSync(file, "utf8")) as { config: Record<string, string | number | boolean>; underPct: number; underPctBy?: Record<string, number>; headroomPct: number; budgets: Record<string, Record<string, number>> };
+    const wrongConfig = Object.entries(b.config).filter(([k, v]) => r.config[k] !== v).map(([k, v]) => `${k} ${String(r.config[k])} (budgets are for ${String(v)})`);
+    if (wrongConfig.length) { failed.push(`${file} doesn't apply to this run: ${wrongConfig.join(", ")}`); console.log(`FAIL ${failed.at(-1)}`); continue; }
+    for (const [phase, metrics] of Object.entries(b.budgets)) {
+      const c = r.cases.find((x) => x.scenario.id === `memory/${phase}`);
+      for (const [metric, budget] of Object.entries(metrics)) {
+        const underPct = b.underPctBy?.[`${phase}.${metric}`] ?? b.underPct;
+        const m = c?.metrics[metric], v = m && m.status === "ok" && "value" in m ? m.value : NaN, unit = m && "unit" in m && m.unit === "MB" ? " MB" : "";
+        const d = Math.round((v - budget) * 10) / 10, pct = Math.round((v / budget - 1) * 1000) / 10;
+        const verdict = !Number.isFinite(v) ? `not measured (no memory/${phase} sample)`
+          : v > budget ? `over budget by ${d}${unit} (+${pct}%)`
+          : v < budget * (1 - underPct / 100) ? `${-pct}% under, more than ${underPct}%: lower the budget to ${Math.ceil(v * (1 + b.headroomPct / 100)) < budget ? Math.ceil(v * (1 + b.headroomPct / 100)) : v}`
+          : "ok";
+        const line = `${phase}.${metric} ${v}${unit}, budget ${budget}${unit}: ${verdict}`;
+        console.log(`${verdict === "ok" ? "ok  " : "FAIL"} ${line}`);
+        rows.push(`| ${file} | ${phase} | ${metric} | ${v}${unit} | ${budget}${unit} | ${Number.isFinite(v) ? `${d > 0 ? "+" : ""}${d}${unit} (${pct > 0 ? "+" : ""}${pct}%)` : ""} | ${verdict === "ok" ? "ok" : `**${verdict}**`} |`);
+        if (verdict === "ok") continue;
+        failed.push(`${file} ${line}`);
+        if (ci) console.log(`::error file=${file},title=memory budget ${phase}.${metric}::${line}`);
+      }
     }
   }
-  return ok;
+  if (ci && process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Memory budgets (${failed.length ? `${failed.length} failed` : "all ok"})\n\n| budget file | phase | metric | measured | budget | change | verdict |\n|---|---|---|---:|---:|---:|---|\n${rows.join("\n")}\n\n`);
+  console.log(failed.length ? `\nFAIL ${failed.length} memory budget${failed.length > 1 ? "s" : ""}:\n  ${failed.join("\n  ")}` : `\nok: every memory budget in ${files.join(", ")}`);
+  return !failed.length;
 }
 
 function table() {
@@ -648,5 +665,5 @@ function table() {
 
 if (cmd === "run") { await run(); process.exit(process.exitCode ?? 0); }
 else if (cmd === "table") table();
-else if (cmd === "check") { const f = argv.slice(1).find((a) => !a.startsWith("--") && a !== opt("--budgets", "")) ?? ""; process.exitCode = checkBudgets(parseResult(JSON.parse(fs.readFileSync(f, "utf8")), f), opt("--budgets", "tools/memory-budgets.json")) ? 0 : 1; }
-else { console.log("usage: npx tsx tools/performance/memory.mts run --url http://127.0.0.1:PORT [--profile nogpu|mac|win] [--warmup] [--budgets FILE] [--max-mb N] [--heap] [--tour SECONDS [--stops poi,poi,...]] | table result.json... [--md] | check result.json [--budgets tools/memory-budgets.json]"); process.exitCode = cmd === "help" ? 0 : 2; }
+else if (cmd === "check") { const b = opts("--budgets"), f = argv.slice(1).find((a) => !a.startsWith("--") && !b.includes(a)) ?? ""; process.exitCode = checkBudgets(parseResult(JSON.parse(fs.readFileSync(f, "utf8")), f), b.length ? b : ["tools/memory-budgets.json"]) ? 0 : 1; }
+else { console.log("usage: npx tsx tools/performance/memory.mts run --url http://127.0.0.1:PORT [--profile nogpu|mac|win] [--warmup] [--budgets FILE]... [--max-mb N] [--heap] [--tour SECONDS [--stops poi,poi,...]] | table result.json... [--md] | check result.json [--budgets FILE]... (default tools/memory-budgets.json)"); process.exitCode = cmd === "help" ? 0 : 2; }
