@@ -15,6 +15,7 @@ import type { Engine } from "../engine/engine";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { makeHit, surfaceById } from "../../../shared/sim/world";
 import { POIS } from "../../../shared/world/map";
+import { flag } from "../flags";
 
 interface Note {
   id: string; at: string; author: string; text: string; status: "open" | "resolved";
@@ -103,6 +104,8 @@ export function startDevView(kr: Kr) {
   authorBox.value = author;
   let showDone = false;
   const btn = (a: string) => panel.querySelector(`[data-a="${a}"]`) as HTMLButtonElement;
+  // three.js builds wireframe edges from the CPU index, which geofree drops after upload (?dev=annotate keeps it)
+  if (flag("geofree")) { btn("wire").disabled = true; btn("wire").title = "needs CPU vertices: open with ?dev=annotate or ?geofree=0"; }
   panel.addEventListener("click", (e) => {
     const a = (e.target as HTMLElement).closest("[data-a]")?.getAttribute("data-a"); if (!a) return;
     if (a === "fly") setFly(!fly);
@@ -194,7 +197,7 @@ export function startDevView(kr: Kr) {
     scene.traverseVisible((ob) => {
       const m = ob as THREE.Mesh;
       if (!m.isMesh || ob === helpers || isDev(ob)) return;
-      // ?geofree=1 drops the CPU arrays of uploaded meshes; with no vertices left there is nothing to pick on them
+      // geofree is off in this view unless ?geofree=1, which drops the CPU arrays of uploaded meshes: nothing left to pick on
       if (!m.geometry.attributes.position?.array) return;
       const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.Material | undefined;
       if (!mat || (mat.transparent && mat.blending === THREE.AdditiveBlending) || !mat.visible) return;
@@ -310,7 +313,7 @@ export function startDevView(kr: Kr) {
       for (const m of Array.isArray(mm) ? mm : [mm]) if ("wireframe" in m && !(m as THREE.MeshBasicMaterial).wireframe) { (m as THREE.MeshBasicMaterial).wireframe = true; wired.add(m); }
     });
   }
-  function setWire(on: boolean) { wire = on; btn("wire").classList.toggle("on", on); applyWire(on); }
+  function setWire(on: boolean) { if (on && flag("geofree")) return; wire = on; btn("wire").classList.toggle("on", on); applyWire(on); }
 
   // ---- overlaps (z-fighting finder): after the frame, (1) the scene's linear depth into a float target, (2) every
   // surface again, additively counted where it lies within a hair of that depth (no depth test), (3) a red overlay
