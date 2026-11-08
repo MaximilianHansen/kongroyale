@@ -97,6 +97,12 @@ export class Engine implements WorldCtx {
   private last = performance.now();
   /** the newest drawn frames' intervals (ms), a ring indexed by frameCount (res-guard.ts reads it) */
   readonly frameMs = new Float32Array(240);
+  /** 1 where module streaming ran in that interval of frameMs (a build or integration slice, engine.yield): its length
+   *  is main-thread work between frames, not the frame's own cost (res-guard.ts leaves these out) */
+  readonly frameStream = new Uint8Array(240);
+  /** module builds and integrations in flight (main.ts); while > 0 every frame interval counts as a stream frame */
+  streamJobs = 0;
+  private streamTouched = false;
   private frameIdx = 0;
   /** frames drawn so far; frameMs[(frameCount - 1) % frameMs.length] is the newest */
   get frameCount() { return this.frameIdx; }
@@ -282,6 +288,7 @@ export class Engine implements WorldCtx {
     return workLeftMs > 0 && warmLeftMs > 0 ? cap : Math.min(base, cap);
   }
   yield(): Promise<void> {
+    this.streamTouched = true;
     const now = performance.now();
     if (now - this.sliceT0 < this.sliceMs) return RESOLVED;
     if (this.sliceLogMs > 0) this.logSlice(now);
@@ -648,7 +655,10 @@ export class Engine implements WorldCtx {
         this.hitchLog.push({ at: Math.round(now), gapMs: +(now - this.last).toFixed(1), lastStepMs: +this.lastStepMs.toFixed(1), stream: kr?.streamStage ?? "" });
       }
       if (this.onDraw) this.onDraw(now - this.last);
-      this.frameMs[this.frameIdx++ % this.frameMs.length] = now - this.last;
+      const fi = this.frameIdx++ % this.frameMs.length;
+      this.frameMs[fi] = now - this.last;
+      this.frameStream[fi] = this.streamTouched || this.streamJobs > 0 ? 1 : 0;
+      this.streamTouched = false;
       this.last = now;
       const c0 = performance.now();
       const q = this.gpuBegin();

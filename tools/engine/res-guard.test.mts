@@ -2,7 +2,7 @@
 // sits past the half-rate line and fewer pixels help, never below Auto's floor, steps back up after a run of full-rate
 // seconds, and backs off instead of oscillating when an up-step falls back (RAY-186).
 import assert from "node:assert/strict";
-import { AUTO_RES_FLOOR, BLOCK_S, REF_MS, UP_AFTER_MAX_S, UP_AFTER_S, decide, guardRefMs, newGuardState } from "../../client/src/engine/res-guard";
+import { AUTO_RES_FLOOR, BLOCK_S, MIN_FRAMES, REF_MS, UP_AFTER_MAX_S, UP_AFTER_S, decide, guardRefMs, newGuardState, readSecond } from "../../client/src/engine/res-guard";
 
 const H = 1000 / 60;
 type Frame = { med: number; mean?: number };
@@ -104,5 +104,30 @@ assert.equal(run(10, gpuBound(22), { cpuMs: 16 }).steps[0].why, "halfrate", "sub
 {
   const st = newGuardState();
   for (let s = 0; s < 10; s++) assert.equal(decide(st, { medMs: 500, p95Ms: 500, meanMs: 500, frames: 2, refMs: H, cpuMs: 7, gpuMs: 0 }, 1, 1, s), null);
+}
+// module streaming: a POI build slice between frames makes that interval long while the frame itself stays
+// cheap. Those intervals are left out, so a lowmem descent whose own frames run at full rate takes no step down
+{
+  const N = 240, ring = new Float32Array(N), stream = new Uint8Array(N), out = new Float32Array(N);
+  const draw = (count: number, ms: number, st: boolean) => { ring[count % N] = ms; stream[count % N] = st ? 1 : 0; return count + 1; };
+  // a second of the descent: 30 frames, every other one behind a 7 ms slice plus a 40-560 ms build step; the ring wraps
+  let count = 225;
+  for (let i = 0; i < 30; i++) count = draw(count, i % 2 ? 40 + i * 18 : H, i % 2 === 1);
+  const s = readSecond(ring, stream, count, 30, out);
+  assert.deepEqual([s.frames, s.streamFrames], [15, 15], "stream frames counted apart");
+  assert.ok(Math.abs(s.medMs - H) < 1e-3 && Math.abs(s.p95Ms - H) < 1e-3 && Math.abs(s.meanMs - H) < 1e-3, "only the clean frames: " + JSON.stringify(s));
+  const st = newGuardState();
+  for (let t = 0; t < 30; t++) assert.equal(decide(st, { ...s, refMs: H, cpuMs: 7, gpuMs: 0 }, 1, 1, t), null, "no step at full rate");
+  // a second where every interval held a slice decides nothing, however long its frames
+  for (let i = 0; i < 20; i++) count = draw(count, 120, true);
+  const all = readSecond(ring, stream, count, 20, out);
+  assert.ok(all.frames === 0 && all.frames < MIN_FRAMES && all.streamFrames === 20);
+  for (let t = 0; t < 30; t++) assert.equal(decide(newGuardState(), { ...all, refMs: H, cpuMs: 7, gpuMs: 0 }, 1, 1, t), null);
+  // a GPU-bound second keeps its say when a few of its frames streamed
+  for (let i = 0; i < 30; i++) count = draw(count, i < 3 ? 300 : 2 * H, i < 3);
+  const gpu = readSecond(ring, stream, count, 30, out), gs = newGuardState();
+  assert.equal(gpu.frames, 27);
+  assert.equal(decide(gs, { ...gpu, refMs: H, cpuMs: 7, gpuMs: 0 }, 1, 1, 0), null);
+  assert.equal(decide(gs, { ...gpu, refMs: H, cpuMs: 7, gpuMs: 0 }, 1, 1, 1)?.why, "halfrate", "still steps on its own frames");
 }
 console.log("res-guard: ok");

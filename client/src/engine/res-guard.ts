@@ -7,7 +7,9 @@
 // measured refresh (a match locked at half rate measures as a 30 Hz display): when the steps down reach the floor with
 // no gain in the mean frame (a 30 Hz screen, Low Power Mode, a CPU-bound frame) it puts the scale back and leaves it
 // for a while; a GPU timer that shows the main thread as the longer side, or a main thread that takes most of the
-// frame, skips the steps. The preset's other settings stay as they are. Every step goes into a bounded log (resLog,
+// frame, skips the steps. Frame intervals in which module streaming ran (engine.frameStream: a POI build or integration
+// slice between frames) are left out of the second: those are CPU stalls that fewer pixels can't shorten, and
+// under lowmem they fill the plane and the descent. The preset's other settings stay as they are. Every step goes into a bounded log (resLog,
 // __kr.resLog) that KONGBOT and diagnostics reports carry in their context. ?resguard=1 / =0 force it on / off; it is
 // off under automation (navigator.webdriver) unless forced, and ?dynres=0 or a pinned ?scale also keep it off
 // (engine.guardScale).
@@ -101,9 +103,20 @@ export function decide(st: GuardState, s: GuardSecond, scale: number, top: numbe
   return null;
 }
 
-/** one step: page and match seconds, phase, the second's fps and frame p95 before it, the scale before and after,
- *  why, the engine's display refresh estimate, the canvas backing size, and whether the page was hidden or focused */
-export interface ResStep { at: number; t: number; ph: number; fps: number; p95: number; from: number; to: number; why: StepWhy; hz: number; cv: [number, number]; hid: boolean; foc: boolean }
+/** one step: page and match seconds, phase, the second's fps and frame p95 before it (stream frames left out), the
+ *  scale before and after, why, the engine's display refresh estimate, the canvas backing size, whether the page was
+ *  hidden or focused, and how many of the second's frames were stream frames */
+export interface ResStep { at: number; t: number; ph: number; fps: number; p95: number; from: number; to: number; why: StepWhy; hz: number; cv: [number, number]; hid: boolean; foc: boolean; sf: number }
+
+/** one second's frame intervals without the stream frames: the newest `n` of the engine's rings (frameMs and
+ *  frameStream, `count` frames drawn so far), sorted into `out`; the median, p95 and mean of what is left, how many
+ *  frames that is, and how many were stream frames */
+export function readSecond(ring: Float32Array, stream: Uint8Array, count: number, n: number, out: Float32Array) {
+  let sum = 0, k = 0;
+  for (let i = 0; i < n; i++) { const j = (count - n + i) % ring.length; if (stream[j]) continue; out[k++] = ring[j]; sum += ring[j]; }
+  const s = out.subarray(0, k).sort();
+  return { medMs: k ? s[k >> 1] : 0, p95Ms: k ? s[Math.min(k - 1, Math.floor(k * 0.95))] : 0, meanMs: k ? sum / k : 0, frames: k, streamFrames: n - k };
+}
 export const resLog: ResStep[] = [];
 
 interface KrMatch { phase: number; time: number }
@@ -116,11 +129,13 @@ export function startResGuard(engine: Engine): void {
   const kr = (window as unknown as { __kr: Kr }).__kr;
   kr.resLog = resLog;
   const st = newGuardState(), iv = new Float32Array(engine.frameMs.length);
-  let seen = engine.frameCount, stepped = false;
+  let seen = engine.frameCount, stepped = false, streamS = 0;
+  /** seconds in a match the guard sat out because module streaming filled them (too few frames left) */
+  kr.resStreamS = () => streamS;
   const r1 = (v: number) => Math.round(v * 10) / 10;
-  const log = (why: StepWhy, from: number, to: number, fps: number, p95: number) => {
+  const log = (why: StepWhy, from: number, to: number, fps: number, p95: number, sf: number) => {
     const cm = kr.game?.inMatch ? kr.game.cm ?? null : null, c = engine.renderer.domElement;
-    resLog.push({ at: r1(performance.now() / 1000), t: cm ? r1(cm.time) : -1, ph: cm ? cm.phase : -1, fps: r1(fps), p95: r1(p95), from, to, why, hz: engine.refreshHz, cv: [c.width, c.height], hid: document.visibilityState === "hidden", foc: document.hasFocus() });
+    resLog.push({ at: r1(performance.now() / 1000), t: cm ? r1(cm.time) : -1, ph: cm ? cm.phase : -1, fps: r1(fps), p95: r1(p95), from, to, why, hz: engine.refreshHz, cv: [c.width, c.height], hid: document.visibilityState === "hidden", foc: document.hasFocus(), sf });
     if (resLog.length > RES_LOG_MAX) resLog.splice(0, resLog.length - RES_LOG_MAX);
   };
   setInterval(() => {
@@ -129,21 +144,18 @@ export function startResGuard(engine: Engine): void {
     const top = engine.resBase, scale = engine.renderScale;
     if (!kr.game?.inMatch) {
       Object.assign(st, newGuardState());
-      if (stepped && scale < top) { if (engine.guardScale(top)) { log("left-match", scale, top, 0, 0); stepped = false; } }
+      if (stepped && scale < top) { if (engine.guardScale(top)) { log("left-match", scale, top, 0, 0, 0); stepped = false; } }
       else stepped = false;
       return;
     }
     if (document.visibilityState !== "visible" || engine.suspended || engine.dynamicRes) { st.bad = 0; st.good = 0; return; }
-    let sum = 0;
-    for (let i = 0; i < n; i++) { const v = ring[(count - n + i) % ring.length]; iv[i] = v; sum += v; }
-    const s = iv.subarray(0, n).sort();
-    const med = n ? s[n >> 1] : 0, p95 = n ? s[Math.min(n - 1, Math.floor(n * 0.95))] : 0;
-    const meanMs = n ? sum / n : 0, fps = meanMs > 0 ? 1000 / meanMs : 0;
-    const d = decide(st, { medMs: med, p95Ms: p95, meanMs, frames: n, refMs: guardRefMs(engine.frameCap), cpuMs: engine.stepEma, gpuMs: engine.gpuMs }, scale, top, performance.now() / 1000);
+    const sec = readSecond(ring, engine.frameStream, count, n, iv), fps = sec.meanMs > 0 ? 1000 / sec.meanMs : 0;
+    if (sec.streamFrames && sec.frames < MIN_FRAMES) streamS++;
+    const d = decide(st, { medMs: sec.medMs, p95Ms: sec.p95Ms, meanMs: sec.meanMs, frames: sec.frames, refMs: guardRefMs(engine.frameCap), cpuMs: engine.stepEma, gpuMs: engine.gpuMs }, scale, top, performance.now() / 1000);
     if (!d) return;
-    if (d.to === scale) { log(d.why, scale, scale, fps, p95); return; }
+    if (d.to === scale) { log(d.why, scale, scale, fps, sec.p95Ms, sec.streamFrames); return; }
     if (!engine.guardScale(d.to)) return;
     stepped = true;
-    log(d.why, scale, d.to, fps, p95);
+    log(d.why, scale, d.to, fps, sec.p95Ms, sec.streamFrames);
   }, 1000);
 }

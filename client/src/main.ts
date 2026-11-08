@@ -313,7 +313,11 @@ const atmos = () => engine.shared.get("atmos") as { sweep?: () => number } | und
 
 let buildQueue: Promise<unknown> = Promise.resolve();
 function streamBuild(id: string, fast: boolean): Promise<{ integrated: Promise<void> }> {
-  const built = buildQueue.then(() => buildStreamed(id, fast));
+  // (engine.streamJobs: from the build's start until its integration ends, every frame interval is a stream frame)
+  const built = buildQueue.then(() => {
+    engine.streamJobs++;
+    return buildStreamed(id, fast).then((b) => ({ integrated: b.integrated.finally(() => { engine.streamJobs--; }) }), (e) => { engine.streamJobs--; throw e; });
+  });
   buildQueue = built.catch(() => {});
   return built;
 }
