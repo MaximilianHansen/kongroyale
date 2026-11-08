@@ -13,7 +13,8 @@
 //              knows a session with no clean exit and no lock died (tab killed, browser crashed); it claims that record
 //              under one lock and keeps it as `prev`, so one crash is reported once. Browsers without Web Locks keep no
 //              heartbeat.
-// snapshot() is __kr.diag.snapshot().
+// snapshot() is __kr.diag.snapshot(); a report sends it as bundle.diag, which the server validates (parseBundle in
+// server/playtest-bundles.ts) and stores.
 import type { Engine } from "../engine/engine";
 import { POIS } from "../../../shared/world/map";
 import { BEAT_KEY, beat, live, locks, sid, writeBeat, type Beat, type Locks } from "./beat";
@@ -156,7 +157,7 @@ export function installDiag(engine: Engine, ring: Float32Array): (at: number) =>
   };
 }
 
-/** what a report carries as ctx.diag */
+/** what a report carries as bundle.diag */
 export function snapshot() {
   const kept = Math.min(pathCursor.rows, PATH_S), rows: number[][] = [];
   for (let r = pathCursor.rows - kept; r < pathCursor.rows; r++) {
