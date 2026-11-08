@@ -306,6 +306,7 @@ function registerFar(id: string, m: WorldModule | null, streamed: boolean) {
 }
 
 const world = { modOf, scopeOf, rootsOf, loaded, roots: (id: string) => moduleRoots(id, true), report, build: (id: string) => streamBuild(id, false) };
+if (flag("invariants")) void import("./engine/invariants").then((m) => { kr.invariants = m.installInvariants(engine, world.roots, () => kr.modules, report); }, (e) => report("invariants", e));
 
 const atmos = () => engine.shared.get("atmos") as { sweep?: () => number } | undefined;
 

@@ -70,6 +70,7 @@ const FLAGS = {
   heavyms: { kind: num(Infinity), owner: "boot", purpose: "modules that take longer than this (ms) build behind the match card" },
   helilazy: { kind: text, owner: "actors", purpose: "=1 loads the helicopter model at its first use in a match, =0 when the title is ready (the prefab warm-up); absent = first use on Safari and on devices reporting under 8 GB, else when the title is ready" },
   ice: { kind: text, owner: "voice", purpose: "dev builds: ICE server URLs for voice, comma list" },
+  invariants: { kind: present, owner: "engine", purpose: "dev check: every frame, each POI in view must draw its model, impostor or HLOD; gaps go to __kr.errors" },
   impblend: { kind: on, owner: "veg", purpose: "impostors crossfade between their baked views" },
   impcull: { kind: on, owner: "veg", purpose: "cull impostor cells outside the view; =0 draws every impostor every frame" },
   impgrade: { kind: numbers, owner: "veg", purpose: "four numbers that replace the impostor colour grade uImpGrade" },

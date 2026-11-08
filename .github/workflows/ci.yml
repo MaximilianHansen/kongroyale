@@ -202,3 +202,49 @@ jobs:
       - name: stop the server
         if: always()
         run: node tools/kr-verify.mjs down
+
+  invariants:
+    name: no-GPU invariants (${{ matrix.arm }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # the low-memory setup: the stream builds what the plane sees, impostors stand in for the rest
+          - arm: lowmem
+            query: lowmem=1&geofree=1&farimp=1
+            args: ""
+          # the default: every POI built, HLOD proxies far away (title modules plus the route POI: SwiftShader runs out of
+          # memory with the whole island past the warm-up). HLOD does not build the plantation's proxy, so its
+          # far stop warns instead of failing; drop --far-warn once it does
+          - arm: default
+            query: modules=atmos,terrain,water,veg,poi:lobby-islet,showcase,weapons-showcase,gameplay-stage,poi:the-plantation
+            args: --far-warn plantation-hlod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      # a location is never invisible (client/src/engine/invariants.hot.ts): a practice match through the warm-up and the
+      # plane, then teleported through the route POI's swap ranges
+      - name: no POI vanishes in a hand-over (?invariants)
+        timeout-minutes: 20
+        run: |
+          node tools/kr-verify.mjs up --prod --port 3140
+          npx tsx tools/verify-invariants.mts --url http://127.0.0.1:3140 --query "${{ matrix.query }}" ${{ matrix.args }} --out shots/invariants/${{ matrix.arm }}.json
+      - name: stop the server
+        if: always()
+        run: node tools/kr-verify.mjs down
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: invariants-${{ matrix.arm }}
+          path: shots/invariants/
+          retention-days: 7
