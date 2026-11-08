@@ -1,5 +1,5 @@
 // The visibility gate (client/src/engine/scene-hooks.ts): a gated object hides while any gate is active, and once its
-// last gate is removed `visible` is a plain value again. RAY-178: a leftover accessor marked a streamed POI's roots
+// last gate is removed `visible` is a plain value again. A leftover accessor marked a streamed POI's roots
 // "gated" for good, so the cull never faded their switches and the lighthouse's far proxy vanished in one frame.
 import assert from "node:assert/strict";
 import * as THREE from "three";
