@@ -120,6 +120,7 @@ export function gatherContext(engine: Engine) {
     perf: {
       fps: safe(() => Math.round(engine.liveFps())), gpuMs: r2(engine.gpuMs), frameCap: engine.frameCap, refreshHz: engine.refreshHz, dynamicRes: engine.dynamicRes, renderScale: engine.renderScale,
       dprBase: engine.dprBase, pixelRatio: ren.getPixelRatio(), canvas: { w: canvas.width, h: canvas.height, cssW: canvas.clientWidth, cssH: canvas.clientHeight },
+      resSteps: Array.isArray(K.resLog) ? K.resLog.slice() : null,
       renderInfo: safe(() => K.info?.()), frames: frameStats(10),
       heapMB: mem ? { used: Math.round(mem.usedJSHeapSize / 1048576), total: Math.round(mem.totalJSHeapSize / 1048576), limit: Math.round(mem.jsHeapSizeLimit / 1048576) } : null,
     },

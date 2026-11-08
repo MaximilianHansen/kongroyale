@@ -202,7 +202,9 @@ function decodeImpostor(buf: ArrayBuffer): THREE.BufferGeometry {
 async function loadImpostors(engine: Engine, w: World, out: Map<string, THREE.Mesh>) {
   const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") + "/assets/far/";
   const scope = resources.root.child("far-impostors");
-  const mat = scope.material(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  // (double-sided: the bake merges leaf cards and cliff shells drawn DoubleSide at the POI, and culling their back halves
+  // showed as see-through speckle from the plane)
+  const mat = scope.material(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
   const group = new THREE.Group();
   group.name = "far-merge-impostors";
   engine.scene.add(group);
