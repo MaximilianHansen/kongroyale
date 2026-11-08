@@ -194,10 +194,15 @@ rebuild (a cached file through `Assets`, a procedural texture through its painte
 one without a rebuild makes the restore fall back to a reload (see [Context loss](#context-loss)).
 
 Geometry is different: three.js uploads `attribute.array` again whenever the GPU buffer is recreated (after a
-`dispose()`, or after a context loss), so a geometry whose array is gone can't come back on its own. Geometry copies are
-dropped only where the owner can rebuild them: `releaseGeometryAfterUpload(g, rebuild)` (`engine/geometry-release.ts`)
-for single owners such as the plane and the chests, and `?geofree=1` for static town-kit batches, which a restore
-brings back by rebuilding the module.
+`dispose()`, or after a context loss), so a geometry whose array is gone can't come back. Geometry copies are dropped
+only where the owner can rebuild it: `releaseGeometryAfterUpload(g, rebuild)` (`engine/geometry-release.ts`) takes a
+callback that returns the arrays again (a module's builder replayed from its seed, a cached GLTF), and context restore
+calls it. This is on by default; `?geofree=0` keeps every geometry's CPU copy. The owners that release today are the
+terrain's shadow proxy, the town-kit batches of streamed POIs, the climbs, the loot crates, the lobby islet's merges,
+the first-person hands and the planes' airframes: about 81 MB less at a match on SwiftShader (219 to 138 MB).
+Geometry that keeps its copy has a later CPU reader: vegetation (impostor and splat bakes, the splat cache key, the
+species merges), terrain rocks and cliff skins (raycast), the closed loot crate (the interact outline's hull) and the
+flight plane's crew harness. Until an owner registers a rebuild, its geometry keeps its CPU copy.
 
 Not done yet: a `keepCpu` reason on every copy that is deliberately kept, so the ledger can list each one and why. Known
 readers that need a kept copy are the HLOD far merge (`engine/hlod.ts` reads source arrays), the interaction highlight
@@ -281,8 +286,10 @@ uploads geometry and textures again from their CPU copies. On its own that leave
 
 - Every baked render target empty: impostor banks, the terrain's far albedo, water obstacle and wave bakes, cloud
   volumes, the sky bake. They were drawn once and are never drawn again.
-- Every texture whose CPU copy was released (`releaseAfterUpload`) with only a sized stub, so it uploads as nothing.
-- Geometry whose CPU arrays are dropped (`releaseGeometryAfterUpload`, `?geofree=1`) the same.
+- Every texture whose CPU copy was released (`releaseAfterUpload` in `engine/texture-release.ts`, on by default,
+  `?texfree=0` turns it off) with only a sized stub, so it uploads as nothing.
+- Geometry whose CPU arrays are dropped (`geofree`, on by default, `?geofree=0` turns it off) the same, which is why
+  the [CPU copies](#cpu-copies) section keeps them until the owner can rebuild them.
 - three.js's dispose listeners from the lost context still on every older object, deleting objects that belong to the
   old context when it is disposed.
 
@@ -294,7 +301,7 @@ from `engine/res/restore-run.ts`, loaded on the first loss:
    - `source`: every released texture refills its pixels from the rebuild it gave `releaseAfterUpload(t, rebuild)`,
      and a geometry released with `releaseGeometryAfterUpload(g, rebuild)` refills its arrays the same way.
    - modules: a module that owns resources with no restore path (`unrestorable()`: a released texture without a
-     rebuild, a `geofree` batch) is rebuilt through `restoreModulesWith`. With `geofree` on, `low-mem.ts` registers it
+     rebuild, a `geofree` batch) is rebuilt through `restoreModulesWith`. With `geofree` on (the default), `low-mem.ts` registers it
      for streamed modules (`low-mem-restore.ts`): the module is evicted during the restore and built again from source
      through the stream's build queue once the context is live.
    - `bake`: every bake registered with `bake(fn)`, or `onRestore("bake", fn)`, draws again.
@@ -325,10 +332,43 @@ A rule only counts if a check fails when it breaks. Each rule lands together wit
 | Memory at the title only goes down | CI job "no-GPU boot smoke" (`memory.mts --matches 0 --budgets tools/memory-budgets.json`): WebGL, texture and buffer bytes, the texture count and the CPU copies at the playable title on SwiftShader. Over budget fails, and more than 5% under fails until the budget is lowered, as `tools/size-budgets.json` works |
 | The renderer holds no unowned resource | CI job "no-GPU match-to-match memory" (`memory.mts --warmup --budgets tools/memory-leak-budgets.json`, page loaded with `?resaudit`): `engine/res/audit.ts` records every geometry, texture and render target the renderer registers (three.js adds its `dispose` listener to each one when it first uploads it, which is what `renderer.info.memory` counts) and drops it on `dispose()`. After the third match it compares that set with the ledger's owners. Render-target attachments count with their target. The unowned count and bytes have a ceiling (`left3`) that is lowered as owners move to scopes, and the check reaches zero when every owner has moved. Bytes and categories come from the ledger, never from `renderer.info`. Programs and VAOs are outside the check; they are small |
 | A match leaves nothing behind | The same CI job: three practice matches, each entered and left in its warm-up, with only the title modules (`?modules=`), because on SwiftShader the browser passes 10 GB once Peel Harbor streams in. What grows from the second left sample to the third (WebGL bytes, textures, geometries, unowned resources, ledger bytes per category) stays under `leak` in `tools/memory-leak-budgets.json`, and the run fails if the match scope is still open after leaving. The first match is not compared: the island keeps streaming through it. `--max-mb` stops the browser before the runner runs out of memory |
+| A match holds no more than it did | Two budget files with the title budget's rule (over fails, more than 5% under fails until the budget is lowered). `tools/memory-warmup-budgets.json` reads the first warm-up of the match-to-match run. `tools/memory-lowmem-budgets.json` is CI job "no-GPU low-memory memory": the low-memory setup with the whole island at the title, in the plane and in play, including the resident POI count and its peak. See [In-match and low-memory budgets](#in-match-and-low-memory-budgets) |
 | The game survives a WebGL context loss | CI job "no-GPU context restore" (`tools/verify-context-loss.mts`): `loseContext()` then `restoreContext()` at the title and again in a match's warm-up, the same document, a higher `__kr.restores`, no page, WebGL or three.js error and the picture as bright as before (see [Context loss](#context-loss)) |
 | Each category stays inside its budget | Not done yet: a check of ledger bytes per category against per-category budgets |
 | No CPU copy without a reason | Not done yet: needs the `keepCpu` reasons from [CPU copies](#cpu-copies) |
 | Only the cache frees what it lends | Not done yet: needs the reference-counted cache from [One asset cache](#one-asset-cache) |
+
+### In-match and low-memory budgets
+
+The title budget alone let a regression in match code or in a streamed POI through. Two budget files cover the match,
+calibrated on CI's own runner (`ubuntu-latest`, 4 vCPUs, 16 GB):
+
+- **Default setup, warm-up.** The match-to-match run already enters three practice warm-ups with the title modules, so
+  `tools/memory-warmup-budgets.json` budgets its first warm-up at no extra CI time: WebGL bytes, textures, geometry and
+  texture CPU copies, JS heap. Past the warm-up with the whole island, SwiftShader passes 10 GB and the runner can't
+  hold it, so the default setup has no budget in the plane or in play.
+- **Low-memory setup, title to play.** CI job "no-GPU low-memory memory" runs `memory.mts run --matches 1` on
+  `?lowmem=1&geofree=1&farimp=1` with the whole island and checks `tools/memory-lowmem-budgets.json`. It fits the runner
+  (about 5.5 GB for the whole browser) because POIs stream in near the player and past `lowmemcap` the farthest is
+  evicted. It samples `title`, `plane` (as the plane phase starts) and `match` (60 s into the play phase), and adds
+  three residency numbers to every sample: `residentPois` (built POI modules, the lobby islet included),
+  `peakResidentPois` (the most at once, polled every 250 ms in the page) and `evictions`. The title budgets every
+  metric. After the title, which POI is mid-build at the sample varies between runner instances, so the plane budgets
+  WebGL bytes and textures, and the match budgets WebGL bytes, the heap, `residentPois` and
+  `peakResidentPois`. The peak is the cap plus the islet, so it fails over budget if eviction stops holding the cap and
+  under budget if nothing streams. The match's texture count, CPU copies and evictions (1-2 on seed 42) are recorded
+  but not budgeted. The job takes about 10 minutes beside the others, so the workflow is no slower.
+
+A scripted walk between POIs was tried and dropped: on SwiftShader a POI's integration runs one program per frame at
+about 1 fps, so waiting for the POIs around one stop to settle took over 5 minutes on the runner, and a walk that
+doesn't wait samples whatever happens to be mid-build.
+
+`memory.mts --budgets` prints each failure as `phase.metric measured, budget: over budget by N MB (+P%)`, or names
+the lower budget to set when a number is more than 5% under. On GitHub Actions each failure is also an `::error`
+annotation on the budget file, and the job summary has a table of every budgeted number with its change. `--budgets`
+takes several files; each one's `config` must match the run. Each file's `about` says what it measures and how its
+budgets are set. The runs and reason behind each change go in that change's PR description and commit message, not in
+`about`, so two PRs that move different budgets don't conflict on one line.
 
 Geometry constructors are not in the lint rule. Most of the roughly 1,400 `new THREE.*Geometry` calls build temporary
 inputs that are merged and never reach the GPU, so a lint would mostly flag harmless code. The "no unowned resource"

@@ -18,6 +18,8 @@
 //                     coin toss on software GL ("timed out waiting for: veg-impostors"): 2 of 3 runs on 4 vCPU failed.
 //   --chrome PATH     Chromium or Chrome binary (also KR_CHROME). Default: Playwright's own (`npx playwright install chromium`)
 //   --shot FILE       screenshot at the end (default shots/verify-boot.png; shots/ is gitignored)
+//   --query "a=1&b=2" extra URL flags (e.g. hostworker=1: the practice host in its worker, which must then be the one
+//                     playing: __kr.hostWorker set, a fall back to the in-tab host fails the run)
 //
 // Fails on: any entry in window.__kr.errors, any uncaught page error, the boot reaching stage "failed" or not reaching
 // ready in time, and a match that never starts, whose tick never advances, or with one player or fewer alive.
@@ -34,9 +36,9 @@ import { chromium, type Browser, type Page } from "playwright";
 import { oneOf, orExit, parseFlags } from "./gate.mts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const USAGE = "npx tsx tools/verify-boot.mts [--no-build] [--port 3027] [--boot-timeout 600] [--match 45] [--mode trios|solo] [--splat] [--chrome PATH] [--shot FILE]";
+const USAGE = "npx tsx tools/verify-boot.mts [--no-build] [--port 3027] [--boot-timeout 600] [--match 45] [--mode trios|solo] [--splat] [--chrome PATH] [--shot FILE] [--query a=1&b=2]";
 const { flags } = orExit("verify-boot", USAGE, () => parseFlags(process.argv.slice(2), {
-  "--no-build": "bool", "--port": "number", "--boot-timeout": "number", "--match": "number", "--mode": "string", "--splat": "bool", "--chrome": "string", "--shot": "string",
+  "--no-build": "bool", "--port": "number", "--boot-timeout": "number", "--match": "number", "--mode": "string", "--splat": "bool", "--chrome": "string", "--shot": "string", "--query": "string",
 }));
 const flag = (k: "--no-build" | "--splat") => !!flags[k];
 
@@ -47,7 +49,8 @@ const MODE = orExit("verify-boot", USAGE, () => oneOf(flags["--mode"] ?? "trios"
 const CHROME = flags["--chrome"] ?? (process.env.KR_CHROME || undefined);
 const SHOT = path.resolve(root, flags["--shot"] ?? "shots/verify-boot.png");
 const ORIGIN = `http://127.0.0.1:${PORT}`;
-const URL_PATH = `/?debug&seed=42${flag("--splat") ? "" : "&vegsplat=0"}`;
+const QUERY = flags["--query"] ?? "";
+const URL_PATH = `/?debug&seed=42${flag("--splat") ? "" : "&vegsplat=0"}${QUERY ? "&" + QUERY : ""}`;
 const PHASES = ["warmup", "plane", "play", "results"];
 
 const T0_MS = Date.now();
@@ -107,12 +110,12 @@ const readKr = () => page.evaluate(() => {
   return k ? { stage: k.stage ?? "", ready: !!k.ready, errors: k.errors?.slice() ?? [], holds: k.engine?.pendingHolds?.() ?? [] } : null;
 });
 type MatchState = { phase: number; time: number; alive: number; squads: number; tick: number };
-// (tick is the offline host's own Match.tick: it advances in every phase, warm-up included, while time only runs in the
-// plane and play phases)
+// (tick is the newest snapshot tick from the offline host, in this tab or in its worker: it advances in every phase,
+// warm-up included, while time only runs in the plane and play phases)
 const readMatch = () => page.evaluate(() => {
-  const g = (window as unknown as { __kr: { game?: { inMatch: boolean; state: () => Omit<MatchState, "tick"> | null; link?: { host?: { m?: { tick: number } } } } } }).__kr.game;
+  const g = (window as unknown as { __kr: { game?: { inMatch: boolean; state: () => Omit<MatchState, "tick"> | null; cm?: { snapTick: () => number } | null } } }).__kr.game;
   const s = g?.inMatch ? g.state() : null;
-  return s ? { ...s, tick: g?.link?.host?.m?.tick ?? -1 } : null;
+  return s ? { ...s, tick: g?.cm?.snapTick() ?? -1 } : null;
 });
 
 let exitCode = 1;
@@ -166,6 +169,11 @@ try {
       log(`match advanced ${ticks} ticks (clock ${(last.time - first.time).toFixed(1)} s) in ${MATCH_S} s of wall time; phase ${PHASES[last.phase] ?? last.phase}, alive=${last.alive}, squads=${last.squads}`);
       if (!(ticks > 0)) fail("the match did not advance");
       if (!(last.alive > 1)) fail(`only ${last.alive} player(s) alive`);
+    }
+    if (/(^|&)hostworker=1(&|$)/.test(QUERY)) {
+      const hw = await page.evaluate(() => { const h = (window as unknown as { __kr: { hostWorker?: { buildMs: number; busyMs: number } } }).__kr.hostWorker; return h ? { buildMs: h.buildMs, busyMs: Math.round(h.busyMs) } : null; });
+      if (hw) log(`the host ran in its worker: world built in ${hw.buildMs} ms, ${hw.busyMs} ms of host pumps there`);
+      else fail("?hostworker=1, but the practice host did not run in its worker");
     }
     for (const e of (await readKr())?.errors ?? []) fail(`__kr.errors after the match: ${e.split("\n")[0]}`);
   }
