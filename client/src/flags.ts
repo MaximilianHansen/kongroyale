@@ -39,6 +39,7 @@ const FLAGS = {
   ctLod: { kind: num(18), owner: "pois", purpose: "Peel Harbor container LOD distance (m)" },
   ctMid: { kind: num(0), owner: "pois", purpose: "Peel Harbor container mid LOD distance (m); 0 = none" },
   cullfov: { kind: on, owner: "engine", purpose: "detail cull distances scale with the camera's field of view" },
+  deferkong: { kind: one, owner: "game", purpose: "compile match-only kong and chest programs after ready" },
   debug: { kind: present, owner: "boot", purpose: "show boot errors on screen" },
   diag: { kind: text, owner: "ui", purpose: "diagnostics recorder; =0 off, absent = VITE_KR_DIAG" },
   dev: { kind: text, owner: "boot", purpose: "dev tools after ready, and the full title (=annotate opens the world annotator)" },

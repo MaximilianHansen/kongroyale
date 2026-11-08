@@ -52,7 +52,7 @@ import { GameRender, patchTree, renderPrefabs, type Kits } from "./render";
 import { OfflineLink, connectWs, roomUrl, type Link } from "./net";
 import { createFallbackFx } from "./fx-fallback";
 import { createLightBalancer } from "./lights";
-import { createTitleScene, type TitleScene } from "./title";
+import { createTitleScene, DEFER_KONG, type TitleScene } from "./title";
 import { createGpuWarmer } from "./warm";
 import { createBlimp } from "./blimp";
 import { createCasterApp, type CasterApp } from "../caster/app";
@@ -898,6 +898,14 @@ const DEFER_PREFABS = flag("prewarm") !== "full";
 /** scene roots whose content the loading frames never draw (storm, weapon FX, loot beams, the FX fallback): with
  *  DEFER_PREFABS their programs compile after ready (prewarmMatch), not behind the loading screen */
 const MATCH_ONLY_ROOTS = new Set(["storm", "weapons-fx", "loot-system", "fx-fallback"]);
+/** ?deferkong=1: pieces under roots the title DOES draw that no frame draws before ready — the kong
+ *  batches marked krMatchOnly (lo / min tiers, dither twins, hats and tops), the chest glows and crate impostors. They
+ *  compile after ready in prewarmMatch, a few programs per frame, instead of in the boot compile */
+const DEFER_KONG_PER_FRAME = 3;
+const CHEST_MATCH_ONLY = /^(chest-aura|chest-halo|chest-lod2:|chest-seam-glow:)/;
+function matchOnlyPart(o: THREE.Object3D): boolean {
+  return o.userData.krMatchOnly === true || (o.parent?.name === "chest-system" && CHEST_MATCH_ONLY.test(o.name));
+}
 
 /** after the title is ready: make every spawnable prefab (chests of every rarity, opened; every weapon × rarity as loot
  * and held; consumables; ammo; glider; render prefabs) one at a time, then compile them in parallel and draw them ONCE
@@ -992,6 +1000,13 @@ async function prewarmMatch(engine: Engine, kits: Kits, title: TitleScene, isBus
   kr.matchWarm = "match-only";
   await Promise.all([engine.compileObjects(engine.scene.children.filter((o) => MATCH_ONLY_ROOTS.has(o.name))), kits.storm.compile(engine.renderer)]);
   if (isBusy()) return;
+  if (DEFER_KONG) {
+    kr.matchWarm = "match-only parts";
+    const parts: THREE.Object3D[] = [];
+    const collect = (o: THREE.Object3D) => { if (matchOnlyPart(o)) parts.push(o); else for (const c of o.children) collect(c); };
+    collect(engine.scene);
+    for (let i = 0; i < parts.length; i += DEFER_KONG_PER_FRAME) { if (isBusy()) return; await engine.compileObjects(parts.slice(i, i + DEFER_KONG_PER_FRAME)); await idle(); }
+  }
   kr.matchWarm = "viewmodel";
   for (const it of vmItems) { if (isBusy()) return; vm.equip(it, (CONSUMABLES as readonly string[]).includes(it) ? "rare" : "epic"); await idle(); }
   vm.equip(null);
@@ -1143,7 +1158,7 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
   const hidden: THREE.Object3D[] = [];
   engine.scene.traverse((o) => { if (!o.visible && !o.userData.krDummy) { hidden.push(o); o.visible = true; } });
   const deferred = DEFER_PREFABS ? engine.scene.children.filter((o) => MATCH_ONLY_ROOTS.has(o.name)) : [];
-  const walk = (o: THREE.Object3D, fn: (o: THREE.Object3D) => void) => { if (deferred.includes(o)) return; fn(o); for (const c of o.children) walk(c, fn); };
+  const walk = (o: THREE.Object3D, fn: (o: THREE.Object3D) => void) => { if (deferred.includes(o) || (DEFER_KONG && matchOnlyPart(o))) return; fn(o); for (const c of o.children) walk(c, fn); };
   const titleScene = { traverse: (fn: (o: THREE.Object3D) => void) => walk(engine.scene, fn), traverseVisible() {} } as unknown as THREE.Object3D;
   const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
   const prevRT = engine.renderer.getRenderTarget();
