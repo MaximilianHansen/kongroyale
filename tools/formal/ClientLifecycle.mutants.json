@@ -33,5 +33,12 @@
     "find": "/\\ seated' = FALSE /\\ err' = TRUE /\\ why' = TRUE /\\ view' = \"room\"\n  /\\ scope' = WireScopeAfter /\\ render' = WireOk\n  /\\ UNCHANGED <<boot, prefabs, phase, link, silent, ctx, restores>>",
     "replace": "/\\ seated' = FALSE /\\ err' = TRUE /\\ why' = TRUE\n  /\\ UNCHANGED <<boot, prefabs, view, phase, link, scope, render, silent, ctx, restores>>",
     "expect": "Invariant NoFrozenMatch is violated"
+  },
+  {
+    "name": "a dead practice host leaves its match on screen",
+    "why": "host-worker.ts / index.ts linkLost: the worker's failure closes the link and frees the renderer but no longer takes the player back to the title",
+    "find": "/\\ link' = \"none\" /\\ view' = \"title\" /\\ err' = TRUE",
+    "replace": "/\\ link' = \"none\" /\\ view' = view /\\ err' = TRUE",
+    "expect": "Invariant NoMatchWithoutRenderer is violated"
   }
 ]
