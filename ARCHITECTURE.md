@@ -35,6 +35,12 @@ elapsed time to an accumulator and steps the match once per 1/60 s it owes, at m
 throws errors more than five times, the server ends that match and sends its players back to the lobby. One broken
 match never takes the process down.
 
+All of that runs on one thread, so one process uses one CPU core. With `KR_PROCS` above 1 (HOSTING.md "One process
+per core"), `server/front.ts` starts that many match processes, each `server/index.ts` running the loop above for its
+own rooms. The front serves the page, the API and `/health`, and hands each game WebSocket to the
+process that holds its room: a room's code says which (`server/procs.ts`), and new rooms go to the process with the
+fewest. After the hand-off the front never sees the socket's traffic.
+
 `MatchHost.tick()` (`shared/net/host.ts`) does one step and sends what came out of it:
 
 1. `Match.step()` (`shared/sim/match.ts`) advances the phase clock, the storm, every player (humans and bots), the
@@ -90,7 +96,7 @@ Today's transport is **two WebSockets** per player. Binary frames travel on both
 gets. A WebSocket runs over TCP, so one lost packet stalls everything behind it; with two sockets, a stall needs both
 to lose a packet at once.
 
-With `?wt=1`, and a server started with `KR_WT=1` (it offers its endpoint in `welcome`), the client loads a small lazy
+When a server started with `KR_WT=1` offers its endpoint in `welcome` and puts the player in its WebTransport arm (`KR_WT_SHARE`, an A/B test: a tab keeps its arm, and `?wt=1` / `?wt=0` override it), the client loads a small lazy
 chunk (`client/src/game/wt.ts`) and opens a **WebTransport** session instead of the aux socket: unreliable frames ride
 QUIC datagrams, reliable ones the session's one stream. The session authenticates with the aux token and is in use once
 the server answers `{ t: "wt-ok" }`. If it can't be had, or closes later, the link stays on (or goes back to) the

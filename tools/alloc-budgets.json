@@ -1,0 +1,16 @@
+{
+  "about": "alloc.mts --budgets: bytes allocated per host tick and GC count over real-play's 7,200 PLAY ticks (the same seeded all-bot trios match bench:host times), as npm test measures them (check id alloc). A number over its ceiling fails; a number more than underPct under fails until the ceiling is lowered (the failure names the new value, measured plus headroomPct), so budgets only go down. Bytes and GC count do not depend on CPU time the way milliseconds do, but they move with the Node/V8 version and a little with the machine (when V8's optimizer kicks in): these are for Node 22. Set 2026-11-07 from three runs of CI's build-and-test job on ubuntu-latest at 3696aaf: 160570-163483 B/tick and 70-72 GCs. Ceilings are CI's highest plus 10% (179832 B, 80 GCs), because a 4 vCPU cloud machine on the same Node measured up to 8.6% more (168912-177571 B, 74-77 GCs); underPct is 20 so CI's lowest run sits well clear of the floor (143866 B, 64 GCs).",
+  "config": {
+    "scenarios": "real-play",
+    "mode": "trios",
+    "sample": false
+  },
+  "underPct": 20,
+  "headroomPct": 10,
+  "budgets": {
+    "host/real-play": {
+      "allocBytesPerTick": 179832,
+      "gcCount": 80
+    }
+  }
+}
