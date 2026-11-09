@@ -15,12 +15,14 @@
 //   1. getSunShadow() replaced by atmosSunShadow(): 2 cascades → far map → × cloud shadow (direct sun only),
 //   2. aerial perspective (atmosAerial) applied in LINEAR space before tone mapping.
 // Unlit built-ins (MeshBasic, Points) get 2 only. ShaderMaterials are left alone (they can use ATMOS_PARS).
+// Patched materials read the shared non-sampler uniforms from ONE uniform buffer (glsl.ts ATMOS_UBO, and its rule: no
+// writes between two patched draws of one render() call); ?atmos=noubo keeps them loose.
 import * as THREE from "three";
 import { SunLight } from "three/addons/lights/SunLight.js";
 import { SunLightShadow } from "three/addons/lights/SunLightShadow.js";
 import type { Quality } from "../../engine/engine";
 import type { Terrain } from "../../../../shared/world/terrain";
-import { ATMOS_PARS, ATMOS_AO_PARS, type AtmosUniforms } from "./glsl";
+import { ATMOS_PARS, ATMOS_AO_PARS, ATMOS_UBO_DECL, type AtmosUniforms } from "./glsl";
 import { atmosFlags } from "./state";
 import { bake, onRestore } from "../../engine/res/restore";
 const atmosFlagsHas = (f: string) => atmosFlags().has(f);
@@ -39,7 +41,12 @@ const TIER = {
   low: { map: 1536, split: 18, far: 70, farMap: 2048, reach: 200 },
 } as const;
 
-type Patchable = THREE.Material & { defines?: Record<string, unknown>; onBeforeCompile: THREE.Material["onBeforeCompile"] };
+// (uniformsGroups: three r186 binds them for any material type, not only ShaderMaterial)
+type Patchable = THREE.Material & { defines?: Record<string, unknown>; onBeforeCompile: THREE.Material["onBeforeCompile"]; uniformsGroups?: THREE.UniformsGroup[] };
+
+/** the three r186 internals warmUbo() uses (not in its typings): a program's link check and the state's block-index cache */
+interface UboProgram { cacheKey: string; program: unknown; isReady(): boolean }
+interface UboState { updateUBOMapping(group: THREE.UniformsGroup, program: unknown): void }
 
 interface SunShadowInternals {
   _viewportCount: number;
@@ -233,13 +240,17 @@ class AtmosSunShadow extends SunLightShadow {
 /** GLSL: our getSunShadow (2 cascades → static far map → × cloud shadow) — spliced after <shadowmap_pars_fragment> */
 const SUN_SHADOW_GLSL = /* glsl */ `
 #if defined( USE_SHADOWMAP ) && NUM_SUN_LIGHT_SHADOWS > 0 && defined( SHADOWMAP_TYPE_PCF )
+#ifndef KR_ATMOS_UBO
 uniform vec4 uAtmSunBias;
 uniform vec2 uAtmSunRadius;
 uniform vec2 uAtmTemporal;
+#endif
 uniform sampler2DShadow uAtmFarMap;
+#ifndef KR_ATMOS_UBO
 uniform mat4 uAtmFarMatrix;
 uniform vec4 uAtmFarParams;
 uniform vec2 uAtmFarSize;
+#endif
 // one hardware-PCF tap (a bilinear 2x2 compare) — cascade 1 and the far map
 float atmPcf1( sampler2DShadow m, vec4 sc, float bias ) {
   vec3 c = sc.xyz / sc.w; c.z += bias;
@@ -367,12 +378,16 @@ const SUN_FROM_VIEW = /* glsl */ `
 /** lit materials: the screen-space AO / cloud terms (glsl.ts atmosSS) or a no-op when the post has no AO pass. Other
  *  areas may call atmosSSAO( ATM_WPOS ) / atmosSS( ATM_WPOS ) and read uAtmAOParams in their own chained code */
 const SSAO_DECL = /* glsl */ `
+#ifndef KR_ATMOS_UBO
 uniform float uAtmBounce, uAtmSkyVis;
 uniform vec3 uAtmVegFill;
+#endif
 #ifdef ATMOS_SSAO
 ${ATMOS_AO_PARS}
 #else
+#ifndef KR_ATMOS_UBO
 uniform vec4 uAtmAOParams;
+#endif
 vec3 atmosSS3( vec3 wp ) { return vec3( 1.0 ); }
 vec2 atmosSS( vec3 wp ) { return vec2( 1.0 ); }
 #endif
@@ -410,10 +425,15 @@ export class SunShadows {
   /** the post runs the AO pass: lit materials take AO + cloud shadow from its screen-space texture (ATMOS_SSAO) */
   ssao = false;
   private frame = 0;
+  /** programs whose uniform-block index three already holds (warmUbo), and the program count when the last pass ended */
+  private uboWarm = new WeakSet<object>();
+  private uboSeen = 0;
   private sunDir = new THREE.Vector3(0, 1, 0);
   private land = new THREE.Box3(new THREE.Vector3(-1200, -10, -1200), new THREE.Vector3(1200, 400, 1200));
 
-  constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, private u: AtmosUniforms, quality: Quality, terrain?: Terrain) {
+  /** @param group the atmos uniform buffer (glsl.ts ATMOS_UBO) patched materials read, or null = loose uniforms */
+  constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, private u: AtmosUniforms, quality: Quality, terrain?: Terrain,
+    private readonly group: THREE.UniformsGroup | null = null) {
     this.tier = TIER[quality];
     renderer.shadowMap.type = THREE.PCFShadowMap; // r186 removed PCFSoft (it warns + falls back every load)
     const sun = new SunLight(0xffffff, 3);
@@ -649,6 +669,7 @@ export class SunShadows {
     for (const o of forced) o.visible = false;
     if (!atmosFlagsHas("nocanopy")) this.bakeCanopy(r, scene, cam);
     r.setClearColor(cc, ca);
+    // (written inside the main render: glsl.ts ATMOS_UBO's rule — in time for the patched draws after this hook)
     this.u.uAtmFarParams.value.w = 1;
     this.farBakes++;
     this.farLastBake = performance.now();
@@ -656,8 +677,31 @@ export class SunShadows {
     if (w.__kr) w.__kr.atmosFarBake = { n: this.farBakes, ms: Math.round(performance.now() - t0), skipped: off.length };
   }
 
+  /**
+   * three looks up a program's block index (gl.getUniformBlockIndex, a synchronous GPU-process round trip) the first
+   * time the program draws with the buffer. At a match start the kongs, weapons and items draw for the first time, and
+   * those lookups waited on the busy GPU process for up to 14 ms each (23 of them, ~45 ms plus two extra long frames).
+   * Look them up ahead: every program that carries the block and has finished linking (isReady() never blocks; without
+   * KHR_parallel_shader_compile it is true at once), at most 8 a frame, and only while the program list has grown.
+   */
+  private warmUbo() {
+    const progs = this.renderer.info.programs as unknown as UboProgram[] | null;
+    if (!progs || progs.length === this.uboSeen) return;
+    const state = this.renderer.state as unknown as UboState;
+    let n = 0, pending = false;
+    for (let i = 0; i < progs.length; i++) {
+      const p = progs[i];
+      if (this.uboWarm.has(p) || !p.cacheKey.includes("KR_ATMOS_UBO")) continue;
+      if (n >= 8 || !p.isReady()) { pending = true; continue; }
+      state.updateUBOMapping(this.group!, p.program);
+      this.uboWarm.add(p); n++;
+    }
+    if (!pending) this.uboSeen = progs.length;
+  }
+
   /** per frame: periodic material sweep; re-bake the far map while the world is still streaming in */
   update() {
+    if (this.group) this.warmUbo();
     // the no-caster subtrees + static caster units: refreshed every 30 frames while the world streams in, every 60 after
     // (new casters streaming into a pruned group wait ≤ 0.5 s)
     // (every 120 frames after the load window, half a period after the sweep — the two full-scene walks never share
@@ -791,6 +835,7 @@ export class SunShadows {
 
     m.defines = m.defines || {};
     m.defines.ATMOS = 1;
+    if (this.group) m.defines.KR_ATMOS_UBO = 1;
     if (lit) m.defines.ATMOS_LIT = 1;
     if (lit && this.ssao) m.defines.ATMOS_SSAO = 1;
     if (lit && (m.userData?.veg || /^terrain/i.test(m.name))) m.defines.ATMOS_SKYVIS = 1;
@@ -803,15 +848,21 @@ export class SunShadows {
     // walk under a strafe, so wire materials keep a minimum screen width (the tube grows along its normal to ~1.2 px)
     if (lit && (m.userData?.thinWire || /^(cable|wire|wire-?rope|stay)s?$/i.test(m.name)) && !atmosFlagsHas("nothin")) m.defines.ATMOS_THIN = 1;
 
-    const u = this.u;
+    const u = this.u, group = this.group;
     m.onBeforeCompile = function (shader, renderer) {
       if (prevHook && prevHook !== protoHook) prevHook.call(this, shader, renderer);
-      // shared uniform objects — one update per frame reaches every material
+      // the uniform buffer: decided per compile from this material's own defines (a clone that chains this hook without
+      // them compiles loose), and attached here, where the block is injected (three runs the hook once per material and
+      // program key, before that program's first draw)
+      const ubo = !!group && !!(this as Patchable).defines?.KR_ATMOS_UBO;
+      if (ubo) (this as Patchable).uniformsGroups = [group!];
+      // shared uniform objects — one update per frame reaches every material (under the buffer only the samplers are
+      // active loose uniforms: the block's members have other names, uAtmK<row>)
       for (const k of Object.keys(u) as Array<keyof AtmosUniforms>) shader.uniforms[k] = u[k];
       // a clone of an already-patched material (harbor indoorMat / warehouse indoor twins) chains the source's hook,
       // which injected atmos already: a second injection redefines every uAtm* symbol and the program fails to link
       if (shader.vertexShader.includes(ATMOS_MARK)) return;
-      shader.vertexShader = ATMOS_MARK + shader.vertexShader;
+      shader.vertexShader = ATMOS_MARK + (ubo ? ATMOS_UBO_DECL : "") + shader.vertexShader;
       if (lit && SUN_VARY_OK) shader.vertexShader = shader.vertexShader.replace("#include <shadowmap_pars_vertex>", SM_PARS_V).replace("#include <shadowmap_vertex>", SM_V);
       shader.vertexShader = shader.vertexShader
         .replace("#include <project_vertex>", `#include <project_vertex>
@@ -825,7 +876,7 @@ export class SunShadows {
 #endif
   // the viewmodel (< uAtmJitter.z m from the lens) is drawn WITHOUT the TAA jitter
   if ( uAtmJitter.z > 0.0 && -mvPosition.z < uAtmJitter.z ) gl_Position.xy += uAtmJitter.xy * gl_Position.w;`)
-        .replace("#include <fog_pars_vertex>", `${WPOS_DECL}\nuniform vec4 uAtmJitter;\n#ifdef ATMOS_THIN\nuniform vec2 uAtmRes, uAtmThin;\n#endif\n#include <fog_pars_vertex>`)
+        .replace("#include <fog_pars_vertex>", `${WPOS_DECL}\n#ifndef KR_ATMOS_UBO\nuniform vec4 uAtmJitter;\n#ifdef ATMOS_THIN\nuniform vec2 uAtmRes, uAtmThin;\n#endif\n#endif\n#include <fog_pars_vertex>`)
         .replace("#include <fog_vertex>", `#include <fog_vertex>
 #ifdef ATM_OWN_VARYING
 { vec4 ap = vec4( transformed, 1.0 );
@@ -943,7 +994,7 @@ ${WET_UP}
         const at = fs.search(/vec3 totalDiffuse = reflectedLight|vec3 outgoingLight = reflectedLight/);
         if (at >= 0) fs = fs.slice(0, at) + SKYVIS + fs.slice(at);
       }
-      shader.fragmentShader = fs;
+      shader.fragmentShader = (ubo ? ATMOS_UBO_DECL : "") + fs;
     };
     m.customProgramCacheKey = function () { return (hadKey ? prevKey.call(this) : prevHookSrc) + "|atmos21"; };
     m.needsUpdate = true;

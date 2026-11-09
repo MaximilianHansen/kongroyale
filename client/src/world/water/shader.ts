@@ -506,9 +506,12 @@ export const vertParsMain = (atmosGlsl?: string) => /* glsl */ `
 ${VERT_PARS}
 #if defined(WTR_VSHADOW) && defined(USE_SHADOWMAP) && NUM_SUN_LIGHT_SHADOWS == 1
 uniform mat4 sunShadowMatrix[ 2 ];
+// (on a material atmos patched with its uniform buffer these three are members of it: atmos/glsl.ts ATMOS_UBO)
+#ifndef KR_ATMOS_UBO
 uniform vec4 uAtmSunBias;
 uniform mat4 uAtmFarMatrix;
 uniform vec4 uAtmFarParams;
+#endif
 varying vec3 vWtrSh0;
 varying vec3 vWtrSh1;
 varying vec3 vWtrShF;

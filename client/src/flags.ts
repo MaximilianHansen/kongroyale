@@ -20,7 +20,7 @@ const FLAGS = {
   announce: { kind: present, owner: "boot", purpose: "show the display-preset toasts to automated browsers too" },
   arms: { kind: text, owner: "weapons", purpose: "first-person arms: =2 the v2 arms, =1 the current ones; absent = localStorage kr.arms" },
   armsab: { kind: present, owner: "weapons", purpose: "keep every hand mesh so a bench can swap v1 and v2 arms live" },
-  atmos: { kind: list, owner: "atmos", purpose: "atmosphere debug switches: noao, nogr, nobloom, nosmaa, nosharpen, noshadow, noclouds, nopost, nofog, nocloudshadow, cloudmarch" },
+  atmos: { kind: list, owner: "atmos", purpose: "atmosphere debug switches: noao, nogr, nobloom, nosmaa, nosharpen, noshadow, noclouds, nopost, nofog, nocloudshadow, cloudmarch, noubo (lit materials read the shared atmos values as loose uniforms instead of one uniform buffer)" },
   atmosp: { kind: text, owner: "atmos", purpose: "override preset fields as key:value,key:value (hex colours as c0ffee)" },
   audioevict: { kind: one, owner: "audio", purpose: "free the decoded sound of on-demand groups when a match ends (memory)" },
   aux: { kind: on, owner: "game", purpose: "open the auxiliary socket next to the match socket" },
