@@ -71,7 +71,7 @@ export function videoCategory(engine: Engine, display: Display): Category {
       get: () => s().res3d, set: (v) => { set({ res3d: v }); display.ackStepped(); },
       help: () => ({ eb: "Display", body: ["The resolution the world renders at, as a share of your screen's native pixels. The HUD, the menus and your weapon always stay at full resolution.", "100% is the sharpest (every preset uses 100%; only Auto on a laptop GPU starts lower). Lower it yourself for more frames per second."], viz: hw }) },
     { kind: "switch", id: "dynres", label: "Dynamic resolution", get: () => s().dynres, set: (on) => set({ dynres: on }),
-      help: () => ({ eb: "Display", body: ["Off by default. When on, the 3D resolution drops (never below 75% of your setting) only while the GPU cannot hold your frame rate limit, and returns to your setting as soon as it can."], viz: hw }) },
+      help: () => ({ eb: "Display", body: ["When on, the 3D resolution drops (never below 75% of your setting) only while the GPU cannot hold your frame rate limit, and returns to your setting as soon as it can.", "Auto turns it on at Low and Medium in browsers that report GPU timing; the other presets leave it off. Once you switch it yourself, presets keep your choice."], viz: hw }) },
     { kind: "slider", id: "fov", label: "Field of view", min: 60, max: 90, step: 1, fmt: (v) => `${hfov(v)}°`, onRelease: true,
       get: () => s().fov, set: (v) => set({ fov: v }),
       help: () => ({ eb: "Display", body: ["Horizontal field of view at 16:9. Wider shows more of the island; narrower makes distant enemies larger."], viz: "fov" }) },
@@ -98,7 +98,7 @@ export function videoCategory(engine: Engine, display: Display): Category {
     id: "video", name: "Video", sections: [display_, graphics],
     reset: {
       body: "The quality preset goes back to Auto (picked for your GPU), with 3D resolution, the frame rate limit and dynamic resolution at their defaults. Field of view and Show FPS are kept. Other categories are not changed.",
-      run: () => display.set({ preset: "auto", res3d: undefined, resUser: false, fpsCap: -1, dynres: false }),
+      run: () => display.set({ preset: "auto", res3d: undefined, resUser: false, fpsCap: -1, dynresUser: false }),
     },
   };
 }

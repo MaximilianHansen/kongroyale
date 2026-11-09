@@ -2,7 +2,8 @@
 // One persisted object (localStorage "kr-video"), five presets (Auto / Low / Medium / High / Epic) and per-option
 // overrides ("Custom"). Everything applies LIVE through the engine and the atmos area's `video()` API:
 //   3D resolution  → engine.setResolution (TAAU inside the post chain; the canvas stays at the screen's native pixels)
-//   dynamic res    → engine.setDynamicRes (opt-in; 0.75 × … 1 × the 3D resolution, aiming at the frame cap)
+//   dynamic res    → engine.setDynamicRes (0.75 × … 1 × the 3D resolution, aiming at the frame cap; on by default only
+//                    for Auto at Low / Medium where the GPU can be timed, and only after the first-visit bench)
 //   frame limit    → engine.setFrameCap (30 … 240 / Unlimited = every display refresh; default = the measured refresh)
 //   AA / AO / post / shadows / effects → atmos `video()` (post.ts configure, shadows.ts setQuality)
 //   view distance  → engine.cull (screen-size culling) + the veg area's distances (VegApi.setQuality, when present)
@@ -36,7 +37,11 @@ export interface VideoSettings {
   res3d: number;
   /** the player moved the 3D-resolution slider: presets no longer touch it */
   resUser?: boolean;
+  /** dynamic resolution. AUTO turns it on at Low / Medium where the GPU can be timed (AUTO_DYNRES); explicit presets
+   *  leave it off; the player's own switch is kept across preset changes once flipped */
   dynres: boolean;
+  /** the player flipped the dynamic-resolution switch: presets no longer touch it */
+  dynresUser?: boolean;
   /** frame limit in fps; 0 = unlimited (every display refresh); -1 = the display refresh (default) */
   fpsCap: number;
   aa: AAMode;
@@ -60,9 +65,17 @@ export function presetRes(level: Level, backingPx: number) {
   const r = Math.sqrt((AUTO_MPX[level] * 1e6) / Math.max(1, backingPx));
   return Math.min(1, Math.max(0.67, Math.floor(r * 100) / 100));
 }
+/** AUTO only: Low and Medium start with dynamic resolution on. It lowers the 3D resolution only while frames are missed,
+ *  so a machine that keeps up sees no change (presets stay at 100 %: fixed lower resolutions read as blurry). Only where
+ *  the engine can time the GPU: without a timer query its controller (engine.ts dynamicResolution) infers GPU load from
+ *  frame times, so it reads a busy main thread as a GPU miss and, under vsync, never sees the headroom to climb back */
+const AUTO_DYNRES: Record<Level, boolean> = { low: true, medium: true, high: false, epic: false };
+/** this page's renderer has a GPU timer query (the Display sets it before building the settings) */
+let gpuTimed = false;
 
 /** a preset's options. `auto` = this is AUTO's pick (the only case that may lower the 3D resolution, and only on
- *  laptop-class levels); an explicit preset keeps the player's own 3D resolution (100 % unless they moved the slider) */
+ *  laptop-class levels, or turn dynamic resolution on, at Low / Medium); an explicit preset keeps the player's own 3D
+ *  resolution (100 % unless they moved the slider) and dynamic-resolution switch (off unless they turned it on) */
 export function presetSettings(level: Level, backingPx: number, keep?: Partial<VideoSettings>, auto = false): VideoSettings {
   const base = {
     low: { aa: "fxaa", shadows: "low", ao: false, post: "low", viewDist: "low", foliage: "low", effects: "low" },
@@ -72,7 +85,8 @@ export function presetSettings(level: Level, backingPx: number, keep?: Partial<V
   }[level] as Pick<VideoSettings, "aa" | "shadows" | "ao" | "post" | "viewDist" | "foliage" | "effects">;
   const res3d = keep?.resUser ? keep.res3d ?? 1 : auto ? presetRes(level, backingPx) : 1;
   return {
-    v: 2, preset: level, auto: keep?.auto ?? level, res3d, resUser: keep?.resUser, dynres: false,
+    v: 2, preset: level, auto: keep?.auto ?? level, res3d, resUser: keep?.resUser,
+    dynres: keep?.dynresUser ? !!keep.dynres : auto && AUTO_DYNRES[level] && gpuTimed, dynresUser: keep?.dynresUser,
     fpsCap: keep?.fpsCap ?? -1, fov: keep?.fov ?? 72, showFps: keep?.showFps ?? false, stepped: keep?.stepped, ...base,
   };
 }
@@ -189,6 +203,7 @@ export class Display {
 
   constructor(private engine: Engine) {
     this.gpu = gpuString(engine.renderer.getContext());
+    gpuTimed = hasTimer(engine);
     const spoof = flag("gpu"); // tools: ?gpu=<renderer string>
     this.gpuLevel = deviceLevel(spoof || this.gpu);
     const saved = store.get();
@@ -216,13 +231,14 @@ export class Display {
   /** apply (and persist) a partial change; a preset id applies the whole preset (Auto = the detected level) */
   set(patch: Partial<VideoSettings>) {
     let s = { ...this.settings, ...patch };
-    // the 3D-resolution slider is the player's own: it never turns the preset into CUSTOM, and once
-    // moved no preset touches it again ("RESET TO AUTO" hands it back: patch.resUser = false)
+    // the 3D-resolution slider and the dynamic-resolution switch are the player's own: they never turn the preset into
+    // CUSTOM, and once moved no preset touches them again ("RESET TO AUTO" hands them back: resUser / dynresUser = false)
     if ("res3d" in patch && patch.res3d !== undefined && patch.resUser === undefined) s.resUser = true;
+    if ("dynres" in patch && patch.dynres !== undefined && patch.dynresUser === undefined) s.dynresUser = true;
     if (patch.preset && patch.preset !== "custom") {
       const lvl = patch.preset === "auto" ? s.auto : patch.preset;
       s = { ...presetSettings(lvl, this.backingPx(), s, patch.preset === "auto"), preset: patch.preset };
-    } else if (!patch.preset && Object.keys(patch).some((k) => !["fpsCap", "fov", "showFps", "dynres", "res3d", "resUser", "stepped"].includes(k))) s.preset = "custom";
+    } else if (!patch.preset && Object.keys(patch).some((k) => !["fpsCap", "fov", "showFps", "dynres", "dynresUser", "res3d", "resUser", "stepped"].includes(k))) s.preset = "custom";
     this.settings = s;
     store.set(s);
     this.apply();
@@ -239,7 +255,9 @@ export class Display {
     const atmos = e.shared.get("atmos") as AtmosVideoApi | undefined;
     try { atmos?.video?.({ aa: s.aa, ao: s.ao, post: s.post, shadows: s.shadows, effects: s.effects }); } catch (err) { console.warn("[display] atmos video", err); }
     e.setResolution(s.res3d);
-    e.setDynamicRes(s.dynres);
+    // (held on a first visit until the bench has measured: it times the preset at its full 3D resolution with its own
+    // timer query, and the controller would shrink the frame and keep the timer to itself)
+    e.setDynamicRes(s.dynres && !this.firstVisit && !this.benching);
     // view distance: the engine's screen-size cull (a mesh stops drawing under minPx projected radius, never within minDist)
     const vd = { low: [4, 60], medium: [3, 60], high: [2.4, 70], epic: [2, 80] }[s.viewDist];
     e.cull.minPx = vd[0]; e.cull.minPxT = vd[0] * 1.5; e.cull.minDist = vd[1];
@@ -296,12 +314,15 @@ export class Display {
   async firstVisitBench(): Promise<void> {
     if (!this.firstVisit) return;
     this.firstVisit = false;
+    this.benching = true;
     const e = this.engine;
     const t0 = performance.now();
     while (!(globalThis as { __kr?: { streamed?: boolean } }).__kr?.streamed && performance.now() - t0 < 40000) await sleep(250);
     const timer = hasTimer(e);
     await sleep(timer ? 1200 : 3000);
     const r = await measure(e, 2000);
+    this.benching = false;
+    e.setDynamicRes(this.settings.dynres);
     // (a refresh measured under a starved main thread reads far below 60 Hz — e.g. "7 Hz" → a 140 ms budget that
     // never stepped down; a display is 60-120 Hz for this purpose)
     const hz = Math.min(Math.max(e.refreshHz || 60, 60), 120);
@@ -324,6 +345,8 @@ export class Display {
     } else if (to !== from) this.settings = { ...this.settings, auto: to };
     else if (this.recalibrating) store.set(this.settings);
   }
+  /** the first-visit bench is measuring (dynamic resolution waits for it: see apply) */
+  private benching = false;
   /** the player saw the step-down notice */
   ackStepped() { if (this.settings.stepped && !this.settings.stepped.ack) this.set({ stepped: { ...this.settings.stepped, ack: true } }); }
 
