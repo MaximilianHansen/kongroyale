@@ -22,6 +22,27 @@ const STREAM_SLICE_MS: readonly number[] = flag("streamslice") ?? [];
 // engine fades dissolve instead of scaling — three's shared chunks are patched before the first compile
 installDitherChunks();
 
+// The light reserve (lightReserve) keeps the point-light count constant so no program recompiles when a light comes or
+// goes, which means most of a lit program's point lights are black stand-ins. three's point-light loop has no early out,
+// so every lit pixel ran the full BRDF for each of them (~9% of the GPU frame in a match). Skip a light whose colour
+// (colour × intensity) is black: the branch is uniform across a draw, a black light adds exactly zero, and program keys
+// don't change. The block's opening line stays as it is: water and veg strip the whole loop by matching it.
+function installPointLightSkip() {
+  const C = THREE.ShaderChunk as unknown as Record<string, string>;
+  const src = C.lights_fragment_begin;
+  const a = src.indexOf("#if ( NUM_POINT_LIGHTS > 0 ) && defined( RE_Direct )"), e = src.indexOf("#pragma unroll_loop_end", a);
+  if (a < 0 || e < 0) return;
+  const INFO = "getPointLightInfo( pointLight, geometryPosition, directLight );";
+  const DIRECT = "RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );";
+  const block = src.slice(a, e);
+  // (a three update that reshapes the loop leaves it unpatched rather than half-patched)
+  if (block.split(INFO).length !== 2 || block.split(DIRECT).length !== 2) return;
+  C.lights_fragment_begin = src.slice(0, a)
+    + block.replace(INFO, `if ( pointLight.color != vec3( 0.0 ) ) {\n\t\t${INFO}`).replace(DIRECT, `${DIRECT}\n\t\t}`)
+    + src.slice(e);
+}
+installPointLightSkip();
+
 export type Quality = "ultra" | "high" | "medium" | "low";
 
 export interface PostPipeline {
