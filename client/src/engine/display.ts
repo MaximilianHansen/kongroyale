@@ -86,6 +86,14 @@ const RULES: Array<[RegExp, Level]> = [
   [/apple m[1-2] pro|apple m3 pro|gtx 10[5-6]0|gtx 16[0-9]0|rtx 20[5-6]0|rtx 30[5]0|rtx 40[5]0|rx 5[5-7]00|rx 6[4-5]00|arc a[3-5]/i, "medium"],
   [/apple m[4-9](?! (pro|max|ultra))|apple m[4-9] pro|apple m\d max|apple m\d ultra|rtx 20[7-8]0|rtx 30[6]0|rtx 40[6]0|rtx 50[5-6]0|gtx 10[7-8]0|rx 6[6-7]00|rx 7[6]00|arc a7|arc b/i, "high"],
   [/rtx 30[7-9]0|rtx 40[7-9]0|rtx 50[7-9]0|rtx a\d000|rx 6[8-9]00|rx 7[7-9]00|rx 9\d{3}|titan/i, "epic"],
+  // older and budget cards, last so they win over the lines above: without them every GeForce they miss reads as High,
+  // a 2013 Kepler Titan or a small RTX A as Epic (where the bench never runs) and a Radeon R5 / R7 as Medium. A laptop
+  // part sits a level below the desktop card of its speed, like the integrated GPUs above. Firefox reports a bucket
+  // instead of the card: "GeForce GTX 980, or similar" for every GeForce from the GTX 900s and the GT 1030 up (Medium),
+  // "GTX 480" for the 400s to 800s and "8800 GTX" for the MX150-MX350 (Low), "Radeon R9 200 Series" for R5-R9 and RX
+  [/\bgt \d{3,4}m?\b|\bgeforce (mx ?)?\d{3}m?x?\b|\bgeforce [89]\d{3}m?\b|\bgtx [4-9]\d\dm?x?\b|\bgtx titan\b|\bquadro (fx|nvs|[km]?\d)|\bnvs \d|\bquadro p(400|500|520|600|620|1000)\b|\b(nvidia|quadro) t(400|500|550|600)\b|\bradeon\b.*\bhd ?\d{4}|\bradeon\b.*\br[57] ([am]?\d{3}|graphics)|\bradeon(\s?\(tm\))? ([56]\d\dx?|[67]\d0m)\b|\brx (5[45]0|640)x?\b/i, "low"],
+  [/\bgtx (9[5-8]0|9[78]0m)\b|\bquadro m[3-6]\d{3}m?\b|\bquadro p[23][0-2]00\b|\b(nvidia|quadro) t(1000|1200|2000)\b|\brtx a(500|1000|2000)\b/i, "medium"],
+  [/\bgtx 980 ti\b|\btitan xp?\b/i, "high"],
 ];
 const APPLE_HIGH_DRAWS_PER_S = 2000, APPLE_MEDIUM_DRAWS_PER_S = 1300;
 const SCORE_KEY = "kr-gpu-score";
@@ -117,7 +125,7 @@ export function gpuString(gl: WebGLRenderingContext | WebGL2RenderingContext): s
 }
 export function classifyGpu(gpu: string): Level {
   let lvl: Level | null = null;
-  for (const [re, l] of RULES) if (re.test(gpu)) lvl = l; // later (stronger) rules win: "rtx 3070 laptop" → epic
+  for (const [re, l] of RULES) if (re.test(gpu)) lvl = l; // later rules win: "rtx 3070 laptop" → epic, "gtx titan black" → low
   if (lvl) return lvl;
   if (/nvidia|geforce|quadro/i.test(gpu)) return "high";
   if (/radeon|amd/i.test(gpu)) return "medium";
