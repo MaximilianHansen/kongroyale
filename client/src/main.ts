@@ -301,7 +301,9 @@ function registerFar(id: string, m: WorldModule | null, streamed: boolean) {
   if (!poi) return;
   const roots = moduleRoots(id, streamed);
   const y = Math.max(poi.padY ?? 0, engine.terrain.height(poi.x, poi.z));
-  engine.far.register(id, roots, { x: poi.x, y, z: poi.z }, Math.max(240, poi.r * 2.2));
+  // merged from half the old distance (max(240, 2.2 r)): on a 4-core CPU the main pass is CPU-bound at ~20 µs a draw,
+  // and the nearer switch cut a live match's draws from ~600 to ~400; never within 30 m of the POI's rim
+  engine.far.register(id, roots, { x: poi.x, y, z: poi.z }, Math.max(120, poi.r * 1.1, poi.r + 30));
 }
 
 const world = { modOf, scopeOf, rootsOf, loaded, roots: (id: string) => moduleRoots(id, true), report, build: (id: string) => streamBuild(id, false) };
