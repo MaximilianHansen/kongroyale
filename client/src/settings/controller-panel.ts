@@ -6,6 +6,7 @@
 // and highlighting the focused action's buttons, or both sticks against their deadzone and outer-threshold rings with the
 // triggers' activation points (the live tester).
 import { preferences } from "./preferences";
+import { cameraSection } from "./panel";
 import { device } from "./device";
 import { glyphFamily } from "./labels";
 import { FACE_COLORS, LAYOUT_NAMES, PAD_ACTIONS, PAD_LABELS, PB, RIDE_SHARE, applyCurve, glyph, mayShare, type PadAction, type PadFamily, type PadPrefs } from "./pad";
@@ -83,6 +84,7 @@ export function controllerCategory(): Category {
         toggle("aimAssist", "Aim assist", () => LOOK("Aim assist", ["Controller only. Slows your aim over an enemy and helps follow a moving target while you aim, move or fire. Never through walls, never at squadmates."])),
         slider("aimAssistStrength", "Aim assist strength", 0, 1, 0.05, pct, () => LOOK("Aim assist strength", ["How strongly the slowdown and tracking act."])),
       ] },
+      cameraSection(),
       { id: "deadzones", name: "Deadzones", rows: () => [
         slider("deadL", "Left stick deadzone", 0, 0.35, 0.01, pct, () => DEAD("Left stick deadzone", ["Ignore this much stick travel at rest. Raise it if you drift without touching the stick."])),
         slider("deadR", "Right stick deadzone", 0, 0.35, 0.01, pct, () => DEAD("Right stick deadzone", ["Smaller = more responsive micro-aim; raise it if the view creeps on its own."])),

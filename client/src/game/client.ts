@@ -740,6 +740,13 @@ export class ClientMatch {
       input.rideSeat = p.st === PS.Ride ? p.seat : -1;
       input.poll(inp, allowFire);
       inp.seq = ++this.inputSeq; inp.yaw = input.yaw; inp.pitch = input.pitch;
+      // third person: aim from the eyes at the crosshair's point (GameInput.aimDYaw); the move keys turn back by the same
+      // angle, so W still walks where the camera looks
+      if ((input.aimDYaw !== 0 || input.aimDPitch !== 0) && p.st !== PS.Ride && p.st !== PS.Plane) {
+        const d = input.aimDYaw, c = Math.cos(d), s = Math.sin(d), mx = inp.mx, mz = inp.mz;
+        inp.yaw += d; inp.pitch = Math.max(-1.53, Math.min(1.53, inp.pitch + input.aimDPitch));
+        inp.mx = mx * c + mz * s; inp.mz = mz * c - mx * s;
+      }
       // lag compensation: the blend of the frame the player was LOOKING at when this input was sampled; while riding the
       // plane: the server tick we are showing (the plane exit happens at that tick's plane position, shared/sim/plane.ts)
       if (p.st === PS.Plane) { inp.lerpA = Math.max(0, Math.floor(this.serverTick())); inp.lerpSpan = 0; inp.lerpF = 0; }

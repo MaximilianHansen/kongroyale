@@ -1,12 +1,13 @@
 // SETTINGS → MOUSE & KEYBOARD, AUDIO, ACCESSIBILITY: the rows of these three categories (the Toon shell in
-// ui/settings-shell.ts draws them). Every row reads and writes settings/preferences.ts, so a change applies live and is
-// saved on this device. Rebinding: a key (Ctrl / Alt / Shift on their own included), a mouse button (side
-// buttons included) or a wheel notch binds; Escape cancels; Backspace / Delete / the footer's CLEAR unbinds the slot (any
-// action but the slot / seat keys may be left unbound); a key another action uses moves here and the message names that
-// action (preferences.rebind; the slot / seat keys are refused). The CONTROLLER rows are settings/controller-panel.ts.
+// ui/settings-shell.ts draws them), and the CAMERA section (first / third person) the controller tab shows too. Every
+// row reads and writes settings/preferences.ts, so a change applies live and is saved on this device. Rebinding: a key
+// (Ctrl / Alt / Shift on their own included), a mouse button (side buttons included) or a wheel notch binds; Escape
+// cancels; Backspace / Delete / the footer's CLEAR unbinds the slot (any action but the slot / seat keys may be left
+// unbound); a key another action uses moves here and the message names that action (preferences.rebind; the slot /
+// seat keys are refused). The CONTROLLER rows are settings/controller-panel.ts.
 import { preferences, type Preferences } from "./preferences";
 import { BIND_LABELS, BIND_ORDER, CLEARABLE_BINDS, RIDE_BINDS, bindLabel, fixedBinds, type BindAction } from "./bindings";
-import { mult, pct, ON_OFF, type BindRow, type Category, type Help, type Row, type SliderRow, type SwitchRow, type ChoiceRow } from "../ui/settings-model";
+import { mult, pct, ON_OFF, type BindRow, type Category, type Help, type Row, type Section, type SliderRow, type SwitchRow, type ChoiceRow } from "../ui/settings-model";
 
 const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 type NumKey = { [K in keyof Preferences]: Preferences[K] extends number ? K : never }[keyof Preferences];
@@ -24,7 +25,7 @@ const holdToggle = (key: FlagKey, label: string, help: () => Help): ChoiceRow =>
 const REBIND_HELP = "Select a slot, then press a key (Ctrl, Alt and Shift included), click a mouse button (side buttons included) or roll the wheel. Esc cancels; Backspace, Delete or CLEAR unbinds the slot. Slash opens issue reporting.";
 const CONFLICT_HELP = "A key another action already uses moves here, and the message names that action (it keeps its other key, or shows Unbound). Equipment slot and seat keys are refused instead.";
 const NOTE: Partial<Record<BindAction, string>> = {
-  radio: "Kong FM, from any seat.", rideView: "Behind the tuk-tuk or from the saddle.",
+  radio: "Kong FM, from any seat.", rideView: "On foot: first or third person (Camera view above). Driving: behind the tuk-tuk or from the saddle.",
 };
 /** the tuk-tuk's driving keys, spelled out from the current bindings (help of the tuk-tuk rows) */
 function rideNote() {
@@ -73,12 +74,27 @@ export function kbmClear(action: BindAction, index: number): { error?: string; m
   return error ? { error } : { message: `${bindName(action, index)} cleared.${preferences.value.binds[action].length ? "" : ` ${BIND_LABELS[action]} is now unbound.`}` };
 }
 
+// ---- the camera (first / third person): in MOUSE & KEYBOARD and in CONTROLLER (the same two preferences)
+const CAMERA = (title: string, body: string[]): Help => ({ eb: "Camera", title, body });
+export function cameraSection(): Section {
+  return { id: "camera", name: "Camera", rows: () => [
+    { kind: "seg", id: "thirdPerson", label: "Camera view", options: () => [{ v: false, label: "First person" }, { v: true, label: "Third person" }],
+      get: () => preferences.value.thirdPerson, set: (v) => preferences.set({ thirdPerson: !!v }),
+      help: () => CAMERA("Camera view", ["First person: through your kong's eyes.", "Third person: over your kong's shoulder. Your shots still leave your kong's eyes and land under the crosshair; a wall your kong cannot see past stops them. The sniper scope always looks through the eyes.", `On the keyboard, ${preferences.value.binds.rideView[0] ? bindLabel(preferences.value.binds.rideView[0]) : "the Camera view key"} switches it on foot during a match.`]) },
+    { kind: "seg", id: "shoulder", label: "Shoulder", options: () => [{ v: "left", label: "Left" }, { v: "right", label: "Right" }],
+      get: () => preferences.value.shoulder, set: (v) => preferences.set({ shoulder: v === "left" ? "left" : "right" }),
+      disabled: () => preferences.value.thirdPerson ? null : "Third person only",
+      help: () => CAMERA("Shoulder", ["Which shoulder the third-person camera looks over. Swap it to see round a corner on the other side."]) },
+  ] };
+}
+
 // ---- the three categories
 const INPUT = (title: string, body: string[]): Help => ({ eb: "Input", title, body, viz: "mouse" });
 export function controlsCategory(): Category {
   return {
     id: "kbm", name: "Mouse & keyboard",
     sections: [
+      cameraSection(),
       { id: "mouse", name: "Mouse", rows: () => [
         slider("sensitivity", "Mouse sensitivity", 0.2, 3, 0.05, mult, () => INPUT("Mouse sensitivity", ["Rotation speed when looking around (raw input: no OS acceleration).", "Higher values feel faster, lower values offer more precise control. Try it: the firing range uses this value."])),
         slider("adsSensitivity", "Aim sensitivity", 0.2, 2, 0.05, mult, () => INPUT("Aim sensitivity", ["Multiplier while aiming down sights, on top of the zoom's own scaling.", "1.00x keeps the zoom's own feel."])),
