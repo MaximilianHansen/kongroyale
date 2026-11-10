@@ -9,7 +9,8 @@
 //     his eyes on you, waves when you walk up and hops when you buy (tickStands, once per frame; near stands only)
 // Origin = floor centre, +Z = the customers' side. Vertex-coloured PartBuilder parts on the weapons' shared
 // materials (one draw per material kind) + the thatch and the sign; the monkey and the small display pieces (the
-// "detail" group) stop drawing past DETAIL_M and cast no shadow. 16 stands per match (one per named POI).
+// "detail" group) stop drawing past DETAIL_M and cast no shadow; past FAR_M the whole stand is one merged draw (farStand).
+// 16 stands per match (one per named POI).
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { PartBuilder, type Built } from "./lib/builder";
@@ -25,6 +26,9 @@ const RIDGE = 3.14, EAVE = 2.42, EZ = 1.06, RX = 1.55;
 const SLOPE = Math.atan2(RIDGE - EAVE, EZ);
 /** the monkey and the small display pieces stop drawing past this distance (m) */
 const DETAIL_M = 55;
+/** past this distance (m) a stand draws as its FAR mesh: every non-detail part merged into ONE vertex-coloured draw
+ * (≈ 8 draws → 1; the textures' grain is sub-pixel out there) */
+const FAR_M = 150;
 /** the monkey's feet (on his crate behind the counter) and his scale (≈ 1.2 m with the cap: little next to a kong) */
 const MONKEY_AT: [number, number, number] = [0.0, 0.46, -0.3], MONKEY_S = 1.18;
 const PAINT = ["#f3c22f", "#ecb627", "#f6ca3b", "#e9b024", "#f2c02c", "#eeb92a", "#f5c636", "#e6ad22"];
@@ -402,12 +406,48 @@ export function bananaStand(): Built {
   detail.add(mk);
   built.root.add(detail);
   detail.traverse((c) => { if ((c as THREE.Mesh).isMesh) { c.castShadow = false; c.userData.noCast = true; } });
+  built.root.add(farStand(built.root, detail));
   let tris = 0; built.root.traverse((c) => { const g = (c as THREE.Mesh).geometry as THREE.BufferGeometry | undefined; if ((c as THREE.Mesh).isMesh && g) tris += (g.index ? g.index.count : g.attributes.position.count) / 3; });
   return { root: built.root, meshes: built.meshes, tris, pivots: {} };
 }
 
+/** the FAR mesh: `root`'s meshes outside `detail`, in root space, positions + normals + vertex colours (a part without
+ * colours takes its material's colour, the sign a banana yellow) in one draw. Hidden until tickStands shows it. */
+function farStand(root: THREE.Object3D, detail: THREE.Object3D): THREE.Mesh {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), m = new THREE.Matrix4(), c = new THREE.Color();
+  const geos: THREE.BufferGeometry[] = [];
+  const walk = (o: THREE.Object3D) => {
+    if (o === detail) return;
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh && !Array.isArray(mesh.material)) {
+      const src = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+      const g = new THREE.BufferGeometry(), n = src.attributes.position.count;
+      g.setAttribute("position", src.attributes.position.clone());
+      if (src.attributes.normal) g.setAttribute("normal", src.attributes.normal.clone()); else { g.computeVertexNormals(); }
+      const col = src.attributes.color;
+      if (col && col.itemSize === 3) g.setAttribute("color", col.clone());
+      else {
+        const mc = (mesh.material as THREE.MeshStandardMaterial).color;
+        c.set(mesh.name.startsWith("banana-stand-sign") ? PAINT[0] : mc ?? "#ffffff");
+        const a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+        g.setAttribute("color", new THREE.BufferAttribute(a, 3));
+      }
+      if (src !== mesh.geometry) src.dispose();
+      geos.push(g.applyMatrix4(m.multiplyMatrices(inv, mesh.matrixWorld)));
+    }
+    for (const k of o.children) walk(k);
+  };
+  walk(root);
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0 }); mat.name = "banana-stand-far";
+  const far = new THREE.Mesh(mergeGeometries(geos, false)!, mat);
+  for (const g of geos) g.dispose();
+  far.name = "banana-stand-far"; far.visible = false; far.castShadow = true; far.receiveShadow = true;
+  return far;
+}
+
 // ------------------------------------------------------------------------------------------------ animation
-interface StandAnim { detail: THREE.Object3D; root: THREE.Object3D; body: THREE.Object3D; head: THREE.Object3D; eyes: THREE.Object3D; armL: THREE.Object3D; armR: THREE.Object3D; tail: THREE.Object3D;
+interface StandAnim { far: THREE.Object3D | null; isFar: boolean; detail: THREE.Object3D; root: THREE.Object3D; body: THREE.Object3D; head: THREE.Object3D; eyes: THREE.Object3D; armL: THREE.Object3D; armR: THREE.Object3D; tail: THREE.Object3D;
   wave: number; waveT: number; near: boolean; cash: number; hop: number; phase: number; nextWave: number }
 const ANIM = new WeakMap<THREE.Object3D, StandAnim>();
 function animOf(o: THREE.Object3D): StandAnim | null {
@@ -416,7 +456,7 @@ function animOf(o: THREE.Object3D): StandAnim | null {
   const detail = o.getObjectByName("banana-stand-detail"), root = o.getObjectByName("stand-monkey");
   const g = (n: string) => o.getObjectByName(`monkey-${n}`)!;
   if (!detail || !root) return null;
-  a = { detail, root, body: g("body"), head: g("head"), eyes: g("eyes"), armL: g("armL"), armR: g("armR"), tail: g("tail"), wave: 0, waveT: -1, near: false, cash: -1, hop: 0, phase: Math.abs(o.position.x * 0.37 + o.position.z * 0.11) % 6.28, nextWave: 6 };
+  a = { far: o.getObjectByName("banana-stand-far") ?? null, isFar: false, detail, root, body: g("body"), head: g("head"), eyes: g("eyes"), armL: g("armL"), armR: g("armR"), tail: g("tail"), wave: 0, waveT: -1, near: false, cash: -1, hop: 0, phase: Math.abs(o.position.x * 0.37 + o.position.z * 0.11) % 6.28, nextWave: 6 };
   ANIM.set(o, a);
   return a;
 }
@@ -431,7 +471,11 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export function tickStands(views: readonly THREE.Object3D[], cx: number, cz: number, px: number, pz: number, cash: number, t: number, dt: number) {
   for (const o of views) {
     const a = animOf(o); if (!a) continue;
-    const show = Math.hypot(o.position.x - cx, o.position.z - cz) < DETAIL_M;
+    const d = Math.hypot(o.position.x - cx, o.position.z - cz), show = d < DETAIL_M;
+    // far: the one-draw merge stands in for every part (the detail group is hidden by then anyway)
+    const isFar = d > FAR_M && !!a.far;
+    if (isFar !== a.isFar) { a.isFar = isFar; for (const k of o.children) k.visible = k === a.far ? isFar : !isFar; }
+    if (isFar) { a.near = false; continue; }
     if (a.detail.visible !== show) a.detail.visible = show;
     if (!show) { a.near = false; continue; }
     // the player in the stand's frame (+Z = the customers' side)
