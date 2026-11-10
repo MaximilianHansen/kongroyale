@@ -37,7 +37,7 @@
     "@fails-components/webtransport": "1.6.11",
     "mongodb": "^7.7.0",
     "n8ao": "2.0.1",
-    "postprocessing": "6.39.5",
+    "postprocessing": "6.39.6",
     "three": "0.186.0",
     "three-mesh-bvh": "0.9.17",
     "ws": "8.21.3"
