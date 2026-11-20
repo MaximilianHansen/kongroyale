@@ -120,6 +120,8 @@ export function accessibilityCategory(): Category {
   return {
     id: "a11y", name: "Accessibility",
     sections: [{ id: "comfort", name: "Comfort & readability", rows: () => [
+      toggle("visualSound", "Visualize sound effects", () => ({ eb: "Accessibility", title: "Visualize sound effects", viz: "sound",
+        body: ["Shows a radial indicator ring around the crosshair for nearby footsteps, gunshots, chests, and vehicles."] })),
       toggle("reducedMotion", "Reduced camera motion", () => ({ eb: "Comfort", title: "Reduced camera motion", viz: "hud",
         body: ["Removes decorative shake, bob, landing dip and camera roll, and stills menu motion. Aim and gameplay recoil remain accurate."] })),
       slider("hudScale", "HUD size", 1, 1.5, 0.05, pct, () => ({ eb: "Readability", title: "HUD size", viz: "hud", body: ["Increase health, inventory and match information. The preview uses the real HUD parts."] })),

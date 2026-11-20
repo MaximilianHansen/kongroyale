@@ -19,7 +19,7 @@ import type { AirHands } from "../weapons/viewmodel";
 import type { GameAudio, PoiTheme, Sfx } from "../audio/api";
 import type { StormVisual } from "./storm/api";
 import { stageLength } from "../../../shared/sim/storm";
-import type { AccoladeId, Hud, HudState, HotbarSlot } from "../ui/api";
+import type { AccoladeId, Hud, HudState, HotbarSlot, SoundCue, SoundCueKind } from "../ui/api";
 import { ClientMatch, type EventSink, type Remote } from "./client";
 import type { GameInput } from "./input";
 import { AMMO_TYPES, PS, SK, consumableId, weaponId, rarityOf, eyeY as simEyeY, canPullChute, FF_DOWN, FF_DIVE_DOWN, type Player } from "../../../shared/sim/player";
@@ -413,6 +413,47 @@ export class GameRender implements EventSink {
     } else {
       this.kits.fx.impact(V3.set(x, y, z), V3b.set(0, 1, 0), "flesh");
     }
+  }
+  private soundCuePool: SoundCue[] = Array.from({ length: 16 }, () => ({ kind: "step", angle: 0, strength: 0 }));
+  /** populate radial visual sound cues (zero per-frame allocations) */
+  private updateSoundCues(now: number) {
+    const h = this.hud;
+    const cues = (h.soundCues ??= []);
+    cues.length = 0;
+    const cm = this.cm, p = cm.pred;
+    if (!preferences.value.visualSound || cm.phase === 3 || p.st === PS.Plane) return;
+    const cam = this.engine.camera; cam.getWorldDirection(V3c);
+    const yaw = Math.hypot(V3c.x, V3c.z) > 0.05 ? Math.atan2(-V3c.x, -V3c.z) : this.input.yaw;
+    const pushCue = (kind: SoundCueKind, x: number, z: number, maxR: number, fade = 1) => {
+      if (cues.length >= this.soundCuePool.length) return;
+      const dist = Math.hypot(x - p.x, z - p.z);
+      if (dist > maxR || dist < 0.5) return;
+      let rel = Math.atan2(-(x - p.x), -(z - p.z)) - yaw;
+      while (rel > Math.PI) rel -= Math.PI * 2; while (rel < -Math.PI) rel += Math.PI * 2;
+      const slot = this.soundCuePool[cues.length];
+      slot.kind = kind; slot.angle = rel; slot.strength = Math.max(0, Math.min(1, (1 - dist / maxR) * fade));
+      cues.push(slot);
+    };
+    // 1. Enemy gunshots (within 90 m, last 1.1 s)
+    for (const q of this.shotPings.values()) {
+      const age = now - q.at;
+      if (age < 1100) pushCue("shot", q.x, q.z, 90, 1 - age / 1100);
+    }
+    // 2. Enemy footsteps (moving on ground within 32 m)
+    for (let i = 0; i < cm.remotes.length; i++) {
+      const r = cm.remotes[i];
+      if (!r || r.n <= 0 || r.id === cm.me || r.team === p.team || r.deadNow || r.st !== PS.Ground) continue;
+      if (Math.hypot(r.vx, r.vz) > 0.6 || !r.grounded) pushCue("step", r.x, r.z, 32, 1);
+    }
+    // 3. Moving vehicles within 65 m
+    for (let i = 0; i < cm.vehs.list.length; i++) {
+      const v = cm.vehs.list[i];
+      if (!v || !v.live) continue;
+      if (Math.hypot(v.vx, v.vz) > 1.2) pushCue("vehicle", v.x, v.z, 65, 1);
+    }
+    // 4. Nearest unopened chest within 26 m
+    const chest = cm.nearestChest(26, false);
+    if (chest) pushCue("chest", chest.x, chest.z, 26, 0.85);
   }
   /** re-aim every live damage arc at its source against the camera's heading this frame */
   private dmgDirsAim() {
@@ -2486,6 +2527,7 @@ export class GameRender implements EventSink {
     while (h.killfeed.length && now - h.killfeed[0].at > 7000) h.killfeed.shift();
     while (h.damageDirs.length && now - h.damageDirs[0].at > 1600) h.damageDirs.shift();
     this.dmgDirsAim();
+    this.updateSoundCues(now);
     if (h.hitMarker && now - h.hitMarker.at > 400) h.hitMarker = null;
     if (h.announce && now - h.announce.at > 4500) h.announce = null;
     // damage numbers: project (a stack keeps its `at` key; the HUD merges amount changes into the same number)
