@@ -8,7 +8,7 @@ import type { POIS } from "../../../shared/world/map";
 import { drawGlyph, svgGlyph } from "./icons";
 import { drawPoiIcon } from "./poiicons";
 import { UI, U, addCss } from "./styles";
-import { bountyRing, drawPin, heliDot, mateMarker, planeAt, playerArrow, shotDot, standDot, tukDot, tukMe, SQUAD_COLOURS } from "./minimap";
+import { bountyRing, drawPin, heliDot, mateMarker, planeAt, playerArrow, shotDot, standDot, supplyDot, tukDot, tukMe, SQUAD_COLOURS } from "./minimap";
 import { preferences } from "../settings/preferences";
 import { backText, bindingText, glyphFamily, onLabelsChange } from "../settings/labels";
 import { device } from "../settings/device";
@@ -133,6 +133,8 @@ export class BigMap {
     stSw.appendChild(sc); row(stSw, "BANANA STAND (BUY)"); standDot(sc.getContext("2d")!, 40, 22, 14);
     const bSw = sw(""); const bc = document.createElement("canvas"); bc.width = 80; bc.height = 44; bc.style.cssText = "width:100%;height:100%";
     bSw.appendChild(bc); row(bSw, "BOUNTY TARGET AREA"); bountyRing(bc.getContext("2d")!, 40, 22, 17, 0.4);
+    const sdSw = sw(""); const sdc = document.createElement("canvas"); sdc.width = 80; sdc.height = 44; sdc.style.cssText = "width:100%;height:100%";
+    sdSw.appendChild(sdc); row(sdSw, "SUPPLY DROP"); supplyDot(sdc.getContext("2d")!, 40, 25, false, 11, 0.4);
     lg.append(this.phEl, tm, rows);
     this.el.appendChild(lg);
     const keys = document.createElement("div"); keys.className = "keys";
@@ -466,6 +468,7 @@ export class BigMap {
       for (const q of s.econ.stands) { const [x, y] = this.toScreen(q.x, q.z); standDot(g, x, y, 12 * u); }
       const B = s.econ.bounty; if (B) { const [x, y] = this.toScreen(B.x, B.z); bountyRing(g, x, y, Math.max(14 * u, B.r * this.ppm), performance.now() / 1000); }
     }
+    if (s.supplyDrops) { const now = performance.now() / 1000; for (const q of s.supplyDrops) { const [x, y] = this.toScreen(q.x, q.z); supplyDot(g, x, y, q.landed, 16 * u, now); } }
     // tuk-tuks (the taxi ranks this client has heard of)
     // (the one I ride is drawn as me, below)
     let myTuk: { yaw?: number; kind: number } | null = null;

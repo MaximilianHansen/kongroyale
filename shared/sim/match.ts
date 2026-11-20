@@ -12,7 +12,7 @@ import {
 } from "./const";
 import { CONSUMABLES } from "../world/map";
 import * as islet from "../pois/lobby-islet";
-import { chestRegen, IK, lootReachable, placeLoot, REGEN, rollAmmoBox, rollChestContents, settleLoot, tossClear, type Chest, type Item } from "./loot";
+import { chestRegen, IK, lootReachable, placeLoot, REGEN, rollAmmoBox, rollChestContents, rollSupplyDropContents, settleLoot, tossClear, type Chest, type Item } from "./loot";
 import { aimedItem, standNear } from "./pickup";
 const NO_STANDS: ReadonlyArray<{ x: number; y: number; z: number }> = [];
 import {
@@ -491,6 +491,7 @@ export class Match {
     this.stepRockets();
     this.stepBombs();
     this.stepCovers();
+    this.stepSupplyDrops();
     if (this.econ && this.phase === Phase.Play) this.econ.step();
     this.stepRespawns();
     if (this.phase === Phase.Play) this.checkEnd();
@@ -759,6 +760,32 @@ export class Match {
     const w = this.covers.byId(id); if (!w || dmg <= 0 || w.perm) return;
     w.hp -= dmg;
     if (w.hp <= 0) { this.covers.remove(id); this.ev.coverEnd(id, 1); } else this.ev.coverHit(id, w.hp);
+  }
+  private supplyDrops: Chest[] = [];
+  private nextSupplyAt = 45;
+  private supplyCount = 0;
+  private stepSupplyDrops() {
+    if (this.phase !== Phase.Play || this.range) return;
+    for (let i = 0; i < this.supplyDrops.length; i++) {
+      const c = this.supplyDrops[i];
+      if (!c.opened && c.targetY !== undefined && c.y > c.targetY) c.y = Math.max(c.targetY, c.y - 12 * DT);
+    }
+    if (this.time < this.nextSupplyAt || this.supplyCount >= 3) return;
+    this.nextSupplyAt += 90;
+    for (let tries = 0; tries < 8; tries++) {
+      const a = this.rng.next() * Math.PI * 2;
+      const r = Math.sqrt(this.rng.next()) * this.storm.r * 0.55;
+      const x = this.storm.cx + dmath.cos(a) * r;
+      const z = this.storm.cz + dmath.sin(a) * r;
+      const gy = this.world.ground(x, z);
+      if (gy <= 0.5) continue;
+      const c: Chest = { id: this.chests.length, x, y: gy + 110, z, targetY: gy, yaw: this.rng.next() * Math.PI * 2, rarity: 4, opened: false, poi: -1, supply: true };
+      this.chests.push(c);
+      this.supplyDrops.push(c);
+      this.supplyCount++;
+      this.ev.supplyDrop(c.id, c.x, c.y, c.z, gy, c.yaw);
+      break;
+    }
   }
   private stepCovers() {
     if (this.covers.n === 0) return;
@@ -1193,7 +1220,7 @@ export class Match {
     let best: Chest | null = null, bd = Infinity;
     const fx = -dmath.sin(p.yaw), fz = -dmath.cos(p.yaw);
     for (const c of this.chests) {
-      if (c.opened) continue;
+      if (c.opened || (c.supply && c.targetY !== undefined && c.y > c.targetY + 0.5)) continue;
       const dx = c.x - p.x, dz = c.z - p.z, d = dmath.hypot(dx, dz);
       if (d > CHEST_OPEN_DIST + 0.6) continue;
       const score = d * (1.35 - 0.5 * (d > 1e-3 ? (dx * fx + dz * fz) / d : 1));
@@ -1206,7 +1233,7 @@ export class Match {
     if (best) {
       best.opened = true; best.openedAt = this.time; this.ev.chest(best.id, p.id);
       const rng = new Rng(this.seed ^ (best.id * 2654435761) ^ this.tick);
-      const contents = best.box ? rollAmmoBox(rng) : rollChestContents(rng, best.rarity, best.poi);
+      const contents = best.supply ? rollSupplyDropContents(rng) : best.box ? rollAmmoBox(rng) : rollChestContents(rng, best.rarity, best.poi);
       this.spillChest(best, p, contents);
       return true;
     }
