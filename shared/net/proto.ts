@@ -25,7 +25,8 @@ export const enum EV { Hit = 1, Shot = 2, Kill = 3, Chest = 4, SpawnItem = 5, Ta
   /** a crate wall was set down: [id u16][owner u8][x y z f32][yaw u16][hp u16] */ Cover = 42,
   /** a crate wall is gone: [id u16][why u8: 0 crumbled (time / replaced), 1 broken] */ CoverEnd = 43,
   /** a crate wall took damage: [id u16][hp u16] */ CoverHit = 44,
-  /** end-game loot regen: an opened chest / ammo box closed again, restocked (glow + hum back): [id u16] */ ChestReset = 45 }
+  /** end-game loot regen: an opened chest / ammo box closed again, restocked (glow + hum back): [id u16] */ ChestReset = 45,
+  /** mid-match supply drop spawned: [id u16][x f32][y f32][z f32][targetY f32][yaw u16] */ SupplyDrop = 46 }
 /** EV.Veh kinds. `a`: Enter / Exit / Flip = the kong, Crash / Land = how hard (m/s × 12, capped) */
 export const enum VK { Enter = 1, Exit = 2, Tip = 3, Flip = 4, Boom = 5, Crash = 6, Land = 7, Slam = 8, Sunk = 9, Burn = 10,
   /** a helicopter's rotor cut a kong down: a = the kong, (x, y, z) = where */ Chop = 11 }
@@ -303,7 +304,7 @@ export function readInventory(r: Reader, p: Player, e: EconView | null = null) {
  *  (admin lobby: shared/net/event.ts — JSON only, the binary frames are unchanged) — the server's "welcome" carries it; a
  *  client on another version reloads · 11: M.Inputs, the window of unacknowledged inputs a WebTransport client sends as
  *  one datagram per tick */
-export const NET_VERSION = 11;
+export const NET_VERSION = 12;
 export class Events {
   readonly w = new Writer(new ArrayBuffer(32768));
   n = 0;
@@ -336,6 +337,7 @@ export class Events {
   coverEnd(id: number, why: number) { this.begin(EV.CoverEnd).u16(id).u8(why); }
   coverHit(id: number, hp: number) { this.begin(EV.CoverHit).u16(id).u16(Math.max(0, Math.min(65535, Math.ceil(hp)))); }
   chestReset(id: number) { this.begin(EV.ChestReset).u16(id); }
+  supplyDrop(id: number, x: number, y: number, z: number, targetY: number, yaw: number) { this.begin(EV.SupplyDrop).u16(id).f32(x).f32(y).f32(z).f32(targetY).u16(yawEnc(yaw)); }
   vehHit(shooter: number, veh: number, dmg: number, x: number, y: number, z: number) { this.begin(EV.VehHit).u8(shooter & 0xff).u8(veh).u16(Math.min(65535, Math.round(dmg * 4))).f32(x).f32(y).f32(z); }
 }
 /** the kill feed's cause for a tuk-tuk: run over by one, or caught in its blast — and a helicopter's: its rotor, its

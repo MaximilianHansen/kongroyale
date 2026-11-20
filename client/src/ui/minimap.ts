@@ -164,6 +164,7 @@ export class Minimap {
       for (const q of s.econ.stands) { const [x, y] = P(q.x, q.z); if (x > -12 && x < VIEW + 12 && y > -12 && y < VIEW + 12) standDot(g, x, y, 8); }
       const B = s.econ.bounty; if (B) bountyRing(g, ...P(B.x, B.z), Math.max(10, B.r * k), now);
     }
+    if (s.supplyDrops) for (const q of s.supplyDrops) supplyDot(g, ...P(q.x, q.z), q.landed, 8, now);
     // squad mates
     let si = 0;
     for (const q of s.squad) {
@@ -196,7 +197,32 @@ function northTag(g: CanvasRenderingContext2D, nx: number, ny: number, band = 1)
 }
 
 // (economy) the Banana Stands (a banana-coin badge) and the bounty circle (a pulsing red ring, a skull)
-function econSig(s: HudState, now: number) { const e = s.econ; if (!e) return ""; return `${e.stands.length}|${e.bounty ? `${e.bounty.x | 0},${e.bounty.z | 0},${Math.floor(now * 8)}` : ""}`; }
+function econSig(s: HudState, now: number) {
+  const e = s.econ;
+  const sd = s.supplyDrops?.length ? `|sd${s.supplyDrops.length}:${Math.floor(now * 4)}` : "";
+  if (!e) return sd;
+  return `${e.stands.length}|${e.bounty ? `${e.bounty.x | 0},${e.bounty.z | 0},${Math.floor(now * 8)}` : ""}${sd}`;
+}
+/** glowing Supply Drop crate (+ parachute canopy when airborne) */
+export function supplyDot(g: CanvasRenderingContext2D, x: number, y: number, landed: boolean, r: number, now: number) {
+  const pulse = 0.65 + 0.35 * Math.sin(now * 6);
+  g.save();
+  g.translate(x, y);
+  // outer pulsing beacon ring so it stands out from POI/Banana Stand circles
+  g.strokeStyle = `rgba(79,182,234,${0.85 * pulse})`;
+  g.lineWidth = Math.max(2, r * 0.25);
+  g.beginPath(); g.arc(0, 0, r * (1.7 + 0.35 * pulse), 0, Math.PI * 2); g.stroke();
+  g.fillStyle = "rgba(4,16,26,0.75)";
+  g.beginPath(); g.arc(0, 0, r * 1.45, 0, Math.PI * 2); g.fill();
+  if (!landed) {
+    g.fillStyle = "#fff8e7"; g.strokeStyle = "#04101a"; g.lineWidth = Math.max(1.5, r * 0.18);
+    g.beginPath(); g.arc(0, -r * 0.35, r * 0.95, Math.PI, Math.PI * 2); g.closePath(); g.fill(); g.stroke();
+  }
+  g.fillStyle = "#4fb6ea"; g.strokeStyle = "#ffd21a"; g.lineWidth = Math.max(2, r * 0.22);
+  g.fillRect(-r * 0.65, -r * 0.25, r * 1.3, r * 0.95);
+  g.strokeRect(-r * 0.65, -r * 0.25, r * 1.3, r * 0.95);
+  g.restore();
+}
 export function standDot(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
   g.save(); g.translate(x, y);
   g.beginPath(); g.arc(0, 0, r * 1.25, 0, Math.PI * 2); g.fillStyle = "rgba(10,14,20,0.85)"; g.fill();

@@ -89,6 +89,8 @@ export interface HudState {
    *  bigger hit draws a bigger, stronger arc), `src` = who dealt it (repeated hits from one source refresh one arc
    *  instead of stacking), `x` / `z` = the source's world position (the game's own bookkeeping) */
   damageDirs: Array<{ at: number; angle: number; dmg?: number; src?: number; x?: number; z?: number }>;
+  /** optional: active mid-match supply drops for minimap / bigmap */
+  supplyDrops?: Array<{ x: number; z: number; landed: boolean }>;
   /** floating damage numbers projected to screen (0..1 fractions) — re-projected every frame while alive */
   damageNumbers: Array<{
     at: number; sx: number; sy: number; amount: number; kind: "body" | "head" | "shield" | "break" | "kill";
