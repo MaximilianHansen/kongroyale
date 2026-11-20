@@ -19,7 +19,7 @@ import type { BindAction } from "../settings/bindings";
 import { accessibilityCategory, audioCategory, controlsCategory, kbmBind, kbmClear, kbmSlot } from "../settings/panel";
 import { cancelPadCapture, clearPadCapture, controllerCategory, curveSvg, padCapturing, padDiagram, padLegend, padLive, padSlot, padStatus, startPadCapture } from "../settings/controller-panel";
 import { videoCategory, type BindRow, type Category, type ChoiceRow, type Row, type SliderRow } from "./settings-model";
-import { bindViz, esc, fitHudPreview, fovViz, gfxViz, hudPreview, hwRows, mouseViz, speakerViz } from "./settings-viz";
+import { bindViz, esc, fitHudPreview, fovViz, gfxViz, hudPreview, hwRows, mouseViz, soundViz, speakerViz } from "./settings-viz";
 import { TOON_LOGO } from "./toon";
 import type { PadOwner } from "./padnav";
 
@@ -203,6 +203,7 @@ export function createSettingsShell(engine: Engine, display: Display): SettingsS
     let vizHtml = "";
     if (viz === "mouse") vizHtml = mouseViz();
     else if (viz === "speaker") vizHtml = speakerViz();
+    else if (viz === "sound") vizHtml = soundViz();
     else if (viz === "fov") vizHtml = fovViz(display);
     else if (viz === "gfx") vizHtml = gfxViz(display);
     else if (viz === "curve") vizHtml = `${curveSvg()}<div class="tn-set-cap tn-eyebrow">Stick input → turn speed · dashed = linear</div>`;

@@ -95,10 +95,12 @@ export class CenterLayer {
     const hitAge = this.hit ? now - this.hit.start : 99;
     const hitLife = this.hit ? (this.hit.kind === "kill" ? 0.6 : this.hit.kind === "break" ? 0.5 : 0.36) : 0;
     const ringLife = this.hit && !this.hit.predicted && (this.hit.kind === "head" || this.hit.kind === "shield" || this.hit.kind === "break") ? RING_LIFE : 0;
-    const animating = hitAge < Math.max(hitLife, ringLife) + 0.02 || now - this.skullStart < 1.1 || this.dirs.length > 0 || !!prog;
+    const cues = preferences.value.visualSound ? s.soundCues : undefined;
+    const hasCues = !!cues && cues.length > 0;
+    const animating = hitAge < Math.max(hitLife, ringLife) + 0.02 || now - this.skullStart < 1.1 || this.dirs.length > 0 || !!prog || hasCues;
     this.gunHeat = gun ? Math.round(gun.heat * 20) / 20 : -1; this.gunLock = !!gun && gun.lock; this.gunEmpty = !!gun && gun.belt <= 0;
     this.atWheel = !!s.vehicle && s.vehicle.seat === 0;
-    const sig = `${s.scoped}|${!!s.ads}|${wid}|${this.gap.toFixed(2)}|${s.hp > 0}|${vh}|${this.gunHeat}|${this.gunLock}|${this.gunEmpty}|${this.atWheel}`;
+    const sig = `${s.scoped}|${!!s.ads}|${wid}|${this.gap.toFixed(2)}|${s.hp > 0}|${vh}|${this.gunHeat}|${this.gunLock}|${this.gunEmpty}|${this.atWheel}|${hasCues ? cues!.length : 0}`;
     if (!animating && this.idle && sig === this.lastSig) return;
     this.lastSig = sig;
     this.idle = !animating;
@@ -132,6 +134,55 @@ export class CenterLayer {
       g.restore();
     }
     if (s.scoped) return;
+
+    // ---- visual sound cues (radial Fortnite-style ring around the crosshair)
+    if (preferences.value.visualSound && s.soundCues && s.soundCues.length > 0) {
+      for (let i = 0; i < s.soundCues.length; i++) {
+        const c = s.soundCues[i];
+        const col = c.kind === "shot" ? TOON.danger : c.kind === "chest" ? TOON.accent : c.kind === "vehicle" ? TOON.sky : TOON.text;
+        const th = -Math.PI / 2 - c.angle;
+        g.save();
+        g.translate(CX, CY);
+        g.rotate(th + Math.PI / 2);
+        g.globalAlpha = Math.max(0.25, Math.min(1, 0.35 + c.strength * 0.65));
+        // directional arc at radius 220 u-px
+        const rad = 220;
+        g.strokeStyle = TOON.outline;
+        g.lineWidth = 10;
+        g.beginPath(); g.arc(0, 0, rad, -Math.PI / 2 - 0.16, -Math.PI / 2 + 0.16); g.stroke();
+        g.strokeStyle = col;
+        g.lineWidth = 5;
+        g.beginPath(); g.arc(0, 0, rad, -Math.PI / 2 - 0.16, -Math.PI / 2 + 0.16); g.stroke();
+        // icon badge just outside the arc
+        g.translate(0, -rad - 24);
+        g.fillStyle = TOON.bg;
+        g.strokeStyle = TOON.outline;
+        g.lineWidth = 3;
+        g.beginPath(); g.arc(0, 0, 18, 0, Math.PI * 2); g.fill(); g.stroke();
+        g.fillStyle = col;
+        g.strokeStyle = col;
+        if (c.kind === "step") {
+          g.beginPath(); g.ellipse(-4.5, -2, 3, 5.5, -0.18, 0, Math.PI * 2); g.fill();
+          g.beginPath(); g.ellipse(-3.5, 6, 2.5, 2.2, 0, 0, Math.PI * 2); g.fill();
+          g.beginPath(); g.ellipse(4.5, -5, 3, 5.5, 0.18, 0, Math.PI * 2); g.fill();
+          g.beginPath(); g.ellipse(4, 3, 2.5, 2.2, 0, 0, Math.PI * 2); g.fill();
+        } else if (c.kind === "shot") {
+          g.beginPath();
+          for (let j = 0; j < 8; j++) { const a = (j * Math.PI) / 4, r = j % 2 === 0 ? 11 : 4.5; g[j === 0 ? "moveTo" : "lineTo"](Math.cos(a) * r, Math.sin(a) * r); }
+          g.closePath(); g.fill();
+        } else if (c.kind === "chest") {
+          g.beginPath(); g.roundRect(-9, -6, 18, 13, 3); g.fill();
+          g.fillStyle = TOON.bg; g.fillRect(-9, -1, 18, 2.4);
+          g.fillRect(-2, -2.5, 4, 5);
+        } else {
+          g.lineWidth = 2.8;
+          g.beginPath(); g.arc(0, 0, 9.5, 0, Math.PI * 2); g.stroke();
+          g.beginPath(); g.arc(0, 0, 2.6, 0, Math.PI * 2); g.fill();
+          g.beginPath(); g.moveTo(-9.5, 0); g.lineTo(9.5, 0); g.moveTo(0, 0); g.lineTo(0, 9.5); g.stroke();
+        }
+        g.restore();
+      }
+    }
 
     // ---- crosshair
     // (no crosshair aiming down sights — the sights are the aim; the door gunner has no sights: its reticle stays)

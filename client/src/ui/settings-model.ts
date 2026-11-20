@@ -12,7 +12,7 @@ import { autoOn, privacySignal, setAuto } from "../playtest/consent";
 
 export type CatId = "kbm" | "pad" | "audio" | "video" | "a11y";
 /** the help panel's illustration for a row */
-export type Viz = "mouse" | "bind" | "pad" | "sticks" | "curve" | "speaker" | "hw" | "fov" | "gfx" | "hud";
+export type Viz = "mouse" | "bind" | "pad" | "sticks" | "curve" | "speaker" | "hw" | "fov" | "gfx" | "hud" | "sound";
 export interface Help {
   eb: string; title?: string; body: string[]; viz?: Viz;
   /** pad diagram: the controller actions whose buttons light up; `legend` adds what the face buttons and bumpers do */
