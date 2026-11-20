@@ -73,6 +73,8 @@ export interface Player {
   redeploys: number;
   /** firing range: reloads never draw down the reserve (set on the server AND the client's prediction) */
   infAmmo: boolean;
+  /** auto-pickup: walking over a higher-rarity copy of a carried weapon upgrades that slot */
+  autoUpgrade: boolean;
   /** PS.Ride: the tuk-tuk (VehicleSet index, −1 = on foot) and the seat in it (0 = driver) */
   veh: number; seat: number;
   /** E this tick belongs to something the prompt shows ahead of a zipline (aimed tuk-tuk, window, chest, gun on the
@@ -108,7 +110,7 @@ export function makePlayer(id: number, team: number, name: string, bot: boolean)
     kills: 0, damage: 0, deadAt: -1, respawnAt: -1, killer: -1, placement: 0,
     lastSeq: 0, lastInputAt: 0, stormT: 0, landedAt: -1, spectate: -1,
     hist: new Float32Array(HISTORY_TICKS * 5),
-    anim: 0, eliminated: false, redeploys: 0, infAmmo: false, veh: -1, seat: 0, useTaken: false, buffT: 0, cookT: 0, thrown: 0, placed: 0, cash: 0,
+    anim: 0, eliminated: false, redeploys: 0, infAmmo: false, autoUpgrade: false, veh: -1, seat: 0, useTaken: false, buffT: 0, cookT: 0, thrown: 0, placed: 0, cash: 0,
     under: false, breath: 1, swGun: 0,
   };
 }

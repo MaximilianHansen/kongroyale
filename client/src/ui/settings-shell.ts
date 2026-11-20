@@ -16,10 +16,10 @@ import { device } from "../settings/device";
 import { backText, glyphFamily, onLabelsChange } from "../settings/labels";
 import { PB, glyph, type PadAction } from "../settings/pad";
 import type { BindAction } from "../settings/bindings";
-import { accessibilityCategory, audioCategory, controlsCategory, kbmBind, kbmClear, kbmSlot } from "../settings/panel";
+import { accessibilityCategory, audioCategory, controlsCategory, inventoryCategory, kbmBind, kbmClear, kbmSlot } from "../settings/panel";
 import { cancelPadCapture, clearPadCapture, controllerCategory, curveSvg, padCapturing, padDiagram, padLegend, padLive, padSlot, padStatus, startPadCapture } from "../settings/controller-panel";
 import { videoCategory, type BindRow, type Category, type ChoiceRow, type Row, type SliderRow } from "./settings-model";
-import { bindViz, esc, fitHudPreview, fovViz, gfxViz, hudPreview, hwRows, mouseViz, speakerViz } from "./settings-viz";
+import { bindViz, esc, fitHudPreview, fovViz, gfxViz, hudPreview, hwRows, mouseViz, slotsViz, speakerViz } from "./settings-viz";
 import { TOON_LOGO } from "./toon";
 import type { PadOwner } from "./padnav";
 
@@ -35,7 +35,7 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const kbd = (t: string, cls = "") => `<kbd class="tn-key${cls ? " " + cls : ""}">${esc(t)}</kbd>`;
 
 export function createSettingsShell(engine: Engine, display: Display): SettingsShell {
-  const CATS: Category[] = [controlsCategory(), controllerCategory(), audioCategory(), videoCategory(engine, display), accessibilityCategory()];
+  const CATS: Category[] = [controlsCategory(), controllerCategory(), inventoryCategory(), audioCategory(), videoCategory(engine, display), accessibilityCategory()];
   const root = document.createElement("div");
   root.className = "kr-video tn-set kr-tu";
   root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-label", "Settings");
@@ -183,7 +183,7 @@ export function createSettingsShell(engine: Engine, display: Display): SettingsS
     row = clamp(row, 0, Math.max(0, rows.length - 1));
     rowEls = rows.map((r, i) => {
       const el = document.createElement("div");
-      el.className = "tn-set-row tn-tile"; el.dataset.i = String(i); el.tabIndex = -1; el.setAttribute("role", "listitem"); el.setAttribute("aria-label", r.label);
+      el.className = "tn-set-row tn-tile"; el.dataset.i = String(i); el.dataset.id = r.id; el.tabIndex = -1; el.setAttribute("role", "listitem"); el.setAttribute("aria-label", r.label);
       el.innerHTML = `<div class="lbl tn-label">${esc(r.label)}<small hidden></small></div><div class="ctl">${buildControl(r)}</div><div class="tn-set-err" role="alert" hidden></div>`;
       return el;
     });
@@ -203,6 +203,7 @@ export function createSettingsShell(engine: Engine, display: Display): SettingsS
     let vizHtml = "";
     if (viz === "mouse") vizHtml = mouseViz();
     else if (viz === "speaker") vizHtml = speakerViz();
+    else if (viz === "slots") vizHtml = slotsViz();
     else if (viz === "fov") vizHtml = fovViz(display);
     else if (viz === "gfx") vizHtml = gfxViz(display);
     else if (viz === "curve") vizHtml = `${curveSvg()}<div class="tn-set-cap tn-eyebrow">Stick input → turn speed · dashed = linear</div>`;
@@ -265,7 +266,11 @@ export function createSettingsShell(engine: Engine, display: Display): SettingsS
   }
 
   // ---------------------------------------------------------------- changing values
-  function afterChange() { paintAll(); renderHelp(); saved(); }
+  function afterChange() {
+    if (CATS[cat].sections[sec].rows().length !== rows.length) renderSection();
+    else paintAll();
+    renderHelp(); saved();
+  }
   function adjust(r: Row, dir: number, coarse = false) {
     if (r.disabled?.()) return;
     if (r.kind === "slider") {

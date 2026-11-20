@@ -8,6 +8,7 @@ import type { Engine } from "../engine/engine";
 import type { Display, Level } from "../engine/display";
 import { preferences } from "../settings/preferences";
 import { hfov } from "./settings-model";
+import { itemIconUrl } from "./icons";
 
 export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 const caption = (t: string) => `<div class="tn-set-cap tn-eyebrow">${esc(t)}</div>`;
@@ -33,6 +34,34 @@ export function speakerViz(): string {
   const waves = [0, 1, 2].map((i) => `<path class="${i < n ? "on" : "off"}" d="M${130 + i * 26} ${50 - i * 14}a${40 + i * 26} ${40 + i * 26} 0 0 1 0 ${60 + i * 28}"/>`).join("");
   return `<svg class="tn-set-speaker" viewBox="0 0 280 160" aria-hidden="true"><path class="body" d="M40 60h30l40-32v104L70 100H40z"/>
     ${waves}${m === 0 ? '<path class="mute" d="M140 55l50 50M190 55l-50 50"/>' : ""}</svg>${caption(`Master ${m}%`)}`;
+}
+
+const SLOT_SHORT: Record<string, [string, string, string | null]> = {
+  any: ["ANY", "var(--kong-text-muted)", null],
+  ar: ["AR", "var(--kong-accent)", "ar"],
+  shotgun: ["SHOT", "var(--kong-warning)", "shotgun"],
+  smg: ["SMG", "var(--kong-sky)", "smg"],
+  sniper: ["SNIPER", "var(--kong-rarity-rare)", "sniper"],
+  rocket: ["ROCKET", "var(--kong-danger)", "rocket"],
+  consumable: ["HEAL", "var(--kong-success)", "banana"],
+};
+
+/** live 5-slot hotbar preview for Preferred Item Slots */
+export function slotsViz(): string {
+  const p = preferences.value;
+  const active = p.autoSortWeapons || p.autoSortHeals;
+  const cards = p.slotPrefs.map((pref, i) => {
+    const eff = p.autoSortWeapons ? pref : p.autoSortHeals && i >= 3 ? "consumable" : "any";
+    const [lbl, col, iconId] = SLOT_SHORT[eff] ?? SLOT_SHORT.any;
+    const body = iconId
+      ? `<img src="${esc(itemIconUrl(iconId))}" alt="${lbl}" style="width:42px;height:42px;object-fit:contain;display:block">`
+      : `<span style="font-size:12px;font-weight:900;color:${col};line-height:42px;letter-spacing:.04em">${lbl}</span>`;
+    return `<div style="display:grid;place-items:center;gap:2px;padding:8px 4px;border-radius:10px;background:var(--kong-bg);border:2px solid ${eff === "any" ? "var(--kong-rule)" : col}">
+      <span style="font-size:10px;font-weight:900;color:var(--kong-text-muted)">${i + 1}</span>
+      ${body}
+    </div>`;
+  }).join("");
+  return `<div class="tn-set-fig" style="width:100%"><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;opacity:${active ? 1 : 0.4}">${cards}</div>${caption(active ? "Items auto-sort into these slots on pickup" : "Enable Preferred item slots or Consumables to right slots")}</div>`;
 }
 
 /** the field of view: the game stores the vertical angle; the wedge is the horizontal one at 16:9, dashed = 90° */

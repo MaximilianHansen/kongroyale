@@ -88,6 +88,7 @@ const LP = new Float64Array(3);
 /** does p carry this weapon (any rarity)? Kept out of autoPickup's loop: a closure there over the loop's item makes V8
  * allocate a context for every item visited, picked up or not (about 40 B per item, over half the sim's allocation) */
 const carriesWeapon = (p: Player, id: number) => p.slots.some((s) => s.kind === SK.Weapon && s.id === id);
+const hasEmptySlot = (p: Player) => { for (let i = 0; i < p.slots.length; i++) if (p.slots[i].kind === SK.Empty) return true; return false; };
 const CASH: number[] = [];
 
 /** lab / debug probe: called once per hitscan pellet with the evaluated (rewound) time and the verdict */
@@ -1235,8 +1236,24 @@ export class Match {
       if (it.dropper === p.id) { if (d2 > dmath.pow(PICKUP_DIST + 1, 2)) it.dropper = -1; continue; }
       if (d2 > PICKUP_DIST * PICKUP_DIST || it.y - p.y < -1.3 || it.y - p.y > 1.5) continue;
       if (!this.range && !lootReachable(this.world, p.x, p.y, p.z, it.x, it.y, it.z, !p.bot)) continue;
-      // walking over a gun you already carry (same weapon, any rarity) never fills a second slot with it — take it with E
-      if (it.kind === IK.Weapon) { if (p.slots.some((s) => s.kind === SK.Empty) && !carriesWeapon(p, it.sub)) this.takeItem(p, it, false); }
+      // walking over a gun you already carry (same weapon, any rarity) never fills a second slot with it — take it with E,
+      // unless autoUpgrade is enabled and the ground gun is strictly higher rarity
+      if (it.kind === IK.Weapon) {
+        if (hasEmptySlot(p) && !carriesWeapon(p, it.sub)) this.takeItem(p, it, false);
+        else if (p.autoUpgrade && p.useT <= 0 && p.cookT <= 0) {
+          for (let i = 0; i < p.slots.length; i++) {
+            const cur = p.slots[i];
+            if (cur.kind !== SK.Weapon || cur.id !== it.sub || cur.rarity >= it.rarity) continue;
+            if (!this.range) this.spawnItem(IK.Weapon, cur.id, cur.rarity, 1, p.x, p.y, p.z, 0.8, p.id).loaded = cur.mag;
+            cur.rarity = it.rarity;
+            cur.mag = it.loaded !== undefined ? it.loaded : WEAPON_DEFS[WEAPONS[it.sub]].mag;
+            it.taken = true;
+            this.ev.takeItem(it.id, p.id);
+            this.onInventory(p.id);
+            break;
+          }
+        }
+      }
       // bots never use bombs / crate walls: they leave them for the humans instead of filling slots with them
       else if (p.bot && it.kind === IK.Consumable && !CONSUMABLE_DEFS[CONSUMABLES[it.sub]].hp && !CONSUMABLE_DEFS[CONSUMABLES[it.sub]].shield) continue;
       else this.takeItem(p, it, false);
@@ -1249,6 +1266,7 @@ export class Match {
     if (op === 1) { if (invMove(p, a, b)) this.onInventory(p.id); return; }
     if (op === 3) { if (this.econ && (this.phase === Phase.Play || this.phase === Phase.Warmup)) this.econ.buy(p, a, b); return; }
     if (op === 4) { if (this.phase === Phase.Play) this.spectateOp(p, a); return; }   // INV.Spectate
+    if (op === 5) { p.autoUpgrade = a !== 0; return; }                             // INV.AutoUpgrade
     if (op !== 2) return;
     const s = invDrop(p, a); if (!s) return;
     const fx = p.x - dmath.sin(p.yaw) * 1.2, fz = p.z - dmath.cos(p.yaw) * 1.2;   // a step in front, where you can see it
