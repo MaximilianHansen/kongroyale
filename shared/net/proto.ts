@@ -122,7 +122,8 @@ export function quantizeInput(i: Input) {
 export const enum INV { Move = 1, Drop = 2,
   /** (economy) buy offer b (economy.ts Offer) at Banana Stand a */ Buy = 3,
   /** an eliminated player asks to watch player a (shared/sim/match.ts spectateOp; the server
-   *  checks it and answers with the inventory frame's spectate byte) */ Spectate = 4 }
+   *  checks it and answers with the inventory frame's spectate byte) */ Spectate = 4,
+  /** client preference: auto-upgrade carried weapons when walking over a higher-rarity copy (a = 1 | 0) */ AutoUpgrade = 5 }
 export const INVOP_BYTES = 6;
 export function writeInvOp(w: Writer, seq: number, op: INV, a: number, b = 0) { w.u8(M.InvOp).u16(seq & 0xffff).u8(op).u8(a & 0xff).u8(b & 0xff); }
 
@@ -303,7 +304,7 @@ export function readInventory(r: Reader, p: Player, e: EconView | null = null) {
  *  (admin lobby: shared/net/event.ts — JSON only, the binary frames are unchanged) — the server's "welcome" carries it; a
  *  client on another version reloads · 11: M.Inputs, the window of unacknowledged inputs a WebTransport client sends as
  *  one datagram per tick */
-export const NET_VERSION = 11;
+export const NET_VERSION = 12;
 export class Events {
   readonly w = new Writer(new ArrayBuffer(32768));
   n = 0;

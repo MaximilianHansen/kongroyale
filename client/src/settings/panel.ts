@@ -4,7 +4,7 @@
 // buttons included) or a wheel notch binds; Escape cancels; Backspace / Delete / the footer's CLEAR unbinds the slot (any
 // action but the slot / seat keys may be left unbound); a key another action uses moves here and the message names that
 // action (preferences.rebind; the slot / seat keys are refused). The CONTROLLER rows are settings/controller-panel.ts.
-import { preferences, type Preferences } from "./preferences";
+import { preferences, type Preferences, type SlotPref } from "./preferences";
 import { BIND_LABELS, BIND_ORDER, CLEARABLE_BINDS, RIDE_BINDS, bindLabel, fixedBinds, type BindAction } from "./bindings";
 import { mult, pct, ON_OFF, type BindRow, type Category, type Help, type Row, type SliderRow, type SwitchRow, type ChoiceRow } from "../ui/settings-model";
 
@@ -95,6 +95,43 @@ export function controlsCategory(): Category {
       { id: "bindings", name: "Bindings", rows: bindRows },
     ],
     reset: { body: "Every mouse & keyboard setting, including key bindings, goes back to its default. Other categories are not changed.", run: () => preferences.reset("controls") },
+  };
+}
+
+export function inventoryCategory(): Category {
+  const slotOpts = [
+    { v: "any", label: "Any" },
+    { v: "ar", label: "AR / Rifle" },
+    { v: "shotgun", label: "Shotgun" },
+    { v: "smg", label: "SMG / Pistol" },
+    { v: "sniper", label: "Sniper" },
+    { v: "rocket", label: "Rocket" },
+    { v: "consumable", label: "Consumable" },
+  ];
+  const slotRow = (idx: 0 | 1 | 2 | 3 | 4): Row => ({
+    kind: "cycle", id: `slotPref-${idx}`, label: `Slot ${idx + 1}`,
+    options: () => slotOpts,
+    get: () => preferences.value.slotPrefs[idx],
+    set: (v) => {
+      const next = [...preferences.value.slotPrefs] as [SlotPref, SlotPref, SlotPref, SlotPref, SlotPref];
+      next[idx] = v as SlotPref;
+      preferences.set({ slotPrefs: next });
+    },
+    help: () => ({ eb: "Preferred item slots", title: `Slot ${idx + 1}`, viz: "slots",
+      body: ["Choose which item category automatically moves into this slot when picked up."] }),
+  });
+  return {
+    id: "inventory", name: "Inventory",
+    sections: [{ id: "slots", name: "Preferred item slots", rows: () => [
+      toggle("autoUpgradeWeapons", "Auto-upgrade weapons", () => ({ eb: "Inventory", title: "Auto-upgrade weapons", viz: "slots",
+        body: ["Walking over a higher-rarity copy of a gun you already carry automatically swaps it into that slot and drops the lower-rarity one."] })),
+      toggle("autoSortHeals", "Consumables to right slots", () => ({ eb: "Inventory", title: "Consumables to right slots", viz: "slots",
+        body: ["Automatically moves newly picked-up heals, shields, and banana bombs to slots 4 and 5 when available."] })),
+      toggle("autoSortWeapons", "Preferred item slots", () => ({ eb: "Inventory", title: "Preferred item slots", viz: "slots",
+        body: ["Automatically sorts newly picked-up weapons and consumables into your chosen Slot 1–5 layout below."] })),
+      ...(preferences.value.autoSortWeapons ? [slotRow(0), slotRow(1), slotRow(2), slotRow(3), slotRow(4)] : []),
+    ] }],
+    reset: { body: "Auto-upgrade, consumable sorting, and preferred item slots go back to their defaults. Other categories are not changed.", run: () => preferences.reset("inventory") },
   };
 }
 

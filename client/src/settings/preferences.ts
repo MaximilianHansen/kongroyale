@@ -4,11 +4,18 @@
 import { DEFAULT_BINDS, BIND_LABELS, CLEARABLE_BINDS, OPTIONAL_BINDS, bindCount, fixedBinds, validBind, bindLabel, type Binds, type BindAction } from "./bindings";
 import { PAD_ACTIONS, PAD_LABELS, PAD_LAYOUTS, isBindableButton, layoutOf, mayShare, normalizePad, padDefaults, type PadAction, type PadLayout, type PadPrefs } from "./pad";
 
+export type SlotPref = "any" | "ar" | "shotgun" | "smg" | "sniper" | "rocket" | "consumable";
+export type SlotPrefs = [SlotPref, SlotPref, SlotPref, SlotPref, SlotPref];
+export const SLOT_PREFS: readonly SlotPref[] = ["any", "ar", "shotgun", "smg", "sniper", "rocket", "consumable"];
+
 export interface Preferences {
   sensitivity: number; adsSensitivity: number; scopeSensitivity: number; invertY: boolean;
   aimToggle: boolean; crouchToggle: boolean; sprintToggle: boolean;
   /** sprint whenever moving forward (keyboard); the controller has its own sprint mode (pad.sprintMode) */
   autoSprint: boolean;
+  /** automatically move picked-up consumables to slots 4-5, order items into preferred slots, and auto-upgrade carried guns */
+  autoSortHeals: boolean; autoSortWeapons: boolean; autoUpgradeWeapons: boolean;
+  slotPrefs: SlotPrefs;
   master: number; combat: number; ui: number; ambience: number;
   /** the tuk-tuk radio, KONG FM (0 = muted; 1 = the authored level) */
   radio: number;
@@ -25,10 +32,10 @@ export interface Preferences {
 }
 export const PREFERENCE_KEY = "kr-preferences-v1";
 export function defaults(): Preferences {
-  return { sensitivity: 1, adsSensitivity: 1, scopeSensitivity: 1, invertY: false, aimToggle: false, crouchToggle: false, sprintToggle: false, autoSprint: false, master: 0.9, combat: 1, ui: 1, ambience: 1, radio: 1, dynamicRange: "full", reducedMotion: false, hudScale: 1, uiScale: 1, minimapRotate: false, binds: structuredClone(DEFAULT_BINDS), pad: padDefaults() };
+  return { sensitivity: 1, adsSensitivity: 1, scopeSensitivity: 1, invertY: false, aimToggle: false, crouchToggle: false, sprintToggle: false, autoSprint: false, autoSortHeals: false, autoSortWeapons: false, autoUpgradeWeapons: false, slotPrefs: ["ar", "shotgun", "smg", "consumable", "consumable"], master: 0.9, combat: 1, ui: 1, ambience: 1, radio: 1, dynamicRange: "full", reducedMotion: false, hudScale: 1, uiScale: 1, minimapRotate: false, binds: structuredClone(DEFAULT_BINDS), pad: padDefaults() };
 }
 const RANGES = { sensitivity: [0.2, 3], adsSensitivity: [0.2, 2], scopeSensitivity: [0.2, 2], master: [0, 1], combat: [0, 1], ui: [0, 1], ambience: [0, 1], radio: [0, 1], hudScale: [1, 1.5], uiScale: [1, 1.5] } as const;
-const FLAGS = ["invertY", "aimToggle", "crouchToggle", "sprintToggle", "autoSprint", "reducedMotion", "minimapRotate"] as const;
+const FLAGS = ["invertY", "aimToggle", "crouchToggle", "sprintToggle", "autoSprint", "autoSortHeals", "autoSortWeapons", "autoUpgradeWeapons", "reducedMotion", "minimapRotate"] as const;
 
 /** Reject malformed storage and duplicate bindings instead of creating ambiguous actions. */
 export function normalizePreferences(raw: unknown): Preferences {
@@ -52,13 +59,21 @@ export function normalizePreferences(raw: unknown): Preferences {
     if (valid) p.binds = proposed;
   }
   p.pad = normalizePad(r.pad);
+  if (Array.isArray(r.slotPrefs) && r.slotPrefs.length === 5) {
+    const sp = p.slotPrefs;
+    for (let i = 0; i < 5; i++) {
+      const v = r.slotPrefs[i];
+      if (typeof v === "string" && (SLOT_PREFS as readonly string[]).includes(v)) sp[i] = v as SlotPref;
+    }
+  }
   return p;
 }
 
-export type PreferenceSection = "controls" | "controller" | "audio" | "accessibility";
+export type PreferenceSection = "controls" | "controller" | "inventory" | "audio" | "accessibility";
 const SECTION_KEYS: Record<PreferenceSection, Array<keyof Preferences>> = {
   controls: ["sensitivity", "adsSensitivity", "scopeSensitivity", "invertY", "aimToggle", "crouchToggle", "sprintToggle", "autoSprint", "binds"],
   controller: ["pad"],
+  inventory: ["autoSortHeals", "autoSortWeapons", "autoUpgradeWeapons", "slotPrefs"],
   audio: ["master", "combat", "ui", "ambience", "radio", "dynamicRange"],
   accessibility: ["reducedMotion", "hudScale", "uiScale", "minimapRotate"],
 };

@@ -18,6 +18,8 @@ import { B, PS, currentSpread, eyeY, invDrop, invMove, makeInput, makePlayer, pe
 import { makeStormState, stormAt, type StormPlan, type StormState } from "../../../shared/sim/storm";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { EV, INV, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, M, Reader, yawDec, Writer, makeCastStat, makePlayerSnap, makeSelfState, makeVehSnap, quantizeInput, readCastHeader, readCastStat, readInventory, readPlayer, readSelf, readSnapHeader, readVehicle, writeInput, writeInputs, writeInvOp, INPUT_BODY_BYTES, INPUT_WINDOW, INPUTS_HEAD_BYTES, type CastHeader, type CastStat, type GunSelf, type PlayerSnap, type SelfState, type SnapHeader, type VehSelf, type VehSnap } from "../../../shared/net/proto";
+import { preferences } from "../settings/preferences";
+import { nextAutoSortMove } from "./inv-sort";
 import { SEAT_EYE, TUK, VF, VKind, VS, VehicleSet, blendVeh, rayVehicle, seatPoint, seatRiderAt, vehPose, vehicleInReach, type Vehicle } from "../../../shared/sim/vehicle";
 import { GUN_SHOT, TOP_BANANA, gunBarrel, gunOf } from "../../../shared/sim/heli";
 import { fleetSpots, type TukSpot } from "../../../shared/sim/tuk-spots";
@@ -261,6 +263,19 @@ export class ClientMatch {
   /** the tick remotes are drawn at (last frame) */
   renderTick() { return this.rtInit ? this.rt : this.nowTicks() + this.arrOff - this.interpTicks; }
   private invOpSeq = 0; private readonly invOpW = new Writer(new ArrayBuffer(16));
+  private lastManualInvAt = -1e9;
+  private lastAutoSortAt = -1e9;
+  private lastAutoUpgradeSent: boolean | null = null;
+  private unsubPrefs: (() => void) | null = null;
+  private syncAutoUpgrade() {
+    const want = preferences.value.autoUpgradeWeapons;
+    if (this.lastAutoUpgradeSent === want && this.started) return;
+    this.lastAutoUpgradeSent = want;
+    this.pred.autoUpgrade = want;
+    this.invOpSeq = (this.invOpSeq + 1) & 0xffff;
+    writeInvOp(this.invOpW.reset(), this.invOpSeq, INV.AutoUpgrade, want ? 1 : 0, 0);
+    this.link.sendBinary(this.invOpW.view());
+  }
   /** the player I asked to watch and when (performance.now): shown at once, confirmed by the server */
   private specWant = -1; private specWantAt = -1e9;
   /** eliminated: watch player `id` (the server checks it — shared/sim/match.ts spectateOp) */
@@ -273,10 +288,11 @@ export class ClientMatch {
   }
   /** the inventory screen: drag slot a onto slot b / drop slot a. Applied to the prediction now (the same shared op the
    * server runs), then sent; the server's inventory frame confirms it. */
-  inventoryOp(op: INV, a: number, b = 0) {
+  inventoryOp(op: INV, a: number, b = 0, auto = false) {
     // (economy) a purchase is the server's call: nothing to predict, just the request
-    const ok = op === INV.Buy ? true : op === INV.Move ? invMove(this.pred, a, b) : invDrop(this.pred, a) !== null;
+    const ok = op === INV.Buy || op === INV.AutoUpgrade ? true : op === INV.Move ? invMove(this.pred, a, b) : invDrop(this.pred, a) !== null;
     if (!ok) return false;
+    if (!auto && op === INV.Move) this.lastManualInvAt = performance.now();
     this.invOpSeq = (this.invOpSeq + 1) & 0xffff;
     writeInvOp(this.invOpW.reset(), this.invOpSeq, op, a, b); this.link.sendBinary(this.invOpW.view());
     this.sink?.inventory();
@@ -380,6 +396,9 @@ export class ClientMatch {
       for (const c of (m.covers as number[][]) ?? []) { this.covers.add(c[0], c[1], c[2], c[3], c[4], c[5], c[6], this.time); this.sink?.cover?.(c[0], c[1], false); }
       for (const row of (m.items as number[][]) ?? []) { const it: Item = { id: row[0], kind: row[1], sub: row[2], rarity: row[3], count: row[4], x: row[5], y: row[6], z: row[7], taken: false, bornAt: 0 }; this.items.set(it.id, it); this.sink?.spawnItem(it); }
       this.started = true; this.ackedSeq = this.inputSeq;
+      this.syncAutoUpgrade();
+      this.unsubPrefs?.();
+      this.unsubPrefs = preferences.subscribe(() => { if (this.started) this.syncAutoUpgrade(); });
       this.sink?.phase(this.phase);
     } else if (m.t === "phase") {
       this.phase = m.phase as number; this.phaseTick = m.tick as number; this.phaseTime = 0; Object.assign(this.plane, m.plane as object); if (m.plan) this.plan = m.plan as StormPlan;
@@ -540,7 +559,17 @@ export class ClientMatch {
     const echo = active >= 0 && active < this.slotSentAt.length && performance.now() - this.slotSentAt[active] < Math.max(1000, this.ping * 3 + 600);
     if (active !== p.active && !echo && performance.now() - this.lastSlotChangeAt > 500) { p.active = active; this.sink?.serverSlot?.(active); }
     const after = p.slots.map((s) => `${s.kind}:${s.id}:${s.rarity}:${s.count}:${s.mag}`).join("|") + p.ammo.join(",");
-    if (before !== after) this.sink?.inventory();
+    if (before !== after) {
+      this.sink?.inventory();
+      const now = performance.now();
+      if (this.started && now - this.lastManualInvAt > 900 && now - this.lastAutoSortAt > 250) {
+        const prefs = preferences.value;
+        if (prefs.autoSortHeals || prefs.autoSortWeapons) {
+          const mv = nextAutoSortMove(p.slots, { heals: prefs.autoSortHeals, weapons: prefs.autoSortWeapons, slotPrefs: prefs.slotPrefs });
+          if (mv) { this.lastAutoSortAt = now; this.inventoryOp(INV.Move, mv[0], mv[1], true); }
+        }
+      }
+    }
   }
   private onEvents(r: Reader) {
     const n = r.u8(), tick = r.u32(); const s = this.sink;
