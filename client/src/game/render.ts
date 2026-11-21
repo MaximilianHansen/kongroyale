@@ -2499,7 +2499,7 @@ export class GameRender implements EventSink {
       h.damageNumbers.push(dnRow(i, d.at, (V3b.x + 1) / 2, (1 - V3b.y) / 2, Math.round(d.pa + d.ca), d.kind, d.target, d.ca <= 0));
     }
     const ic = this.ic, snap = cm.snapTick(), eHeld = this.input.interactHeld();
-    if (!eHeld && now - ic.t < 50 && p.st === ic.s && p.hp === ic.h && snap === ic.n && this.coverHeld === ic.c && this.coverOk === ic.o && Math.abs(p.x - ic.x) < 0.06 && Math.abs(p.y - ic.y) < 0.06 && Math.abs(p.z - ic.z) < 0.06 && Math.abs(p.yaw - ic.a) < 0.02 && Math.abs(p.pitch - ic.b) < 0.02) {
+    if (!eHeld && now - ic.t < 50 && p.st === ic.s && p.hp === ic.h && snap === ic.n && this.coverHeld === ic.c && this.coverOk === ic.o && (p.x - ic.x) ** 2 + (p.y - ic.y) ** 2 + (p.z - ic.z) ** 2 < 0.0036 && Math.abs(p.yaw - ic.a) + Math.abs(p.pitch - ic.b) < 0.03) {
       h.interact = ic.p; this.hlKind = ic.k; this.hlId = ic.i; this.standNear = ic.d;
     } else {
       h.interact = null; this.hlKind = 0;
