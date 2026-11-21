@@ -725,11 +725,11 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     // without KHR_parallel_shader_compile (Linux / ANGLE-Vulkan, some drivers) every compile is synchronous —
     // then the objects go in small batches between frames (the program cache makes repeats free), so a module's shaders
     // never freeze one frame for 0.5-2.7 s (measured in the warm-up)
-    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile");
+    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile") && objs.length < 25;
     const tag = String(kr.streamStage ?? "").replace(/:(compile|draw|first-use|textures)$/, "");
     const phase = (p: string) => { if (tag.startsWith("integrate")) kr.streamStage = `${tag}:${p}`; };
     phase("compile");
-    if (parallel && objs.length <= 24 || urgent) await live(engine.compileObjects(objs));
+    if (parallel || urgent) await live(engine.compileObjects(objs));
     else {
       const leaves: THREE.Object3D[] = [];
       // (each mesh once: `objs` holds the module roots AND the fresh objects below them)
