@@ -278,7 +278,7 @@ export class GameRender implements EventSink {
   private standViews: THREE.Object3D[] = []; private standScope: Scope | null = null;
   /** the stand in reach (its index) — E opens its buy menu (index.ts owns the menu) */
   standNear = -1; private lastE = false; private bountyTeam = -1;
-  private ic = { t: -1, x: 0, y: 0, z: 0, a: 0, b: 0, s: -1, h: -1, n: -1, c: false, o: false, k: 0, i: 0, d: -1, p: null as HudState["interact"] };
+  private ic = { t: -1, x: 0, y: 0, z: 0, a: 0, b: 0, s: -1, n: -1, k: 0, i: 0, d: -1, p: null as HudState["interact"] };
   onShop: ((stand: number) => void) | null = null;
   private cashGainAt = 0; private cashGainAmt = 0;
   cashGain(amount: number) { this.cashGainAt = performance.now(); this.cashGainAmt = amount; }
@@ -2499,7 +2499,7 @@ export class GameRender implements EventSink {
       h.damageNumbers.push(dnRow(i, d.at, (V3b.x + 1) / 2, (1 - V3b.y) / 2, Math.round(d.pa + d.ca), d.kind, d.target, d.ca <= 0));
     }
     const ic = this.ic, snap = cm.snapTick(), eHeld = this.input.interactHeld();
-    if (!eHeld && now - ic.t < 50 && p.st === ic.s && p.hp === ic.h && snap === ic.n && this.coverHeld === ic.c && this.coverOk === ic.o && (p.x - ic.x) ** 2 + (p.y - ic.y) ** 2 + (p.z - ic.z) ** 2 < 0.0036 && Math.abs(p.yaw - ic.a) + Math.abs(p.pitch - ic.b) < 0.03) {
+    if (!eHeld && !this.coverHeld && p.hp > 0 && now - ic.t < 50 && p.st === ic.s && snap === ic.n && (p.x - ic.x) ** 2 + (p.y - ic.y) ** 2 + (p.z - ic.z) ** 2 < 0.0036 && Math.abs(p.yaw - ic.a) + Math.abs(p.pitch - ic.b) < 0.03) {
       h.interact = ic.p; this.hlKind = ic.k; this.hlId = ic.i; this.standNear = ic.d;
     } else {
       h.interact = null; this.hlKind = 0;
@@ -2523,7 +2523,7 @@ export class GameRender implements EventSink {
         if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
       }
       if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
-      ic.t = now; ic.x = p.x; ic.y = p.y; ic.z = p.z; ic.a = p.yaw; ic.b = p.pitch; ic.s = p.st; ic.h = p.hp; ic.n = snap; ic.c = this.coverHeld; ic.o = this.coverOk; ic.k = this.hlKind; ic.i = this.hlId; ic.d = this.standNear; ic.p = h.interact;
+      ic.t = now; ic.x = p.x; ic.y = p.y; ic.z = p.z; ic.a = p.yaw; ic.b = p.pitch; ic.s = p.st; ic.n = snap; ic.k = this.hlKind; ic.i = this.hlId; ic.d = this.standNear; ic.p = h.interact;
     }
     if (eHeld && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear);
     this.lastE = eHeld;
