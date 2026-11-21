@@ -278,6 +278,7 @@ export class GameRender implements EventSink {
   private standViews: THREE.Object3D[] = []; private standScope: Scope | null = null;
   /** the stand in reach (its index) — E opens its buy menu (index.ts owns the menu) */
   standNear = -1; private lastE = false; private bountyTeam = -1;
+  private ic = { t: -1, x: 0, y: 0, z: 0, a: 0, b: 0, s: -1, h: -1, n: -1, c: false, o: false, k: 0, i: 0, d: -1, p: null as HudState["interact"] };
   onShop: ((stand: number) => void) | null = null;
   private cashGainAt = 0; private cashGainAmt = 0;
   cashGain(amount: number) { this.cashGainAt = performance.now(); this.cashGainAmt = amount; }
@@ -2497,33 +2498,35 @@ export class GameRender implements EventSink {
       V3b.set(d.x, d.y + age * 0.6, d.z).project(cam); if (V3b.z > 1) continue;
       h.damageNumbers.push(dnRow(i, d.at, (V3b.x + 1) / 2, (1 - V3b.y) / 2, Math.round(d.pa + d.ca), d.kind, d.target, d.ca <= 0));
     }
-    // interact prompt
-    h.interact = null; this.hlKind = 0;
-    // (tuk-tuks: aboard, E is the way out; on foot the one under the crosshair comes first — Match.simulate's order)
-    const lx = -Math.sin(p.yaw) * Math.cos(p.pitch), ly = Math.sin(p.pitch), lz = -Math.cos(p.yaw) * Math.cos(p.pitch);
-    const tukAim = p.st === PS.Ground && p.hp > 0 && !p.swim ? vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, true, !p.grounded) : -1;
-    // (glass: a whole pane under the crosshair in arm's reach — E punches it out, exactly the server's rule in Match.simulate)
-    const pane = tukAim < 0 && p.st === PS.Ground && p.hp > 0 ? glassAim(cm.glass, p.x, simEyeY(p), p.z, lx, ly, lz) : -1;
-    if (p.st === PS.Ride && p.hp > 0) { /* aboard: the tuk-tuk's own panel carries the controls (below); E climbs out */ }
-    else if (tukAim >= 0) { h.interact = this.tukPrompt(tukAim); this.hlKind = HL.Tuk; this.hlId = tukAim; }
-    else if (pane >= 0) { h.interact = INTERACT_GLASS; this.hlKind = HL.Glass; this.hlId = pane; }
-    else if (p.st === PS.Ground && p.hp > 0) {
-      const c = cm.nearestChest(3.2, true); if (c) { h.interact = c.box ? INTERACT_BOX : c.rarity >= MYTHIC_R ? this.mythicChestPrompt(c.poi) : INTERACT_CHEST; this.hlKind = c.box ? HL.Box : HL.Chest; this.hlId = c.id; }
-      else { const it = manualLootCandidate(cm.items.values(), p, cm.world, !!this.range, cm.stands); if (it) { h.interact = lootCard(p, it, !!this.range); this.hlKind = HL.Item; this.hlId = it.id; } }
-      if (!h.interact) { const zk = zipNear(p.x, p.y, p.z); if (zk >= 0) { h.interact = INTERACT_ZIP; this.hlKind = HL.Zip; this.hlId = zk; } } // zipline hook
-      if (!h.interact && !p.swim) { const nearTuk = vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, false, !p.grounded); if (nearTuk >= 0) { h.interact = this.tukPrompt(nearTuk); this.hlKind = HL.Tuk; this.hlId = nearTuk; } }
-    } else if (p.st === PS.Zip && p.hp > 0) { INTERACT_UNZIP.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_UNZIP; }
-    else if (p.st === PS.Climb && p.hp > 0) { INTERACT_CLIMBING.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_CLIMBING; }
-    // (economy) a Banana Stand in reach: E opens its buy menu (nothing else claimed E)
-    this.standNear = -1;
-    if (!h.interact && p.st === PS.Ground && p.hp > 0) {
-      let bd = ECON.standReach + 0.65;
-      cm.stands.forEach((s, i) => { const d = Math.hypot(s.x - p.x, s.z - p.z); if (d < bd && Math.abs(s.y - p.y) < 2.5) { bd = d; this.standNear = i; } });
-      if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
+    const ic = this.ic, snap = cm.snapTick(), eHeld = this.input.interactHeld();
+    if (!eHeld && now - ic.t < 50 && p.st === ic.s && p.hp === ic.h && snap === ic.n && this.coverHeld === ic.c && this.coverOk === ic.o && Math.abs(p.x - ic.x) < 0.06 && Math.abs(p.y - ic.y) < 0.06 && Math.abs(p.z - ic.z) < 0.06 && Math.abs(p.yaw - ic.a) < 0.02 && Math.abs(p.pitch - ic.b) < 0.02) {
+      h.interact = ic.p; this.hlKind = ic.k; this.hlId = ic.i; this.standNear = ic.d;
+    } else {
+      h.interact = null; this.hlKind = 0;
+      const lx = -Math.sin(p.yaw) * Math.cos(p.pitch), ly = Math.sin(p.pitch), lz = -Math.cos(p.yaw) * Math.cos(p.pitch);
+      const tukAim = p.st === PS.Ground && p.hp > 0 && !p.swim ? vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, true, !p.grounded) : -1;
+      const pane = tukAim < 0 && p.st === PS.Ground && p.hp > 0 ? glassAim(cm.glass, p.x, simEyeY(p), p.z, lx, ly, lz) : -1;
+      if (p.st === PS.Ride && p.hp > 0) { /* aboard */ }
+      else if (tukAim >= 0) { h.interact = this.tukPrompt(tukAim); this.hlKind = HL.Tuk; this.hlId = tukAim; }
+      else if (pane >= 0) { h.interact = INTERACT_GLASS; this.hlKind = HL.Glass; this.hlId = pane; }
+      else if (p.st === PS.Ground && p.hp > 0) {
+        const c = cm.nearestChest(3.2, true); if (c) { h.interact = c.box ? INTERACT_BOX : c.rarity >= MYTHIC_R ? this.mythicChestPrompt(c.poi) : INTERACT_CHEST; this.hlKind = c.box ? HL.Box : HL.Chest; this.hlId = c.id; }
+        else { const it = manualLootCandidate(cm.items.values(), p, cm.world, !!this.range, cm.stands); if (it) { h.interact = lootCard(p, it, !!this.range); this.hlKind = HL.Item; this.hlId = it.id; } }
+        if (!h.interact) { const zk = zipNear(p.x, p.y, p.z); if (zk >= 0) { h.interact = INTERACT_ZIP; this.hlKind = HL.Zip; this.hlId = zk; } }
+        if (!h.interact && !p.swim) { const nearTuk = vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, false, !p.grounded); if (nearTuk >= 0) { h.interact = this.tukPrompt(nearTuk); this.hlKind = HL.Tuk; this.hlId = nearTuk; } }
+      } else if (p.st === PS.Zip && p.hp > 0) { INTERACT_UNZIP.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_UNZIP; }
+      else if (p.st === PS.Climb && p.hp > 0) { INTERACT_CLIMBING.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_CLIMBING; }
+      this.standNear = -1;
+      if (!h.interact && p.st === PS.Ground && p.hp > 0) {
+        let bd = ECON.standReach + 0.65;
+        cm.stands.forEach((s, i) => { const d = Math.hypot(s.x - p.x, s.z - p.z); if (d < bd && Math.abs(s.y - p.y) < 2.5) { bd = d; this.standNear = i; } });
+        if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
+      }
+      if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
+      ic.t = now; ic.x = p.x; ic.y = p.y; ic.z = p.z; ic.a = p.yaw; ic.b = p.pitch; ic.s = p.st; ic.h = p.hp; ic.n = snap; ic.c = this.coverHeld; ic.o = this.coverOk; ic.k = this.hlKind; ic.i = this.hlId; ic.d = this.standNear; ic.p = h.interact;
     }
-    { const e = this.input.interactHeld(); if (e && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear); this.lastE = e; }
-    // the crate wall in hand: what fire does
-    if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
+    if (eHeld && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear);
+    this.lastE = eHeld;
     h.resurgence.on = (cm.flags & 1) !== 0; h.resurgence.final = (cm.flags & 4) !== 0;
     h.resurgence.lives = cm.mode === "solo" ? Math.max(0, SOLO_REDEPLOYS - this.redeploysUsed) : null;
     h.resurgence.countdown = this.deadAt >= 0 && this.resCountdown != null ? Math.max(0, this.resCountdown - (now - this.deadAt) / 1000) : null;

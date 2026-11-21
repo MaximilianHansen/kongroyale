@@ -729,7 +729,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     const tag = String(kr.streamStage ?? "").replace(/:(compile|draw|first-use|textures)$/, "");
     const phase = (p: string) => { if (tag.startsWith("integrate")) kr.streamStage = `${tag}:${p}`; };
     phase("compile");
-    if (parallel || urgent) await live(engine.compileObjects(objs));
+    if (parallel && objs.length <= 24 || urgent) await live(engine.compileObjects(objs));
     else {
       const leaves: THREE.Object3D[] = [];
       // (each mesh once: `objs` holds the module roots AND the fresh objects below them)
@@ -773,7 +773,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
         await nextFrame();
         const chunks: THREE.Object3D[][] = [];
         let cur: THREE.Object3D[] = [], n = 0;
-        const CH = engine.sliceMs <= 8 ? 12 : 24;
+        const CH = engine.sliceMs <= 8 ? 6 : 10;
         // whole subtrees while they are small, their children otherwise (the mesh count bounds one warm draw)
         const meshes = (o: THREE.Object3D) => { let k = 0; o.traverse((x) => { if ((x as THREE.Mesh).isMesh) k++; }); return k; };
         const split = (o: THREE.Object3D) => {
