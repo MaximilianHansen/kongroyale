@@ -489,9 +489,9 @@ class Engine implements KongAudio {
       const pan = this.ctx.createStereoPanner();
       pan.pan.value = panVal;
       const g = this.ctx.createGain();
-      const lvl = Math.max(0.18, Math.min(0.85, 1.0 - d / 1100));
+      const lvl = Math.max(0.16, Math.min(1.15, 1.25 - d / 820));
       g.gain.value = lvl * dbg(this.lib.normDb(pk.file));
-      src.connect(lp).connect(bass).connect(pan).connect(g).connect(this.mixer.buses.amb);
+      src.connect(lp).connect(bass).connect(pan).connect(g).connect(this.mixer.buses.world);
       src.start();
       this.voices.push({ nodes: [lp, bass, pan, g], srcs: [src], end: this.ctx.currentTime + pk.buf.duration / src.playbackRate.value, group: "storm/thunder", start: this.ctx.currentTime, out: g, local: true, db: -12, prio: 0, dist: d });
     }, delayMs);

@@ -143,16 +143,16 @@ export function setActiveWeather(w?: WeatherState): void {
 export function planWeather(seed: number): WeatherPlan {
   const rng = new Rng((seed ^ 0x57454154) >>> 0);
   const cells: WeatherCellSpec[] = [];
-  const totalSpecs = 18;
-  // Staggered across 0..1500 s so 2-4 regional cells overlap and evolve every 3-6 minutes.
+  const totalSpecs = 13;
+  // Staggered across 0..1500 s so 1-3 regional cells appear with clear breaks and rare thunderstorms.
   for (let i = 0; i < totalSpecs; i++) {
-    const bornT = i < 3 ? 0 : Math.max(0, (i - 2) * 85 + (rng.next() - 0.5) * 35);
-    const lifeT = 195 + rng.next() * 165; // 3.25 - 6.0 min
+    const bornT = i < 2 ? 0 : Math.max(0, (i - 1) * 112 + (rng.next() - 0.5) * 40);
+    const lifeT = 175 + rng.next() * 120; // 2.9 - 4.9 min
     const roll = rng.next();
-    const kind = roll < 0.25 ? WeatherKind.Fog : roll < 0.72 ? WeatherKind.Rain : WeatherKind.Storm;
+    const kind = roll < 0.36 ? WeatherKind.Fog : roll < 0.86 ? WeatherKind.Rain : WeatherKind.Storm;
 
     const angle = rng.next() * Math.PI * 2;
-    const dist = 120 + rng.next() * 680;
+    const dist = 140 + rng.next() * 660;
     const x0 = dmath.cos(angle) * dist;
     const z0 = dmath.sin(angle) * dist;
 
@@ -162,9 +162,9 @@ export function planWeather(seed: number): WeatherPlan {
     const vx = dmath.cos(moveAngle) * speed;
     const vz = dmath.sin(moveAngle) * speed;
 
-    const rPeak = kind === WeatherKind.Fog ? 250 + rng.next() * 150 : 280 + rng.next() * 190;
-    const rainPeak = kind === WeatherKind.Fog ? 0.08 + rng.next() * 0.14 : kind === WeatherKind.Rain ? 0.55 + rng.next() * 0.35 : 0.85 + rng.next() * 0.15;
-    const fogPeak = kind === WeatherKind.Fog ? 0.65 + rng.next() * 0.30 : kind === WeatherKind.Rain ? 0.22 + rng.next() * 0.25 : 0.45 + rng.next() * 0.35;
+    const rPeak = kind === WeatherKind.Fog ? 240 + rng.next() * 140 : kind === WeatherKind.Storm ? 250 + rng.next() * 140 : 270 + rng.next() * 170;
+    const rainPeak = kind === WeatherKind.Fog ? 0.06 + rng.next() * 0.12 : kind === WeatherKind.Rain ? 0.52 + rng.next() * 0.35 : 0.82 + rng.next() * 0.18;
+    const fogPeak = kind === WeatherKind.Fog ? 0.55 + rng.next() * 0.25 : kind === WeatherKind.Rain ? 0.12 + rng.next() * 0.14 : 0.22 + rng.next() * 0.22;
     const stormPeak = kind === WeatherKind.Storm ? 0.60 + rng.next() * 0.40 : 0;
 
     const windSpeed = kind === WeatherKind.Fog ? 2 + rng.next() * 3 : kind === WeatherKind.Rain ? 5 + rng.next() * 5 : 9 + rng.next() * 5;

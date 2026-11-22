@@ -65,7 +65,9 @@ html.kr-pad .kr-mapv .padcur.on { display: block; }
 .kr-mapv .wxtog.on { background: rgba(45,125,165,0.92); border-color: #7ee8ff; color: #fff; }
 `);
 
+const WX_OVERLAY_KEY = "kr:weatherOverlay";
 let sharedWeatherOverlay = false;
+try { sharedWeatherOverlay = localStorage.getItem(WX_OVERLAY_KEY) === "1"; } catch { /* ignore storage restrictions */ }
 export function isWeatherOverlayOn(): boolean { return sharedWeatherOverlay; }
 
 /** label candidates in units of (half label width + gap, half label height + gap): centre, below, above, right, left, diagonals */
@@ -98,7 +100,7 @@ export class BigMap {
   onClick: ((x: number, z: number) => void) | null = null;
   onClear: (() => void) | null = null;
   private cleared = false;
-  private showWeather = false;
+  private showWeather = sharedWeatherOverlay;
   private wxBtn = document.createElement("button");
   private wxCanvas: HTMLCanvasElement | null = null;
   private wxNextAt = 0;
@@ -147,12 +149,16 @@ export class BigMap {
     lg.append(this.phEl, tm, rows);
     this.wxBtn.type = "button";
     this.wxBtn.className = "wxtog";
-    this.wxBtn.textContent = "WEATHER OVERLAY (R): OFF";
+    const syncWxBtn = () => {
+      this.wxBtn.classList.toggle("on", this.showWeather);
+      this.wxBtn.textContent = this.showWeather ? "WEATHER OVERLAY (R): ON" : "WEATHER OVERLAY (R): OFF";
+    };
+    syncWxBtn();
     const toggleWeather = () => {
       this.showWeather = !this.showWeather;
       sharedWeatherOverlay = this.showWeather;
-      this.wxBtn.classList.toggle("on", this.showWeather);
-      this.wxBtn.textContent = this.showWeather ? "WEATHER OVERLAY (R): ON" : "WEATHER OVERLAY (R): OFF";
+      try { localStorage.setItem(WX_OVERLAY_KEY, this.showWeather ? "1" : "0"); } catch { /* ignore */ }
+      syncWxBtn();
     };
     this.wxBtn.addEventListener("pointerdown", (ev) => ev.stopPropagation());
     this.wxBtn.addEventListener("pointerup", (ev) => ev.stopPropagation());

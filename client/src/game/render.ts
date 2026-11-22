@@ -830,7 +830,7 @@ export class GameRender implements EventSink {
     if (phase === 0 || phase === 1) this.input.slotWanted = 0;
     if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; this.lastThunderKey = -1; this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; if (!this.range) this.announceWeatherForecast(); }   // (the warm-up's map pin stays: it marks your drop)
     if (phase === 0 || phase === 1) { this.victoryAt = -1; if (this.meActor) this.meActor.setVisible(false); }
-    if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(0, true); if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else { this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); setTimeout(() => { if (!this.disposed && this.cm.phase === 0) this.announceWeatherForecast(); }, 3500); } }
+    if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(0, true); if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
   }
   inventory() { this.syncViewModel(); }
   serverSlot(slot: number) { this.input.slotWanted = slot; this.syncViewModel(); }
@@ -1209,7 +1209,7 @@ export class GameRender implements EventSink {
   private nextDistantThunderT = 0;
   private announceWeatherForecast() {
     if (!this.cm.weatherPlan) return;
-    weatherAt(this.cm.weatherPlan, this.cm.time, this.cm.storm.phase, 1, HUD_PREVIEW_WEATHER);
+    weatherAt(this.cm.weatherPlan, Math.max(45, this.cm.time + 30), this.cm.storm.phase, 1, HUD_PREVIEW_WEATHER);
     let topKind = WeatherKind.Clear;
     for (let i = 0; i < HUD_PREVIEW_WEATHER.count; i++) {
       const c = HUD_PREVIEW_WEATHER.cells[i];

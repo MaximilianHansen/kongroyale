@@ -505,7 +505,9 @@ export class TropicalWeather implements WeatherApi {
     this.rain += (this.rainTarget - this.rain) * step;
     this.fog += (this.fogTarget - this.fog) * step;
     this.storm += (this.stormTarget - this.storm) * step;
-    this.wet += (this.wetTarget - this.wet) * (1 - Math.exp(-cdt * 0.45));
+    // Wet up quickly when rain arrives, but let puddles linger and dry gradually after rain passes.
+    const wetRate = this.wetTarget >= this.wet ? 0.45 : 0.035;
+    this.wet += (this.wetTarget - this.wet) * (1 - Math.exp(-cdt * wetRate));
     this.windX += (this.windXTarget - this.windX) * step;
     this.windZ += (this.windZTarget - this.windZ) * step;
 
