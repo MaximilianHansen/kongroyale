@@ -748,23 +748,20 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     const seen = new Set<THREE.Texture>();
     const upload = (m: THREE.Material) => {
       const out: THREE.Texture[] = [];
-      for (const v of Object.values(m as unknown as Record<string, unknown>)) {
-        const t = v as THREE.Texture;
-        if (!t || !t.isTexture || seen.has(t) || (t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) continue;
-        seen.add(t);
-        if (props.get(t).__webglTexture || !t.image) continue;
-        out.push(t);
-      }
+      const add = (v: unknown) => {
+        const t = v as THREE.Texture | undefined;
+        if (t?.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) {
+          seen.add(t);
+          if (!props.get(t).__webglTexture && t.image) out.push(t);
+        }
+      };
+      for (const v of Object.values(m as unknown as Record<string, unknown>)) add(v);
       // (a ShaderMaterial keeps its textures in uniforms)
       const us = (m as THREE.ShaderMaterial).uniforms;
-      if (us) for (const k in us) { const t = us[k]?.value as THREE.Texture | undefined; if (t && t.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) { seen.add(t); if (!props.get(t).__webglTexture && t.image) out.push(t); } }
+      if (us) for (const k in us) add(us[k]?.value);
       return out;
     };
     for (const [m] of fresh) for (const t of upload(m)) {
-      const img = t.image as HTMLCanvasElement | undefined;
-      if (!urgent && img?.getContext) {
-        try { t.image = await createImageBitmap(img, { premultiplyAlpha: "none" }); } catch {}
-      }
       try { r.initTexture(t); } catch {}
       if (!urgent) await engine.yield();
     }
@@ -799,8 +796,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     openGate?.();
     phase("first-use");
     for (const pr of (r.info.programs ?? []) as unknown as Array<{ __w?: number; getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
-      if (!pr.__w && (!pr.isReady || pr.isReady())) { pr.__w = 1; try { pr.getUniforms?.(); pr.getAttributes?.(); } catch {} }
-      if (!urgent) await engine.yield();
+      if (!pr.__w && (!pr.isReady || pr.isReady())) { pr.__w = 1; try { pr.getUniforms?.(); pr.getAttributes?.(); } catch {} if (!urgent) await engine.yield(); }
     }
     // (what held a fresh material dissolves in instead of appearing in one frame — engine/cull.ts reveal)
     engine.cull.reveal(objs.slice(roots.length));
