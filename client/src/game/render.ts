@@ -14,7 +14,12 @@ import { camCast, findOpenSpot } from "./camcollide";
 import { ReloadTrigger } from "../weapons/reload-edge";
 import type { Engine } from "../engine/engine";
 import type { AtmosApi } from "../world/atmos";
-import { parseWeatherFlag } from "../world/atmos/weather";
+import { parseWeatherFlag, puddleAt } from "../world/atmos/weather";
+import { MAX_WEATHER_CELLS, WeatherKind, makeWeatherSample, sampleWeatherAt, weatherAt } from "../../../shared/sim/weather";
+
+const W_SAMP = makeWeatherSample();
+const HUD_WX_POOL = Array.from({ length: MAX_WEATHER_CELLS }, () => ({ kind: 0, x: 0, z: 0, vx: 0, vz: 0, radius: 0, rain: 0, fog: 0, storm: 0 }));
+const HUD_WX_LIST: typeof HUD_WX_POOL = [];
 import type { KongActor, KongPose, KongState } from "../actors/api";
 import type { ChestView, Fx, LootView, ViewModel, ViewModelMotion, WeaponsKit } from "../weapons/api";
 import type { AirHands } from "../weapons/viewmodel";
@@ -822,9 +827,9 @@ export class GameRender implements EventSink {
   }
   phase(phase: number) {
     if (phase === 0 || phase === 1) this.input.slotWanted = 0;
-    if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; if (!this.range) (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(parseWeatherFlag() ?? 0); this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; }   // (the warm-up's map pin stays: it marks your drop)
+    if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; this.lastThunderKey = -1; this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; if (!this.range) this.announceWeatherForecast(); }   // (the warm-up's map pin stays: it marks your drop)
     if (phase === 0 || phase === 1) { this.victoryAt = -1; if (this.meActor) this.meActor.setVisible(false); }
-    if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(0, true); if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
+    if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(0, true); if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else { this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); setTimeout(() => { if (!this.disposed && this.cm.phase === 0) this.announceWeatherForecast(); }, 3500); } }
   }
   inventory() { this.syncViewModel(); }
   serverSlot(slot: number) { this.input.slotWanted = slot; this.syncViewModel(); }
@@ -1189,6 +1194,7 @@ export class GameRender implements EventSink {
     LISTENER.fwd[0] = V3.x; LISTENER.fwd[1] = V3.y; LISTENER.fwd[2] = V3.z; LISTENER.up[0] = V3b.x; LISTENER.up[1] = V3b.y; LISTENER.up[2] = V3b.z;
     ENV.biome = this.engine.terrain.biomeAt(cam.position.x, cam.position.z); ENV.inStorm = inside > 0.5; ENV.altitude = cam.position.y - ground; ENV.indoors = false;
     this.kits.audio.update(dt, LISTENER, ENV);
+    this.updateWeather(cam.position.x, cam.position.z);
     // ---- HUD (a caster seat draws its own desk: client/src/caster)
     if (this.caster) return;
     this.fillHud(dt, inside);
@@ -1196,6 +1202,89 @@ export class GameRender implements EventSink {
     this.updateMarkers(dt);
     this.trackPlace(dt);
     this.kits.hud.update(this.hud, dt);
+  }
+
+  private lastThunderKey = -1;
+  private nextDistantThunderT = 0;
+  private announceWeatherForecast() {
+    if (!this.cm.weatherPlan) return;
+    weatherAt(this.cm.weatherPlan, this.cm.time, this.cm.storm.phase, 1, this.cm.weather);
+    let topKind = WeatherKind.Clear;
+    for (let i = 0; i < this.cm.weather.count; i++) {
+      const c = this.cm.weather.cells[i];
+      if (c.kind === WeatherKind.Storm || c.storm > 0.25) { topKind = WeatherKind.Storm; break; }
+      if (c.kind === WeatherKind.Rain || c.rain > 0.15) topKind = WeatherKind.Rain;
+      else if (topKind === WeatherKind.Clear && (c.kind === WeatherKind.Fog || c.fog > 0.2)) topKind = WeatherKind.Fog;
+    }
+    if (topKind === WeatherKind.Storm) this.announce("THUNDERSTORMS INBOUND", "heavy rain, gusty winds & lightning cells across the island · check map", "warn");
+    else if (topKind === WeatherKind.Rain) this.announce("TROPICAL RAIN INBOUND", "moving showers & wet terrain across the island · check map", "info");
+    else if (topKind === WeatherKind.Fog) this.announce("COASTAL MIST INBOUND", "drifting fog banks across parts of the island · check map", "info");
+    else this.announce("CLEAR SKIES", "calm winds & dry ground across the island", "info");
+  }
+  private updateWeather(cx: number, cz: number) {
+    const wx = (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather;
+    if (this.range || this.cm.phase === 0 || this.cm.phase === 3) {
+      wx?.setRainIntensity(0, this.cm.phase === 0);
+      wx?.setLightningStrike(false, false, 0, 0, 0, 0);
+      wx?.setWeatherCells?.(this.cm.weather.cells, 0);
+      this.kits.audio.setWeather?.(0, 0);
+      if (this.cm.phase === 0 && !this.range && this.cm.weatherPlan) {
+        weatherAt(this.cm.weatherPlan, 0, this.cm.storm.phase, 1, this.cm.weather);
+        HUD_WX_LIST.length = 0;
+        for (let i = 0; i < this.cm.weather.count; i++) {
+          const src = this.cm.weather.cells[i], dst = HUD_WX_POOL[i];
+          dst.kind = src.kind; dst.x = src.x; dst.z = src.z; dst.vx = src.vx; dst.vz = src.vz;
+          dst.radius = src.radius; dst.rain = src.rain; dst.fog = src.fog; dst.storm = src.storm;
+          HUD_WX_LIST.push(dst);
+        }
+        this.hud.weather = HUD_WX_LIST;
+      } else {
+        this.hud.weather = null;
+      }
+      return;
+    }
+    const ov = parseWeatherFlag();
+    const onMetal = this.cm.pred.grounded && surfaceAt(this.engine.terrain, this.cm.pred.surf, this.cm.pred.x, this.cm.pred.z) === "metal" ? 1 : 0;
+    if (ov !== null) {
+      wx?.setRainIntensity(ov);
+      this.kits.audio.setWeather?.(ov, ENV.indoors ? 1 : 0, onMetal);
+    } else {
+      sampleWeatherAt(this.cm.weather, cx, cz, W_SAMP);
+      wx?.setConditions(W_SAMP.rain, W_SAMP.fog, W_SAMP.storm, W_SAMP.windX, W_SAMP.windZ, W_SAMP.wetness);
+      this.kits.audio.setWeather?.(W_SAMP.rain, ENV.indoors ? 1 : 0, onMetal);
+    }
+    const st = this.cm.weather.strike;
+    if (st.active) {
+      const sy = Math.max(0, this.engine.terrain.height(st.x, st.z));
+      wx?.setLightningStrike(true, st.discharging, st.x, sy, st.z, st.telegraph);
+      if (st.discharging && st.strikeKey !== this.lastThunderKey) {
+        this.lastThunderKey = st.strikeKey;
+        this.kits.audio.triggerThunder?.(st.x, sy, st.z);
+      }
+    } else {
+      wx?.setLightningStrike(false, false, 0, 0, 0, 0);
+    }
+    // Periodic distant rolling thunder from any active storm cell on the island
+    if (this.cm.time >= this.nextDistantThunderT) {
+      let bestStorm: { x: number; z: number; storm: number } | null = null;
+      for (let i = 0; i < this.cm.weather.count; i++) {
+        const c = this.cm.weather.cells[i];
+        if (c.storm > 0.25 && (!bestStorm || c.storm > bestStorm.storm)) bestStorm = c;
+      }
+      if (bestStorm) {
+        this.kits.audio.triggerThunder?.(bestStorm.x, 120, bestStorm.z);
+        this.nextDistantThunderT = this.cm.time + 9 + (Math.floor(this.cm.time * 7) % 7);
+      }
+    }
+    HUD_WX_LIST.length = 0;
+    for (let i = 0; i < this.cm.weather.count; i++) {
+      const src = this.cm.weather.cells[i], dst = HUD_WX_POOL[i];
+      dst.kind = src.kind; dst.x = src.x; dst.z = src.z; dst.vx = src.vx; dst.vz = src.vz;
+      dst.radius = src.radius; dst.rain = src.rain; dst.fog = src.fog; dst.storm = src.storm;
+      HUD_WX_LIST.push(dst);
+    }
+    this.hud.weather = HUD_WX_LIST;
+    wx?.setWeatherCells?.(this.cm.weather.cells, this.cm.weather.count);
   }
 
   /** recoil recovery + camera punch springs + trauma decay */
@@ -1265,7 +1354,7 @@ export class GameRender implements EventSink {
       const stride = p.sprint ? 2.75 : p.crouch ? 1.4 : 2.1;
       if (this.stepAcc > stride && sp > 0.8 && p.mvT <= 0) {
         this.stepAcc = 0;
-        const s: Surface = surfaceAt(this.engine.terrain, p.surf, p.x, p.z);
+        const s: Surface = !ENV.indoors && W_SAMP.wetness > 0.25 && puddleAt(p.x, p.z) > 0.25 ? "water" : surfaceAt(this.engine.terrain, p.surf, p.x, p.z);
         this.sfx(`step:${s}`, { volume: p.crouch ? 0.3 : p.sprint ? 0.85 : 0.6 });
       }
     } else this.stepAcc = 0;
@@ -2123,7 +2212,7 @@ export class GameRender implements EventSink {
       if (r.st === PS.Ground && r.grounded && d2 < 45 * 45) {
         const sp = Math.hypot(r.vx, r.vz); a.stepAcc += sp * dt;
         const stride = r.sprint ? 2.75 : r.crouch ? 1.4 : 2.1;
-        if (a.stepAcc > stride && sp > 0.8) { a.stepAcc = 0; if (!r.crouch) this.play(`step:${surfaceAt(this.engine.terrain, 255, r.x, r.z)}`, r.x, r.y, r.z, r.sprint ? 0.9 : 0.65); }
+        if (a.stepAcc > stride && sp > 0.8) { a.stepAcc = 0; if (!r.crouch) { const s = W_SAMP.wetness > 0.25 && puddleAt(r.x, r.z) > 0.25 ? "water" : surfaceAt(this.engine.terrain, 255, r.x, r.z); this.play(`step:${s}`, r.x, r.y, r.z, r.sprint ? 0.9 : 0.65); } }
         if (!a.wasGrounded) this.play("land", r.x, r.y, r.z, 0.5);
       }
       a.wasGrounded = r.grounded;

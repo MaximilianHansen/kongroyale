@@ -5,6 +5,7 @@ import { drawCoin } from "./coin";
 import type { HudState } from "./api";
 import type { PaintedMap } from "./mapimage";
 import { drawGlyph } from "./icons";
+import { isWeatherOverlayOn } from "./bigmap";
 import { TOON } from "./toon";
 import { preferences } from "../settings/preferences";
 import type { POIS } from "../../../shared/world/map";
@@ -133,6 +134,25 @@ export class Minimap {
       }
     }
 
+    // regional weather overlay on top-left minimap (synced with BigMap WEATHER OVERLAY toggle)
+    if (isWeatherOverlayOn() && s.weather && s.weather.length) {
+      g.save();
+      for (const c of s.weather) {
+        const [wx, wy] = P(c.x, c.z);
+        const rr = c.radius * k;
+        if (rr < 3) continue;
+        const isStorm = c.kind === 3 || c.storm > 0.25;
+        const isRain = !isStorm && (c.kind === 2 || c.rain > 0.15);
+        g.beginPath();
+        g.arc(wx, wy, rr, 0, Math.PI * 2);
+        g.fillStyle = isStorm ? "rgba(152,78,238,0.28)" : isRain ? "rgba(42,196,228,0.24)" : "rgba(220,226,232,0.20)";
+        g.fill();
+        g.lineWidth = 1.6;
+        g.strokeStyle = isStorm ? "rgba(210,156,255,0.85)" : isRain ? "rgba(120,235,255,0.82)" : "rgba(238,242,246,0.75)";
+        g.stroke();
+      }
+      g.restore();
+    }
     // flight path + plane
     if (s.plane) {
       const p = s.plane;

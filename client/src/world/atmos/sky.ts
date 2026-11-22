@@ -92,8 +92,8 @@ vec3 cirrus(vec3 d, vec3 col) {
   cov *= smoothstep(0.005, 0.12, d.y);
   // lit by the sun: bright forward scatter toward the sun, thicker parts shade toward the base colour
   float mu = max(dot(d, uAtmSunDir), 0.0);
-  vec3 lit = uCirrusLit * uAtmSunColor * (0.75 + 1.2 * pow(mu, 6.0));
-  vec3 c = mix(lit, uCirrusShade, smoothstep(0.25, 0.92, cov) * mix(0.45, 0.78, uOvercast));
+  vec3 lit = uCirrusLit * uAtmSunColor * (0.75 + 1.2 * pow(mu, 6.0) * (1.0 - uOvercast * 0.75));
+  vec3 c = mix(lit, uCirrusShade, smoothstep(0.18, 0.85, cov) * mix(0.45, 0.85, uOvercast));
   return mix(col, c, cov * uCirrusOpacity);
 }
 
@@ -115,13 +115,13 @@ void main() {
 #endif
   if (uOvercast > 0.0) {
     float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-    col = mix(col, vec3(lum) * vec3(0.76, 0.85, 0.96), uOvercast * 0.82);
+    col = mix(col, vec3(lum) * vec3(0.62, 0.70, 0.82), uOvercast * 0.92);
   }
   col = cirrus(d, col);
   float mu = dot(d, uAtmSunDir);
   // sun disc: bright core (blooms) with a soft limb
   float disc = smoothstep(uDiscCos - 0.0006, uDiscCos + 0.0003, mu);
-  col += uAtmSunColor * disc * 14.0 * uDiscOn * (1.0 - uOvercast * 0.88);
+  col += uAtmSunColor * disc * 14.0 * uDiscOn * (1.0 - uOvercast * 0.96);
   if (uNight.x > 0.0) col += stars(d) * uNight.x;
   if (uNight.y > 0.5) { vec4 mo = moon(d); col = mix(col, mo.rgb, mo.a); }
   // dither against banding in the smooth gradient

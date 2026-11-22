@@ -16,6 +16,7 @@ import { CHEST_OPEN_DIST, DT, MAX_PLAYERS, MAX_REWIND_TICKS, PLANE_SPEED, SNAP_E
 import { IK, lootReachable, type Chest, type Item } from "../../../shared/sim/loot";
 import { B, PS, currentSpread, eyeY, invDrop, invMove, makeInput, makePlayer, pelletDamage, poseFlags, stepPlayer, weaponDef, copyInput, type Input, type Player } from "../../../shared/sim/player";
 import { makeStormState, stormAt, type StormPlan, type StormState } from "../../../shared/sim/storm";
+import { makeWeatherState, planWeather, weatherAt, type WeatherPlan, type WeatherState } from "../../../shared/sim/weather";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { EV, INV, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, M, Reader, yawDec, Writer, makeCastStat, makePlayerSnap, makeSelfState, makeVehSnap, quantizeInput, readCastHeader, readCastStat, readInventory, readPlayer, readSelf, readSnapHeader, readVehicle, writeInput, writeInputs, writeInvOp, INPUT_BODY_BYTES, INPUT_WINDOW, INPUTS_HEAD_BYTES, type CastHeader, type CastStat, type GunSelf, type PlayerSnap, type SelfState, type SnapHeader, type VehSelf, type VehSnap } from "../../../shared/net/proto";
 import { SEAT_EYE, TUK, VF, VKind, VS, VehicleSet, blendVeh, rayVehicle, seatPoint, seatRiderAt, vehPose, vehicleInReach, type Vehicle } from "../../../shared/sim/vehicle";
@@ -157,6 +158,7 @@ export class ClientMatch {
   names: string[] = [];
   chests: Chest[] = []; items = new Map<number, Item>();
   plan: StormPlan | null = null; readonly storm: StormState = makeStormState();
+  weatherPlan: WeatherPlan | null = null; readonly weather: WeatherState = makeWeatherState();
   /** firing range match (JSON "match".range): no storm / plane, infinite reserve ammo */
   range = false;
   phase = 0; phaseTick = 0; phaseTime = 0; time = 0; alive = 50; squads = 17; flags = 0; mode: "solo" | "trios" = "solo";
@@ -365,6 +367,7 @@ export class ClientMatch {
       // (caster) the seat's own "player" never exists: parked out of the world, on no team, never drawn
       if (this.caster) { this.pred.st = PS.Spectate; this.pred.x = 0; this.pred.y = -1000; this.pred.z = 0; this.pred.hp = 0; this.castStatsTick = -1; }
       this.seed = (m.seed as number) ?? 0; this.ranks = null;
+      this.weatherPlan = planWeather(this.seed);
       this.mode = m.mode as "solo" | "trios"; this.phase = m.phase as number; this.plan = m.plan as StormPlan; Object.assign(this.plane, m.plane as object);
       this.time = (m.time as number) ?? 0; this.phaseTime = (m.phaseT as number) ?? 0; this.phaseTick = (m.tick as number) - Math.round(this.phaseTime / DT);
       this.planeStart = this.phase === 1 ? this.phaseTick : -1;
@@ -694,7 +697,7 @@ export class ClientMatch {
       const e = (seq % PRING) * PS_STRIDE, inp = this.inRing[seq % PRING], pre = R[e + PF.PRE];
       s.scoped = (pre & 1) !== 0; s.reloadT = (pre & 2) !== 0 ? 1 : 0; s.useT = (pre & 4) !== 0 ? 1 : 0; s.ads = (pre & 8) !== 0; s.useTaken = (pre & 16) !== 0;
       if (s.st === PS.Plane) this.ridePlane(s, inp);
-      else { if (s.st === PS.Ride && s.seat !== 0) this.seatDrawn(s); stepPlayer(s, inp, this.world, DT); }
+      else { if (s.st === PS.Ride && s.seat !== 0) this.seatDrawn(s); stepPlayer(s, inp, this.world, DT, this.range ? undefined : this.weather); }
       R[e + PF.X] = s.x; R[e + PF.Y] = s.y; R[e + PF.Z] = s.z; R[e + PF.VX] = s.vx; R[e + PF.VY] = s.vy; R[e + PF.VZ] = s.vz;
       R[e + PF.COYOTE] = s.coyote; R[e + PF.JUMPBUF] = s.jumpBuf; R[e + PF.AIRT] = s.airT; R[e + PF.FALLV] = s.fallV; R[e + PF.MVT] = s.mvT; R[e + PF.MVY] = s.mvY;
       // (the replay has no hands: a red banana the prediction finished eating in this input starts its buff here too)
@@ -769,7 +772,7 @@ export class ClientMatch {
           else { this.stopDriving(); this.seatDrawn(p); }
         }
         { const g = gunOf(this.vehs, p); if (g) { if (this.gunning !== g.id) { this.stopGunning(); this.gunning = g.id; } } else this.stopGunning(); }
-        stepPlayer(p, inp, this.world, DT);
+        stepPlayer(p, inp, this.world, DT, this.range ? undefined : this.weather);
         if (this.gunning >= 0) { const g = gunOf(this.vehs, p); if (g && g.id === this.gunning) this.saveGun(inp.seq, g); else this.stopGunning(); }
         if (this.driving >= 0) {
           const sim = this.vehs.list[this.driving];
@@ -805,7 +808,11 @@ export class ClientMatch {
     if (this.planeStart < 0) { p.yaw = inp.yaw; p.pitch = inp.pitch; p.prevButtons = inp.buttons; return false; }
     return planeStep(p, inp, this.plane, this.planeStart, inp.lerpA);
   }
-  private stepStorm() { if (this.plan) stormAt(this.plan, this.time + (this.phase === 1 || this.phase === 2 ? this.acc : 0), this.storm); }
+  private stepStorm() {
+    const t = this.time + (this.phase === 1 || this.phase === 2 ? this.acc : 0);
+    if (this.plan) stormAt(this.plan, t, this.storm);
+    if (this.weatherPlan && !this.range) weatherAt(this.weatherPlan, t, this.storm.phase, this.phase, this.weather);
+  }
 
   /** interpolated render pose of the local player */
   localPose(out: { x: number; y: number; z: number }) {

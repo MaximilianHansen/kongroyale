@@ -353,6 +353,9 @@ class Engine implements KongAudio {
     this.pendingLoops.clear(); this.stormStart = null; this.echoJobs.length = 0; this.qHead = this.queue.length;
     this.planeActive = false; this.rampOpen = false; this.planeExit = false; this.stormD = null; this.stormIn = 0; this.localReload = null;
     this.ambience.stopAll();
+    if (this.rainGain) this.rainGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+    if (this.patterGain) this.patterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+    if (this.tinGain) this.tinGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
     if (this.uwBed) { this.uwBed.stop(); this.uwBed = null; } this.uwK = 0;
     const t = this.ctx.currentTime;
     for (const v of this.voices) if (v.end > t && !v.group.startsWith("ui/")) this.fadeOut(v, 0.15);
@@ -364,6 +367,135 @@ class Engine implements KongAudio {
   setMaster(v: number): void { this.mixer.setMaster(v); }
   setDynamicRange(profile: "full" | "reduced"): void { this.mixer.setDynamicRange(profile); }
   setMix(levels: { combat: number; ui: number; ambience: number }): void { this.mixer.setMix(levels); }
+
+  private rainSrc: AudioBufferSourceNode | null = null;
+  private rainFilter: BiquadFilterNode | null = null;
+  private rainGain: GainNode | null = null;
+  private patterSrc: AudioBufferSourceNode | null = null;
+  private patterFilter: BiquadFilterNode | null = null;
+  private patterGain: GainNode | null = null;
+  private tinSrc: AudioBufferSourceNode | null = null;
+  private tinGain: GainNode | null = null;
+  setWeather(rain: number, indoors = 0, metalRoof = 0): void {
+    if (!this.live || this.sessionOff) return;
+    const r = Math.max(0, Math.min(1, rain));
+    const ind = Math.max(0, Math.min(1, indoors || this.autoIndoor));
+    const tin = Math.max(0, Math.min(1, metalRoof));
+    const now = this.ctx.currentTime;
+    if (r > 0.01 && !this.rainSrc) {
+      const sr = this.ctx.sampleRate, len = sr * 4;
+      const buf = this.ctx.createBuffer(2, len, sr);
+      const chL = buf.getChannelData(0), chR = buf.getChannelData(1);
+      const patBuf = this.ctx.createBuffer(2, len, sr);
+      const patL = patBuf.getChannelData(0), patR = patBuf.getChannelData(1);
+      const tinBuf = this.ctx.createBuffer(1, len, sr), tinCh = tinBuf.getChannelData(0);
+      let b0L = 0, b1L = 0, b2L = 0, b0R = 0, b1R = 0, b2R = 0;
+      let dAmpL = 0, dPhL = 0, dFreqL = 1200, dDecayL = 0.985, dNoiseL = 0;
+      let dAmpR = 0, dPhR = 0, dFreqR = 1400, dDecayR = 0.985, dNoiseR = 0;
+      let ping = 0, pingPhase = 0, pingFreq = 2600;
+      for (let i = 0; i < len; i++) {
+        const wL = Math.random() * 2 - 1, wR = Math.random() * 2 - 1;
+        b0L = 0.997 * b0L + wL * 0.032; b1L = 0.985 * b1L + wL * 0.036; b2L = 0.950 * b2L + wL * 0.052;
+        b0R = 0.997 * b0R + wR * 0.032; b1R = 0.985 * b1R + wR * 0.036; b2R = 0.950 * b2R + wR * 0.052;
+        // Seamless slow rain-sheet swell (cycles cleanly over 4 s)
+        const swell = 0.88 + 0.12 * Math.sin((2 * Math.PI * i) / len);
+        chL[i] = ((b0L + b1L + b2L) * 0.56 + wL * 0.22) * swell;
+        chR[i] = ((b0R + b1R + b2R) * 0.56 + wR * 0.22) * swell;
+
+        // Dense ground, foliage & puddle impact patter around the listener (independent L/R)
+        if (Math.random() < 0.0024) {
+          const kind = Math.random();
+          dAmpL = 0.55 + Math.random() * 0.55;
+          if (kind < 0.42) { dFreqL = 520 + Math.random() * 780; dDecayL = 0.984; dNoiseL = 0.28; } // ground/soil thud
+          else if (kind < 0.78) { dFreqL = 1900 + Math.random() * 2700; dDecayL = 0.976; dNoiseL = 0.42; } // leaf/foliage tick
+          else { dFreqL = 950 + Math.random() * 1350; dDecayL = 0.989; dNoiseL = 0.18; } // puddle splash pop
+        }
+        if (Math.random() < 0.0024) {
+          const kind = Math.random();
+          dAmpR = 0.55 + Math.random() * 0.55;
+          if (kind < 0.42) { dFreqR = 520 + Math.random() * 780; dDecayR = 0.984; dNoiseR = 0.28; }
+          else if (kind < 0.78) { dFreqR = 1900 + Math.random() * 2700; dDecayR = 0.976; dNoiseR = 0.42; }
+          else { dFreqR = 950 + Math.random() * 1350; dDecayR = 0.989; dNoiseR = 0.18; }
+        }
+        dPhL += (2 * Math.PI * dFreqL) / sr;
+        dPhR += (2 * Math.PI * dFreqR) / sr;
+        patL[i] = (Math.sin(dPhL) * (1 - dNoiseL) + wL * dNoiseL) * dAmpL * 0.65 + wL * 0.06;
+        patR[i] = (Math.sin(dPhR) * (1 - dNoiseR) + wR * dNoiseR) * dAmpR * 0.65 + wR * 0.06;
+        dAmpL *= dDecayL; dAmpR *= dDecayR;
+
+        if (Math.random() < 0.0028) { ping = 0.85 + Math.random() * 0.45; pingFreq = 1800 + Math.random() * 2200; }
+        pingPhase += (2 * Math.PI * pingFreq) / sr;
+        tinCh[i] = Math.sin(pingPhase) * ping * 0.55 + wL * (0.08 + ping * 0.18);
+        ping *= 0.991;
+      }
+      const src = this.ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+      const hp = this.ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 240;
+      const filt = this.ctx.createBiquadFilter(); filt.type = "lowpass"; filt.frequency.value = 8200; filt.Q.value = 0.5;
+      const gain = this.ctx.createGain(); gain.gain.value = 0;
+      src.connect(hp).connect(filt).connect(gain).connect(this.mixer.buses.amb);
+      src.start();
+      this.rainSrc = src; this.rainFilter = filt; this.rainGain = gain;
+
+      const pSrc = this.ctx.createBufferSource(); pSrc.buffer = patBuf; pSrc.loop = true;
+      const pHp = this.ctx.createBiquadFilter(); pHp.type = "highpass"; pHp.frequency.value = 380;
+      const pFilt = this.ctx.createBiquadFilter(); pFilt.type = "lowpass"; pFilt.frequency.value = 7800; pFilt.Q.value = 0.5;
+      const pGain = this.ctx.createGain(); pGain.gain.value = 0;
+      pSrc.connect(pHp).connect(pFilt).connect(pGain).connect(this.mixer.buses.amb);
+      pSrc.start();
+      this.patterSrc = pSrc; this.patterFilter = pFilt; this.patterGain = pGain;
+
+      const tSrc = this.ctx.createBufferSource(); tSrc.buffer = tinBuf; tSrc.loop = true;
+      const tFilt = this.ctx.createBiquadFilter(); tFilt.type = "bandpass"; tFilt.frequency.value = 2600; tFilt.Q.value = 1.4;
+      const tGain = this.ctx.createGain(); tGain.gain.value = 0;
+      tSrc.connect(tFilt).connect(tGain).connect(this.mixer.buses.amb);
+      tSrc.start();
+      this.tinSrc = tSrc; this.tinGain = tGain;
+    }
+    if (this.rainGain && this.rainFilter) {
+      this.rainFilter.frequency.setTargetAtTime(8200 - ind * 5600, now, 0.12);
+      this.rainGain.gain.setTargetAtTime(r * (1 - ind * 0.25) * 0.95, now, 0.18);
+    }
+    if (this.patterGain && this.patterFilter) {
+      this.patterFilter.frequency.setTargetAtTime(Math.max(1200, (3600 + r * 4800) * (1 - ind * 0.72)), now, 0.12);
+      this.patterGain.gain.setTargetAtTime(Math.pow(r, 0.85) * Math.pow(1 - ind, 1.5) * 1.15, now, 0.15);
+    }
+    if (this.tinGain) {
+      this.tinGain.gain.setTargetAtTime(r * tin * 0.72, now, 0.12);
+    }
+  }
+  triggerThunder(x: number, y: number, z: number): void {
+    if (!this.live || this.sessionOff) return;
+    const d = this.dist([x, y, z]);
+    const delayMs = Math.min(3500, (d / 343) * 1000);
+    setTimeout(() => {
+      if (this.sessionOff) return;
+      const pk = this.lib.pick("storm/thunder", this.ambRnd);
+      if (!pk) { if (this.lib.isLazy("storm/thunder")) this.want("storm/thunder"); return; }
+      const src = this.ctx.createBufferSource();
+      src.buffer = pk.buf;
+      src.playbackRate.value = 0.88 + this.ambRnd() * 0.20;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = Math.max(480, 3400 * Math.exp(-d / 520));
+      lp.Q.value = 0.5;
+      const bass = this.ctx.createBiquadFilter();
+      bass.type = "lowshelf";
+      bass.frequency.value = 130;
+      bass.gain.value = 4.5;
+      // Stereo pan toward strike direction without hollow yard-reverb / HRTF comb filtering
+      const dx = x - this.listener.pos[0], dz = z - this.listener.pos[2];
+      const rx = -this.listener.fwd[2], rz = this.listener.fwd[0];
+      const panVal = d > 1 ? Math.max(-0.85, Math.min(0.85, (dx * rx + dz * rz) / d)) : 0;
+      const pan = this.ctx.createStereoPanner();
+      pan.pan.value = panVal;
+      const g = this.ctx.createGain();
+      const lvl = Math.max(0.18, Math.min(0.85, 1.0 - d / 1100));
+      g.gain.value = lvl * dbg(this.lib.normDb(pk.file));
+      src.connect(lp).connect(bass).connect(pan).connect(g).connect(this.mixer.buses.amb);
+      src.start();
+      this.voices.push({ nodes: [lp, bass, pan, g], srcs: [src], end: this.ctx.currentTime + pk.buf.duration / src.playbackRate.value, group: "storm/thunder", start: this.ctx.currentTime, out: g, local: true, db: -12, prio: 0, dist: d });
+    }, delayMs);
+  }
 
   update(dt: number, l: { pos: [number, number, number]; fwd: [number, number, number]; up: [number, number, number] }, env: Env): void {
     const L = this.listener;

@@ -6,6 +6,9 @@ import { stepZip, zipAttach } from "./zipline";
 import { coverPlace, pushCover } from "./cover";
 import { VF, VKind, VS, exitVehicle, pushKong, seatRider, stepVehicle, switchSeat, takeSeat } from "./vehicle";
 import { HELI, gunOf, stepGun, stepHeli } from "./heli";
+import { makeWeatherSample, sampleWeatherAt, setActiveWeather, type WeatherState } from "./weather";
+
+const W_SAMP = makeWeatherSample();
 import { UPDRAFT, inUpdraft, updraftLift } from "./updraft";
 import { CLIMB } from "./climb";
 import { PS, B, seatAsked, ammoIndex, type Input, copyInput, SK, type Player, height, weaponDef, consumableDef, fallDamage, noteShot, coolHeat, BUSY_IN } from "./player";
@@ -14,7 +17,7 @@ import * as dmath from "./dmath";
 /** red banana multipliers (shared/sim/const.ts CONSUMABLE_DEFS) */
 const RED_SPEED = CONSUMABLE_DEFS["red-banana"].speedMul ?? 1, RED_JUMP = CONSUMABLE_DEFS["red-banana"].jumpMul ?? 1;
 /** the deterministic per-tick step. `groundedBefore` etc are all in `p`. */
-export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number): void {
+export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number, weather?: WeatherState): void {
   p.anim &= ~(4 | 8);
   // last tick's shot was resolved with the pre-shot spread; now it blooms (TOP BANANA's rounds heat the gun instead)
   if (p.fired > 0 && gunOf(world.veh, p) === null) noteShot(p);
@@ -35,8 +38,8 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   if (p.buffT > 0) p.buffT = p.st === PS.Dead || p.st === PS.Spectate || p.st === PS.Plane ? 0 : Math.max(0, p.buffT - dt);
   if (p.st === PS.Dead || p.st === PS.Spectate || p.st === PS.Plane) { if (p.st === PS.Dead) stepCorpse(p, world, dt); p.prevButtons = inp.buttons; return; }
 
-  if (p.st === PS.Freefall || p.st === PS.Glide) { stepAir(p, inp, world, dt, pressed); p.prevButtons = inp.buttons; return; }
-  if (p.st === PS.Ride) { stepRide(p, inp, world, dt, pressed); p.prevButtons = inp.buttons; return; }
+  if (p.st === PS.Freefall || p.st === PS.Glide) { stepAir(p, inp, world, dt, pressed, weather); p.prevButtons = inp.buttons; return; }
+  if (p.st === PS.Ride) { setActiveWeather(weather); stepRide(p, inp, world, dt, pressed); setActiveWeather(undefined); p.prevButtons = inp.buttons; return; }
   if (p.st === PS.Climb) { stepClimb(p, inp, world, dt, pressed); p.prevButtons = inp.buttons; return; }
   // zipline (shared/sim/zipline.ts): E at a pole grabs the trolley — unless the E prompt shows something
   // else first (useTaken: a chest / gun / window / aimed tuk-tuk wins); riding ignores move input, hands work
@@ -183,7 +186,12 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
       }
     }
     // on a slide slope the feet lose most of their grip: the slide builds to ~2.5 m/s instead of being walked off
-    const k = 1 - dmath.exp(-dt * (moving ? ACCEL / 4 : FRICTION) * (1 - 0.7 * slide));
+    let wetGrip = 1;
+    if (weather && weather.count > 0) {
+      sampleWeatherAt(weather, p.x, p.z, W_SAMP);
+      wetGrip = 1 - W_SAMP.wetness * (p.surf === 255 ? 0.22 : 0.13);
+    }
+    const k = 1 - dmath.exp(-dt * (moving ? ACCEL / 4 : FRICTION) * wetGrip * (1 - 0.7 * slide));
     p.vx += (wx - p.vx) * k; p.vz += (wz - p.vz) * k;
     p.coyote = COYOTE_S;
     if (slide > 0) { // slide down steep ground (the terrain normal here — world.G belongs to whoever the world solved last)
@@ -658,7 +666,7 @@ const ramp = (v: number, a: number, b: number) => Math.max(0, Math.min(1, (v - a
 /** the player left the air: clear the spring accelerations (fallV / mvT / mvY are ground fields again) */
 function leaveAir(p: Player) { p.fallV = 0; p.mvT = 0; p.mvY = 0; }
 
-function stepAir(p: Player, inp: Input, world: StaticWorld, dt: number, pressed: number) {
+function stepAir(p: Player, inp: Input, world: StaticWorld, dt: number, pressed: number, weather?: WeatherState) {
   const agl = dropAgl(p, world);
   const sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw);
   const fx = -sy, fz = -cy, rx = cy, rz = -sy;
@@ -701,6 +709,13 @@ function stepAir(p: Player, inp: Input, world: StaticWorld, dt: number, pressed:
     const k = 0.75 * lift, ax = (UPDRAFT.x - p.x) * 0.9, az = (UPDRAFT.z - p.z) * 0.9;
     tx += (ax - tx) * k; tz += (az - tz) * k;
     wv = Math.max(wv, 4.5);
+  }
+  if (weather && weather.count > 0) {
+    sampleWeatherAt(weather, p.x, p.z, W_SAMP);
+    const windMul = p.st === PS.Glide ? 0.36 : 0.16;
+    const cap = p.st === PS.Glide ? 4.8 : 2.2;
+    tx += Math.max(-cap, Math.min(cap, W_SAMP.windX * windMul));
+    tz += Math.max(-cap, Math.min(cap, W_SAMP.windZ * windMul));
   }
   springStep(p.vx, p.mvT, tx, wh, dt, SP); p.vx = SP[0]; p.mvT = SP[1];
   springStep(p.vz, p.mvY, tz, wh, dt, SP); p.vz = SP[0]; p.mvY = SP[1];

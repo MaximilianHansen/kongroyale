@@ -159,6 +159,8 @@ export interface HudState {
   kills?: number;
   /** optional (Toon HUD): the damage I have dealt this match (the match-stats chip; absent = no damage chip) */
   damage?: number;
+  /** optional: active regional weather cells for the full-map overlay */
+  weather?: ReadonlyArray<{ kind: number; x: number; z: number; vx: number; vz: number; radius: number; rain: number; fog: number; storm: number }> | null;
   /** live plane position during the flight (map + minimap plane icon); absent = the icon rides the path by time */
   planePos?: { x: number; z: number } | null;
   /** plane flight progress 0..1 along `plane` (used when planePos is absent) */

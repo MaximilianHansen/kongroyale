@@ -22,7 +22,7 @@ const fmt = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.flo
 const VIEW_CX = -10, VIEW_CZ = -60, VIEW_SPAN = 1880;
 
 addCss("kr-ui-map", `
-.kr-mapv { position: absolute; inset: 0; pointer-events: auto; background: #140a26; overflow: hidden; cursor: crosshair; font-family: ${UI.sans}; }
+.kr-mapv { position: absolute; inset: 0; z-index: 20; pointer-events: auto; background: #140a26; overflow: hidden; cursor: crosshair; font-family: ${UI.sans}; }
 .kr-mapv canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .kr-mapv svg.frame { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .kr-mapv .legend { position: absolute; right: ${U(62)}; top: ${U(54)}; width: ${U(360)}; padding: ${U(18)} ${U(22)} ${U(16)};
@@ -59,7 +59,14 @@ html.kr-pad .kr-mapv .padcur.on { display: block; }
 .kr-mapv .padcur i:nth-child(3) { left: 0; } .kr-mapv .padcur i:nth-child(4) { right: 0; }
 .kr-mapv .keys kbd { font-family: ${UI.sans}; font-size: ${U(16)}; font-weight: 900; color: ${UI.inkDark}; background: ${UI.cream};
   border-radius: ${U(4)}; padding: ${U(4)} ${U(8)}; box-shadow: 0 ${U(2)} 0 rgba(0,0,0,0.5); }
+.kr-mapv .wxtog { margin-top: ${U(12)}; width: 100%; padding: ${U(8)} ${U(12)}; border-radius: ${U(6)}; border: ${U(1.5)} solid rgba(255,212,0,0.65);
+  background: rgba(28,36,52,0.85); color: ${UI.creamText}; font-family: ${UI.cond}; font-size: ${U(19)}; font-weight: 800; letter-spacing: ${U(1.6)};
+  cursor: pointer; pointer-events: auto; text-align: center; }
+.kr-mapv .wxtog.on { background: rgba(45,125,165,0.92); border-color: #7ee8ff; color: #fff; }
 `);
+
+let sharedWeatherOverlay = false;
+export function isWeatherOverlayOn(): boolean { return sharedWeatherOverlay; }
 
 /** label candidates in units of (half label width + gap, half label height + gap): centre, below, above, right, left, diagonals */
 const LBL_CANDS: Array<[number, number]> = [[0, 0]];
@@ -91,6 +98,10 @@ export class BigMap {
   onClick: ((x: number, z: number) => void) | null = null;
   onClear: (() => void) | null = null;
   private cleared = false;
+  private showWeather = false;
+  private wxBtn = document.createElement("button");
+  private wxCanvas: HTMLCanvasElement | null = null;
+  private wxNextAt = 0;
   /** the controller's reticle (screen px; -1 = centre it on the next pad frame) */
   private cur = document.createElement("div"); private curX = -1; private curY = -1;
 
@@ -134,6 +145,22 @@ export class BigMap {
     const bSw = sw(""); const bc = document.createElement("canvas"); bc.width = 80; bc.height = 44; bc.style.cssText = "width:100%;height:100%";
     bSw.appendChild(bc); row(bSw, "BOUNTY TARGET AREA"); bountyRing(bc.getContext("2d")!, 40, 22, 17, 0.4);
     lg.append(this.phEl, tm, rows);
+    this.wxBtn.type = "button";
+    this.wxBtn.className = "wxtog";
+    this.wxBtn.textContent = "WEATHER OVERLAY (R): OFF";
+    const toggleWeather = () => {
+      this.showWeather = !this.showWeather;
+      sharedWeatherOverlay = this.showWeather;
+      this.wxBtn.classList.toggle("on", this.showWeather);
+      this.wxBtn.textContent = this.showWeather ? "WEATHER OVERLAY (R): ON" : "WEATHER OVERLAY (R): OFF";
+    };
+    this.wxBtn.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    this.wxBtn.addEventListener("pointerup", (ev) => ev.stopPropagation());
+    this.wxBtn.addEventListener("click", (ev) => { ev.stopPropagation(); toggleWeather(); });
+    window.addEventListener("keydown", (ev) => {
+      if (ev.code === "KeyR" && !this.el.classList.contains("kr-hide")) toggleWeather();
+    });
+    lg.appendChild(this.wxBtn);
     this.el.appendChild(lg);
     const keys = document.createElement("div"); keys.className = "keys";
     // the key strip names the device in hand: mouse + the map key, or the controller's buttons
@@ -167,6 +194,7 @@ export class BigMap {
     let down: { x: number; y: number; cx: number; cz: number; moved: boolean } | null = null;
     this.el.addEventListener("contextmenu", (e) => e.preventDefault());
     this.el.addEventListener("pointerdown", (e) => {
+      if (e.target === this.wxBtn) return;
       if (e.button === 2) { this.pending = null; this.cleared = true; this.onClear?.(); return; }
       if (e.button !== 0) return;
       down = { x: e.clientX, y: e.clientY, cx: this.cx, cz: this.cz, moved: false };
@@ -378,6 +406,10 @@ export class BigMap {
       g.strokeStyle = "#ffffff"; g.lineWidth = 3.4 * u;
       g.beginPath(); g.arc(nx, ny, nz.r * k, 0, Math.PI * 2); g.stroke();
     }
+    // regional weather overlay (organic contoured radar fronts, distinct from the purple BR storm)
+    if (this.showWeather && s.weather && s.weather.length) {
+      this.drawWeatherOverlay(g, s.weather, now, u);
+    }
     // flight path: rounded yellow dashes + arrowheads, plane riding it
     if (s.plane) {
       const p = s.plane;
@@ -506,5 +538,112 @@ export class BigMap {
       (this.aliveEl as HTMLElement & { _v: HTMLElement })._v.textContent = alive;
       this.squadsEl.textContent = squads;
     }
+  }
+
+  private drawWeatherOverlay(
+    g: CanvasRenderingContext2D,
+    cells: NonNullable<HudState["weather"]>,
+    now: number,
+    u: number,
+  ) {
+    const N = 160;
+    const HALF = 1200;
+    if (!this.wxCanvas) {
+      this.wxCanvas = document.createElement("canvas");
+      this.wxCanvas.width = N;
+      this.wxCanvas.height = N;
+    }
+    if (now >= this.wxNextAt) {
+      this.wxNextAt = now + 0.22;
+      const wg = this.wxCanvas.getContext("2d")!;
+      const img = wg.createImageData(N, N);
+      const d = img.data;
+      const step = (HALF * 2) / N;
+      for (let py = 0; py < N; py++) {
+        const wz = -HALF + (py + 0.5) * step;
+        for (let px = 0; px < N; px++) {
+          const wx = -HALF + (px + 0.5) * step;
+          let stormF = 0, rainF = 0, fogF = 0;
+          for (let i = 0; i < cells.length; i++) {
+            const c = cells[i];
+            const dx = wx - c.x, dz = wz - c.z;
+            const d2 = dx * dx + dz * dz;
+            const rLim = c.radius * 1.25;
+            if (d2 > rLim * rLim) continue;
+            const ang = Math.atan2(dz, dx);
+            const warp = 1 + 0.14 * Math.sin(ang * 3 + c.x * 0.008) + 0.08 * Math.cos(ang * 5 - c.z * 0.008);
+            const dist = Math.sqrt(d2) / (c.radius * warp);
+            if (dist >= 1.05) continue;
+            const k = Math.max(0, 1 - dist);
+            const val = k * k * (3 - 2 * k);
+            if (c.storm > 0.15) stormF += val * (0.65 + 0.55 * c.storm);
+            else if (c.rain > 0.15) rainF += val * (0.65 + 0.55 * c.rain);
+            else fogF += val * (0.65 + 0.55 * c.fog);
+          }
+          const o = (py * N + px) * 4;
+          if (stormF > 0.22) {
+            const edge = stormF < 0.31;
+            d[o] = edge ? 210 : 152;
+            d[o + 1] = edge ? 156 : 78;
+            d[o + 2] = edge ? 255 : 238;
+            d[o + 3] = edge ? 215 : Math.min(135, Math.round(75 + stormF * 55));
+          } else if (rainF > 0.20) {
+            const edge = rainF < 0.28;
+            d[o] = edge ? 120 : 42;
+            d[o + 1] = edge ? 235 : 196;
+            d[o + 2] = edge ? 255 : 228;
+            d[o + 3] = edge ? 205 : Math.min(120, Math.round(62 + rainF * 52));
+          } else if (fogF > 0.22) {
+            const edge = fogF < 0.30;
+            d[o] = edge ? 238 : 214;
+            d[o + 1] = edge ? 242 : 220;
+            d[o + 2] = edge ? 246 : 226;
+            d[o + 3] = edge ? 175 : Math.min(105, Math.round(55 + fogF * 45));
+          }
+        }
+      }
+      wg.putImageData(img, 0, 0);
+    }
+    const [x0, y0] = this.toScreen(-HALF, -HALF);
+    const [x1, y1] = this.toScreen(HALF, HALF);
+    g.save();
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.wxCanvas, x0, y0, x1 - x0, y1 - y0);
+    for (const c of cells) {
+      const [cx, cy] = this.toScreen(c.x, c.z);
+      const isStorm = c.kind === 3 || c.storm > 0.25;
+      const isRain = !isStorm && (c.kind === 2 || c.rain > 0.15);
+      const col = isStorm ? "#f0d0ff" : isRain ? "#98f0ff" : "#f2f5f8";
+      if (isStorm) {
+        g.fillStyle = "#ffe066";
+        g.beginPath();
+        g.moveTo(cx + 3 * u, cy - 15 * u);
+        g.lineTo(cx - 7 * u, cy + 1 * u);
+        g.lineTo(cx + 1 * u, cy + 1 * u);
+        g.lineTo(cx - 3 * u, cy + 15 * u);
+        g.lineTo(cx + 8 * u, cy - 2 * u);
+        g.lineTo(cx, cy - 2 * u);
+        g.closePath();
+        g.fill();
+      }
+      const spd = Math.hypot(c.vx, c.vz);
+      if (spd > 0.2) {
+        const len = 26 * u;
+        const ax = (c.vx / spd) * len, ay = (c.vz / spd) * len;
+        const ox = cx + (isStorm ? 22 * u : 0), oy = cy;
+        const ang = Math.atan2(ay, ax);
+        g.strokeStyle = col;
+        g.lineWidth = 2.6 * u;
+        g.lineCap = "round";
+        g.beginPath();
+        g.moveTo(ox, oy);
+        g.lineTo(ox + ax, oy + ay);
+        g.lineTo(ox + ax - Math.cos(ang - 0.55) * 9 * u, oy + ay - Math.sin(ang - 0.55) * 9 * u);
+        g.moveTo(ox + ax, oy + ay);
+        g.lineTo(ox + ax - Math.cos(ang + 0.55) * 9 * u, oy + ay - Math.sin(ang + 0.55) * 9 * u);
+        g.stroke();
+      }
+    }
+    g.restore();
   }
 }

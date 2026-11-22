@@ -799,6 +799,9 @@ uniform float uAerial, uAerialLC;
 // rain: x = streaks, y = rainbow, z = puddles, w = time (s)
 uniform vec4 uRain;
 uniform vec3 uRainSky, uRainSkyLow;
+uniform highp sampler3D uAtmIntVol;
+uniform vec4 uAtmIntO;
+uniform vec3 uAtmIntInv;
 #ifdef USE_SHAFTS
 uniform sampler2D tShaft;
 uniform vec2 uShaftSize;
@@ -931,10 +934,25 @@ float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00
 float rh(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float rnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(rh(i), rh(i + vec2(1, 0)), f.x), mix(rh(i + vec2(0, 1)), rh(i + vec2(1, 1)), f.x), f.y); }
+// roof occupancy above a world-space point (checks 1.6 m to 12.5 m up so tall barns/hangars/caves block puddles & indoor streaks)
+float sampleIntOcc(vec3 p, float lod) {
+  vec3 rt = (p - uAtmIntO.xyz) * uAtmIntInv;
+  if (any(lessThan(rt, vec3(0.0))) || any(greaterThan(rt, vec3(1.0)))) return 0.0;
+  return textureLod(uAtmIntVol, rt, lod).r;
+}
+float roofOcc(vec3 wp) {
+  if (uAtmIntO.w < 0.5) return 0.0;
+  float occ = sampleIntOcc(wp + vec3(0.0, 1.6, 0.0), 1.0);
+  occ = max(occ, sampleIntOcc(wp + vec3(0.0, 3.2, 0.0), 1.0));
+  occ = max(occ, sampleIntOcc(wp + vec3(0.0, 5.5, 0.0), 1.5));
+  occ = max(occ, sampleIntOcc(wp + vec3(0.0, 8.5, 0.0), 1.5));
+  occ = max(occ, sampleIntOcc(wp + vec3(0.0, 12.5, 0.0), 1.5));
+  return smoothstep(0.05, 0.22, occ);
+}
 // puddle mask on flat ground (world xz): broad blotches with a crisp-ish rim
 float puddleMask(vec2 xz) {
   float n = rnoise(xz * 0.13) * 0.55 + rnoise(xz * 0.37 + 7.3) * 0.33 + rnoise(xz * 1.3 + 2.1) * 0.12;
-  return smoothstep(0.645, 0.675, n);
+  return smoothstep(0.605, 0.640, n);
 }
 // rain streaks: 3 layers of slanted streaks in screen space (near = long, bright, sparse), each hidden behind geometry
 // closer than its layer depth
@@ -1236,16 +1254,18 @@ void main() {
     float zs = isSky ? 1e5 : linZ(d0);
     vec3 vv = viewAt(vUv, 1.0);
     vec3 rdw = normalize((uCamWorld * vec4(vv, 0.0)).xyz);
+    bool haveWp = !isSky && !isVM && zs < 90.0;
+    vec3 P = haveWp ? viewAt(vUv, zs) : vec3(0.0);
+    vec3 wp = haveWp ? (uCamWorld * vec4(P, 1.0)).xyz : vec3(0.0);
+    float roofK = haveWp ? roofOcc(wp) : 0.0;
     // ---- puddles: flat ground within 90 m, a world-space mask; darker wet base + a screen-space mirror reflection
-    if (uRain.z > 0.0 && !isSky && !isVM && zs < 90.0) {
-      vec3 P = viewAt(vUv, zs);
-      vec3 wp = (uCamWorld * vec4(P, 1.0)).xyz;
+    if (uRain.z > 0.0 && haveWp) {
       ivec2 ax = min(ip + ivec2(1, 0), mx), ay = min(ip + ivec2(0, 1), mx);
       vec3 Px = viewAt((vec2(ax) + 0.5) / uSrcRes, linZ(texelFetch(tDepth, ax, 0).r)), Py = viewAt((vec2(ay) + 0.5) / uSrcRes, linZ(texelFetch(tDepth, ay, 0).r));
       vec3 Nv = normalize(cross(Px - P, Py - P));
       if (dot(Nv, P) > 0.0) Nv = -Nv;
       vec3 Nw = (uCamWorld * vec4(Nv, 0.0)).xyz;
-      float pm = Nw.y > 0.965 ? puddleMask(wp.xz) * uRain.z * smoothstep(90.0, 50.0, zs) : 0.0;
+      float pm = Nw.y > 0.965 ? puddleMask(wp.xz) * uRain.z * smoothstep(90.0, 50.0, zs) * (1.0 - roofK) : 0.0;
       if (pm > 0.001) {
         vec3 up = vec3(uCamWorld[0][1], uCamWorld[1][1], uCamWorld[2][1]);
         vec3 V = normalize(P), R = reflect(V, up);
@@ -1276,9 +1296,10 @@ void main() {
       c += rainbowCol(clamp(t, 0.0, 1.0)) * env * uRain.y * hz * (0.18 + 0.5 * l);
       c *= 1.0 + hz * uRain.y * (0.07 * (1.0 - smoothstep(38.0, 40.5, th)) - 0.05 * smoothstep(42.5, 44.0, th) * (1.0 - smoothstep(49.0, 51.0, th)));
     }
-    // ---- rain streaks (sunlit, a touch brighter toward the sun)
+    // ---- rain streaks (sunlit, a touch brighter toward the sun; hidden over covered indoor surfaces)
     if (uRain.x > 0.0) {
       float st = rainStreaks(gl_FragCoord.xy, zs, uRain.w);
+      if (haveWp && zs < 45.0) st *= 1.0 - roofK;
       float sunward = pow(max(dot(rdw, uAtmSunDir), 0.0), 3.0);
       c += vec3(0.85, 0.9, 1.0) * st * uRain.x * (0.5 + 0.8 * sunward + 0.4 * dot(c, LUMA));
     }
@@ -1522,6 +1543,7 @@ class AtmosFinalPass extends Pass {
       uAtmCamPos: au.uAtmCamPos, uAtmFogColor: au.uAtmFogColor, uAtmGlowColor: au.uAtmGlowColor, uAtmSunDir: au.uAtmSunDir, uAtmFogHeight: au.uAtmFogHeight,
       tShaft: { value: this.shaftRT.texture }, uShaftSize: { value: new THREE.Vector2(1, 1) }, uShaftOn: { value: 0 },
       uRain: { value: new THREE.Vector4() }, uRainSky: { value: new THREE.Color() }, uRainSkyLow: { value: new THREE.Color() }, uAerial: { value: 0 }, uAerialLC: { value: 1 },
+      uAtmIntVol: au.uAtmIntVol, uAtmIntO: au.uAtmIntO, uAtmIntInv: au.uAtmIntInv,
     };
     const mk = (d: Record<string, number | string>) => {
       const m = mat(FINAL_FRAG, { ...common, tColor: { value: null }, tHist: { value: null } }, d);

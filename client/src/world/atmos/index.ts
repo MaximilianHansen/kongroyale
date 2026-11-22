@@ -123,32 +123,36 @@ const mod: WorldModule = {
     const rainCirrusLit = lin("#b2beca"), rainCirrusShade = lin("#4a5666");
     const tmpCirrusLit = new THREE.Color(), tmpCirrusShade = new THREE.Color();
     let lastSkyRain = -1;
+    let lastSkyFlash = -1;
     const weather = new TropicalWeather(
       state,
       u,
       (s, p) => post.setRain(s, p),
-      (r) => {
-        clouds.setRain(r);
-        if (Math.abs(r - lastSkyRain) < 0.01 && r !== 0 && r !== 1) return;
-        if (r === lastSkyRain) return;
+      (r, storm, flash) => {
+        const ov = Math.min(1, Math.sqrt(Math.max(0, r)) * 1.12);
+        clouds.setRain(Math.min(1, ov + storm * 0.2));
+        if (Math.abs(r - lastSkyRain) < 0.01 && Math.abs(flash - lastSkyFlash) < 0.02 && r !== 0 && r !== 1 && flash !== 0) return;
+        if (r === lastSkyRain && flash === lastSkyFlash) return;
         lastSkyRain = r;
+        lastSkyFlash = flash;
         const p = state.preset;
         const baseCov = p.cirrus ?? 0, baseOp = p.cirrusOpacity ?? 0;
         const baseLit = lin(p.cirrusLit ?? "#ffffff");
         const baseShade = p.cirrusShade ? lin(p.cirrusShade) : u.uAtmHorizon.value;
-        const opK = Math.min(1, Math.max(0, (r - 0.03) / 0.55));
+        const opK = Math.min(1, Math.max(0, (ov - 0.03) / 0.45));
         const opS = opK * opK * (3 - 2 * opK);
-        tmpCirrusLit.copy(baseLit).lerp(rainCirrusLit, r);
-        tmpCirrusShade.copy(baseShade).lerp(rainCirrusShade, r);
-        sky.setOvercast(r * 0.9);
-        sky.setCirrus(baseCov + (0.90 - baseCov) * r, baseOp + (0.92 - baseOp) * opS, tmpCirrusLit, tmpCirrusShade);
-        shadows!.sun.intensity = p.sunIntensity * (1 - 0.58 * r);
-        u.uAtmSunColor.value.copy(state.sunColorLin).multiplyScalar(1 - 0.35 * r);
+        tmpCirrusLit.copy(baseLit).lerp(rainCirrusLit, ov);
+        tmpCirrusShade.copy(baseShade).lerp(rainCirrusShade, ov);
+        if (flash > 0.01) tmpCirrusLit.offsetHSL(0, 0, flash * 0.35);
+        sky.setOvercast(Math.min(1, ov * 0.96 + storm * 0.04));
+        sky.setCirrus(baseCov + (0.96 - baseCov) * ov, baseOp + (0.96 - baseOp) * opS, tmpCirrusLit, tmpCirrusShade);
+        shadows!.sun.intensity = p.sunIntensity * (1 - 0.65 * ov + flash * 0.65);
+        u.uAtmSunColor.value.copy(state.sunColorLin).multiplyScalar(1 - 0.42 * ov + flash * 0.55);
       },
     );
     weather.setEffectsQuality(ctx.quality);
     weather.setPuddlesEnabled(ctx.quality !== "low");
-    ctx.scene.add(weather.object);
+    ctx.scene.add(weather.object, weather.fxGroup);
 
     const syncUniforms = () => {
       const p = state.preset;
@@ -282,7 +286,7 @@ const mod: WorldModule = {
       weather.update(ctx.camera, _dt, t, interior);
     });
     if (kr) { kr.atmos = api; kr.atmosTHREE = THREE; kr.atmosInterior = interior; } // tools build test targets with it
-    weatherDispose = () => { weather.object.removeFromParent(); weather.dispose(); };
+    weatherDispose = () => { weather.object.removeFromParent(); weather.fxGroup.removeFromParent(); weather.dispose(); };
   },
 
   async afterBuild(ctx: WorldCtx) {

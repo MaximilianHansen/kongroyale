@@ -18,6 +18,9 @@
 // the wheelbase. Zero allocations per tick (results go into preallocated registers); never imports player.ts.
 import { GRAVITY, HISTORY_TICKS, PLAYER_H, PLAYER_R, SPRINT, WATER_LEVEL, qpos } from "./const";
 import { Biome } from "../world/map";
+import { ACTIVE_WEATHER, makeWeatherSample, sampleWeatherAt, type WeatherState } from "./weather";
+
+const VEH_W_SAMP = makeWeatherSample();
 import { makeHit, type StaticWorld } from "./world";
 import * as dmath from "./dmath";
 
@@ -393,7 +396,7 @@ const ROAD: readonly [number, number, number] = [1, 1, 1];
  * One deterministic tick. `thr` −1..1 (forward / brake-reverse), `str` −1..1 (right +), `hb` handbrake. Nobody at the
  * bars = (0, 0, parked). Raises `evt` bits for the match (tip-over, rolls, crashes, hard landings, sinking).
  */
-export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: number, hb: boolean, dt: number, hop = false): void {
+export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: number, hb: boolean, dt: number, hop = false, weather?: WeatherState): void {
   v.flags &= ~(VF.SKID | VF.BRAKE | VF.REV | VF.AIR);
   if (v.kind === VKind.Heli) { if (v.st === VS.Wreck && v.air) HELI_HOOKS.fall(v, world, dt); return; }   // (a flying one is heli.ts stepHeli's)
   if (v.st === VS.Wreck || v.st === VS.Sunk || v.st === VS.Gone) return;
@@ -431,8 +434,14 @@ export function stepVehicle(v: Vehicle, world: StaticWorld, thr: number, str: nu
   let lat = 0;
   if (grounded) {
     const G = v.surf === 255 ? BIOME_GRIP[world.groundBiome(v.x, v.z)] ?? ROAD : ROAD;
+    let wetGrip = 1;
+    const wxState = weather ?? ACTIVE_WEATHER;
+    if (wxState && wxState.count > 0) {
+      sampleWeatherAt(wxState, v.x, v.z, VEH_W_SAMP);
+      wetGrip = 1 - VEH_W_SAMP.wetness * (v.surf === 255 ? 0.22 : 0.14);
+    }
     // ---- the tyres: kill the sideways speed, up to their grip — what they cannot hold is a slide
-    const lim = (hb ? TUK.MU_HB : TUK.MU) * G[0] * dt;
+    const lim = (hb ? TUK.MU_HB : TUK.MU) * G[0] * wetGrip * dt;
     const dvl = vl > lim ? -lim : vl < -lim ? lim : -vl;
     if (Math.abs(vl) > lim && Math.abs(vl) > 1.3) v.flags |= VF.SKID;
     vl += dvl; lat = dvl / dt;
