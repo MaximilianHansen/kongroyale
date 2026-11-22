@@ -1274,16 +1274,33 @@ void main() {
         vec3 up = vec3(uCamWorld[0][1], uCamWorld[1][1], uCamWorld[2][1]);
         vec3 V = normalize(P), R = reflect(V, up);
         vec3 refl = mix(uRainSkyLow, uRainSky, smoothstep(0.0, 0.5, (uCamWorld * vec4(R, 0.0)).y));
-        float t = 0.30, hitK = 0.0;
-        for (int i = 0; i < 16; i++) {
+        float t = 0.25, prevT = 0.0, hitLo = 0.0, hitHi = 0.0;
+        bool hit = false;
+        for (int i = 0; i < 18; i++) {
           vec3 Q = P + R * t;
           if (Q.z > -0.05) break;
           vec2 quv = ((Q.xy / -Q.z) * uProjInfo.xy - uProjInfo.zw) * 0.5 + 0.5;
           if (quv.x < 0.0 || quv.x > 1.0 || quv.y < 0.0 || quv.y > 1.0) break;
           float sz = linZ(texture2D(tDepth, quv).r);
           float qz = -Q.z;
-          if (qz > sz + 0.02 && qz < sz + 0.6 + 0.06 * sz) { refl = texture2D(tColor, quv).rgb; hitK = 1.0; break; }
-          t *= 1.32;
+          if (qz > sz + 0.02 && qz < sz + 1.8 + 0.16 * sz) { hit = true; hitLo = prevT; hitHi = t; break; }
+          prevT = t;
+          t += max(0.28, t * 0.22);
+        }
+        if (hit) {
+          vec2 hitUv = vUv;
+          for (int b = 0; b < 4; b++) {
+            float mid = 0.5 * (hitLo + hitHi);
+            vec3 Q = P + R * mid;
+            vec2 quv = ((Q.xy / -Q.z) * uProjInfo.xy - uProjInfo.zw) * 0.5 + 0.5;
+            float sz = linZ(texture2D(tDepth, clamp(quv, 0.0, 1.0)).r);
+            if (-Q.z > sz + 0.02) { hitHi = mid; hitUv = quv; } else hitLo = mid;
+          }
+          if (hitUv.x >= 0.0 && hitUv.x <= 1.0 && hitUv.y >= 0.0 && hitUv.y <= 1.0) {
+            float edge = smoothstep(0.0, 0.06, hitUv.x) * smoothstep(1.0, 0.94, hitUv.x)
+                       * smoothstep(0.0, 0.06, hitUv.y) * smoothstep(1.0, 0.94, hitUv.y);
+            refl = mix(refl, texture2D(tColor, hitUv).rgb, edge);
+          }
         }
         float cosT = clamp(dot(-V, up), 0.0, 1.0);
         float F = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
