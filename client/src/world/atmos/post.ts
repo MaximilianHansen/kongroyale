@@ -1850,6 +1850,16 @@ export class AtmosPost implements PostPipeline {
     this.composite?.setGrade(gradeParams(p));
   }
 
+  /** modulate rain streaks and puddles smoothly from TropicalWeather without rebaking presets */
+  setRain(streaks: number, puddles: number) {
+    const u = this.composite?.mat.uniforms;
+    if (!u) return;
+    const p = this.state.preset;
+    const r = u.uRain.value as THREE.Vector4;
+    r.x = Math.max(p.rainStreaks ?? 0, streaks);
+    r.z = Math.max(p.puddles ?? 0, puddles);
+  }
+
   render(dt: number) {
     const composer = this.composer;
     if (!composer) { this.ctx.renderer.render(this.ctx.scene, this.ctx.camera); return; }

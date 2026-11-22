@@ -26,6 +26,7 @@ import { AtmosPost, type AAMode } from "./post";
 import { InteriorVolume } from "./interior";
 import { Fireflies } from "./fireflies";
 import { NightBeam } from "./nightbeam";
+import { TropicalWeather, type WeatherApi } from "./weather";
 
 export interface AtmosApi {
   state: AtmosState;
@@ -43,8 +44,10 @@ export interface AtmosApi {
   bakeShadows(): void;
   cloudShadowTexture: THREE.Texture;
   /** the video settings, applied live — AA mode, AO, post level (bloom / light shafts / screen-space GI),
-   *  shadow quality, effects level (fireflies). Returns what is in effect. */
+   *  shadow quality, effects level (fireflies, rain). Returns what is in effect. */
   video(v: AtmosVideo): AtmosVideo;
+  /** tropical rain system (continuous 0..1 intensity) */
+  weather?: WeatherApi;
 }
 
 export type VideoLevel = "low" | "medium" | "high" | "epic";
@@ -54,6 +57,7 @@ const V = (pos: CamSpec["pos"], target: CamSpec["target"], o: Partial<CamSpec> =
 
 let api: AtmosApi | null = null;
 let shadows: SunShadows | null = null;
+let weatherDispose: (() => void) | null = null;
 /** live view cameras (afterBuild) — the cloud field is composed for them */
 const liveCams: Record<string, ViewCam> = {};
 let rebuildField: (() => void) | null = null;
@@ -102,16 +106,49 @@ const mod: WorldModule = {
     ctx.setPost(post);
     // lit materials read AO + the cloud shadow from the post's screen-space texture when there is one
     shadows.ssao = post.ssCapable; // (AO can be switched on / off live — a runtime uniform for the materials)
-    // the interior occupancy grid (only where the AO pass runs the GI / interior term)
-    const interior = post.ao?.gi && !flags.has("nointerior") ? new InteriorVolume(u) : null;
+    // the interior occupancy grid (created eagerly when GI runs; lazily when rain starts on lower tiers)
+    let interior = post.ao?.gi && !flags.has("nointerior") ? new InteriorVolume(u) : null;
+    const ensureInterior = () => {
+      if (!interior && !flags.has("nointerior")) interior = new InteriorVolume(u);
+      return interior;
+    };
     if (interior) {
       // screenshot captures wait for the first grid (≤ 8 s)
       const release = ctx.hold("atmos:interior");
       const t0 = performance.now();
-      const poll = () => { if (interior.stats.n > 0 || performance.now() - t0 > 8000) release(); else setTimeout(poll, 50); };
+      const poll = () => { if (interior!.stats.n > 0 || performance.now() - t0 > 8000) release(); else setTimeout(poll, 50); };
       interior.update(ctx.camera.position);
       poll();
     }
+    const rainCirrusLit = lin("#b2beca"), rainCirrusShade = lin("#4a5666");
+    const tmpCirrusLit = new THREE.Color(), tmpCirrusShade = new THREE.Color();
+    let lastSkyRain = -1;
+    const weather = new TropicalWeather(
+      state,
+      u,
+      (s, p) => post.setRain(s, p),
+      (r) => {
+        clouds.setRain(r);
+        if (Math.abs(r - lastSkyRain) < 0.01 && r !== 0 && r !== 1) return;
+        if (r === lastSkyRain) return;
+        lastSkyRain = r;
+        const p = state.preset;
+        const baseCov = p.cirrus ?? 0, baseOp = p.cirrusOpacity ?? 0;
+        const baseLit = lin(p.cirrusLit ?? "#ffffff");
+        const baseShade = p.cirrusShade ? lin(p.cirrusShade) : u.uAtmHorizon.value;
+        const opK = Math.min(1, Math.max(0, (r - 0.03) / 0.55));
+        const opS = opK * opK * (3 - 2 * opK);
+        tmpCirrusLit.copy(baseLit).lerp(rainCirrusLit, r);
+        tmpCirrusShade.copy(baseShade).lerp(rainCirrusShade, r);
+        sky.setOvercast(r * 0.9);
+        sky.setCirrus(baseCov + (0.90 - baseCov) * r, baseOp + (0.92 - baseOp) * opS, tmpCirrusLit, tmpCirrusShade);
+        shadows!.sun.intensity = p.sunIntensity * (1 - 0.58 * r);
+        u.uAtmSunColor.value.copy(state.sunColorLin).multiplyScalar(1 - 0.35 * r);
+      },
+    );
+    weather.setEffectsQuality(ctx.quality);
+    weather.setPuddlesEnabled(ctx.quality !== "low");
+    ctx.scene.add(weather.object);
 
     const syncUniforms = () => {
       const p = state.preset;
@@ -185,12 +222,15 @@ const mod: WorldModule = {
       setPreset: (id) => state.apply(PRESETS[id]),
       bakeShadows: () => shadows!.requestFarBake(),
       cloudShadowTexture: clouds.shadowTex,
+      weather,
       video: (v) => {
         // post level: epic = bloom + light shafts + one-bounce GI (+ sharpen), high = bloom + shafts, medium = bloom,
         // low = the grade only
         post.configure({ aa: v.aa, ao: v.ao, bloom: v.post !== "low", shafts: v.post === "epic" || v.post === "high", gi: v.post === "epic" });
         shadows!.setQuality(v.shadows);
         flies.enabled = v.effects !== "low";
+        weather.setEffectsQuality(v.effects);
+        weather.setPuddlesEnabled(v.post !== "low");
         return { ...v, aa: post.opts.aa, ao: !!post.ao };
       },
     };
@@ -230,15 +270,19 @@ const mod: WorldModule = {
       skirt.update(ctx.camera); lap("skirt");
       clouds.update(ctx.camera, t, ctx.renderer.domElement.height); lap("clouds");
       shadows!.update(); lap("shadows");
-      interior?.update(ctx.camera.position);
+      const activeRain = weather.isActive();
+      if (activeRain) ensureInterior();
+      if (interior && (post.ao?.gi || activeRain)) interior.update(ctx.camera.position);
       { const k = Math.min(1, Math.max(0, _dt) * 4);
         if (interior && (vmEnv.n++ % 3) === 0) vmEnv.vis += (interior.visAt(ctx.camera.position) - vmEnv.vis) * Math.min(1, k * 3);
         vmEnv.cloud += (cloudAt(ctx.camera.position) - vmEnv.cloud) * k;
         const e = u.uAtmVMEnv.value; e.y = 1; e.z = vmEnv.cloud; e.w = interior ? vmEnv.vis : 1; }
       flies.update(ctx.camera, t, ctx.renderer.domElement.height);
       beam.update(t);
+      weather.update(ctx.camera, _dt, t, interior);
     });
     if (kr) { kr.atmos = api; kr.atmosTHREE = THREE; kr.atmosInterior = interior; } // tools build test targets with it
+    weatherDispose = () => { weather.object.removeFromParent(); weather.dispose(); };
   },
 
   async afterBuild(ctx: WorldCtx) {
@@ -286,6 +330,12 @@ const mod: WorldModule = {
 
   stage(_ctx: WorldCtx, stage: string) {
     if (stage === "dawn" || stage === "night" || stage === "rain" || stage === "jungle") api?.setPreset(stage);
+  },
+
+  release() {
+    weatherDispose?.();
+    weatherDispose = null;
+    api = null;
   },
 };
 export default mod;

@@ -22,7 +22,7 @@ ${ATMOS_PARS}
 uniform float uDiscCos;
 uniform float uDiscOn;
 uniform sampler2D uNoise;
-uniform float uCirrus, uCirrusOpacity;
+uniform float uCirrus, uCirrusOpacity, uOvercast;
 uniform vec3 uCirrusLit, uCirrusShade;
 uniform vec2 uCirrusDrift;
 // night: x = star strength, y = moon on, z = moon angular radius (rad), w = moon radiance
@@ -84,7 +84,7 @@ vec3 cirrus(vec3 d, vec3 col) {
   vec2 uv = d.xz / (d.y + 0.12) * 0.22 + uCirrusDrift;
   // wind-stretched low-frequency fbm with a WIDE threshold: soft brush-stroke streaks (thin thresholds on busy
   // noise read as hair / marble contours — keep it broad)
-  vec2 q = uv * vec2(0.3, 1.25);
+  vec2 q = uv * mix(vec2(0.3, 1.25), vec2(0.24, 0.36), uOvercast);
   float n = 0.0, a = 0.5, wsum = 0.0;
   for (int i = 0; i < 3; i++) { n += a * texture2D(uNoise, q).r; wsum += a; q = q * vec2(2.0, 1.7) + vec2(0.173, 0.311); a *= 0.45; }
   n /= wsum;
@@ -93,7 +93,7 @@ vec3 cirrus(vec3 d, vec3 col) {
   // lit by the sun: bright forward scatter toward the sun, thicker parts shade toward the base colour
   float mu = max(dot(d, uAtmSunDir), 0.0);
   vec3 lit = uCirrusLit * uAtmSunColor * (0.75 + 1.2 * pow(mu, 6.0));
-  vec3 c = mix(lit, uCirrusShade, smoothstep(0.35, 0.95, cov) * 0.45);
+  vec3 c = mix(lit, uCirrusShade, smoothstep(0.25, 0.92, cov) * mix(0.45, 0.78, uOvercast));
   return mix(col, c, cov * uCirrusOpacity);
 }
 
@@ -113,11 +113,15 @@ void main() {
 #else
   vec3 col = atmosSky(d);
 #endif
+  if (uOvercast > 0.0) {
+    float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    col = mix(col, vec3(lum) * vec3(0.76, 0.85, 0.96), uOvercast * 0.82);
+  }
   col = cirrus(d, col);
   float mu = dot(d, uAtmSunDir);
   // sun disc: bright core (blooms) with a soft limb
   float disc = smoothstep(uDiscCos - 0.0006, uDiscCos + 0.0003, mu);
-  col += uAtmSunColor * disc * 14.0 * uDiscOn;
+  col += uAtmSunColor * disc * 14.0 * uDiscOn * (1.0 - uOvercast * 0.88);
   if (uNight.x > 0.0) col += stars(d) * uNight.x;
   if (uNight.y > 0.5) { vec4 mo = moon(d); col = mix(col, mo.rgb, mo.a); }
   // dither against banding in the smooth gradient
@@ -174,7 +178,7 @@ export class SkyDome {
       fragmentShader: FRAG,
       uniforms: {
         ...u, uDiscCos: { value: Math.cos(THREE.MathUtils.degToRad(0.45)) }, uDiscOn: { value: 1 },
-        uNoise: { value: sharedNoise }, uCirrus: { value: 0 }, uCirrusOpacity: { value: 0 },
+        uNoise: { value: sharedNoise }, uCirrus: { value: 0 }, uCirrusOpacity: { value: 0 }, uOvercast: { value: 0 },
         uCirrusLit: { value: new THREE.Color(1, 1, 1) }, uCirrusShade: { value: new THREE.Color(0.7, 0.75, 0.85) },
         uCirrusDrift: { value: new THREE.Vector2() },
         uNight: { value: new THREE.Vector4(0, 0, 0.06, 1) }, uMoonTint: { value: new THREE.Color(1, 1, 1) },
@@ -239,6 +243,10 @@ export class SkyDome {
     const u = this.material.uniforms;
     u.uCirrus.value = cover; u.uCirrusOpacity.value = opacity;
     (u.uCirrusLit.value as THREE.Color).copy(lit); (u.uCirrusShade.value as THREE.Color).copy(shade);
+  }
+
+  setOvercast(overcast: number) {
+    this.material.uniforms.uOvercast.value = Math.max(0, Math.min(1, overcast));
   }
 
   /** keep centred on the camera; t drifts the cirrus with the wind */

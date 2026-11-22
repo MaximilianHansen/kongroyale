@@ -377,6 +377,8 @@ const FLAGS = {
   wbase: { kind: num(0), owner: "water" },
   /** water clipmap cells per level; 0 = by quality (48 low, else 64) */
   wcells: { kind: num(0), owner: "water" },
+  /** tropical rain preview: "clear", "rain", "heavy", or 0..1 (overrides match rain intensity) */
+  weather: { kind: text, owner: "atmos" },
   /** draw foam in its own pass instead of the main water pass */
   wfoampass: { kind: present, owner: "water" },
   /** paint demo foam shapes */

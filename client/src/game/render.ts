@@ -13,6 +13,8 @@ import { preferences } from "../settings/preferences";
 import { camCast, findOpenSpot } from "./camcollide";
 import { ReloadTrigger } from "../weapons/reload-edge";
 import type { Engine } from "../engine/engine";
+import type { AtmosApi } from "../world/atmos";
+import { parseWeatherFlag } from "../world/atmos/weather";
 import type { KongActor, KongPose, KongState } from "../actors/api";
 import type { ChestView, Fx, LootView, ViewModel, ViewModelMotion, WeaponsKit } from "../weapons/api";
 import type { AirHands } from "../weapons/viewmodel";
@@ -820,9 +822,9 @@ export class GameRender implements EventSink {
   }
   phase(phase: number) {
     if (phase === 0 || phase === 1) this.input.slotWanted = 0;
-    if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; }   // (the warm-up's map pin stays: it marks your drop)
+    if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; if (!this.range) (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(parseWeatherFlag() ?? 0); this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; }   // (the warm-up's map pin stays: it marks your drop)
     if (phase === 0 || phase === 1) { this.victoryAt = -1; if (this.meActor) this.meActor.setVisible(false); }
-    if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
+    if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(0, true); if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
   }
   inventory() { this.syncViewModel(); }
   serverSlot(slot: number) { this.input.slotWanted = slot; this.syncViewModel(); }
@@ -2374,6 +2376,7 @@ export class GameRender implements EventSink {
     this.matchScope.dispose();
   }
   private releaseViews() {
+    (this.engine.shared.get("atmos") as AtmosApi | undefined)?.weather?.setRainIntensity(0, true);
     this.standViews = []; this.standScope = null;
     this.range?.dispose(); this.range = null;
     for (const a of this.actors.values()) { if (this.kits.releaseKong) this.kits.releaseKong(a.actor, a.id % 6); else a.actor.dispose(); a.glider?.object.removeFromParent(); }
