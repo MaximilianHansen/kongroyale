@@ -33,6 +33,9 @@
 import { GRAVITY, PLAYER_R, WATER_LEVEL, qpos } from "./const";
 import { makeHit, type StaticWorld } from "./world";
 import { HELI_HOOKS, RIDE_ST, SPEC, VE, VF, VKind, VS, vehBasis, type Vehicle, type VehSpec } from "./vehicle";
+import { ACTIVE_WEATHER, makeWeatherSample, sampleWeatherAt, type WeatherState } from "./weather";
+
+const HELI_W_SAMP = makeWeatherSample();
 import * as dmath from "./dmath";
 
 export const HELI = {
@@ -187,7 +190,7 @@ HELI_HOOKS.settle = settle;
  * wall, crashV), VE.TIP (it is finished: rolled over on landing, flown into something too fast, or touched down on fire),
  * VE.SUNK.
  */
-export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: number, up: boolean, down: boolean, yawCmd: number, pilot: boolean, dt: number): void {
+export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: number, up: boolean, down: boolean, yawCmd: number, pilot: boolean, dt: number, weather?: WeatherState): void {
   v.flags &= ~(VF.SKID | VF.BRAKE | VF.REV | VF.AIR);
   if (v.st === VS.Wreck) { if (v.air) fall(v, world, dt); return; }
   if (v.st !== VS.Ok) return;
@@ -231,6 +234,13 @@ export function stepHeli(v: Vehicle, world: StaticWorld, thr: number, str: numbe
     const TK = HELI.TILT_ACC / dmath.sin(HELI.PITCH_MAX);
     const af = -dmath.sin(v.gPitch) * TK * L, al = -dmath.sin(v.gRoll) * TK * L;
     v.vx += (fx * af + rx * al) * dt; v.vz += (fz * af + rz * al) * dt;
+    const wxState = weather ?? ACTIVE_WEATHER;
+    if (wxState && wxState.count > 0) {
+      sampleWeatherAt(wxState, v.x, v.z, HELI_W_SAMP);
+      const wx = Math.max(-3.2, Math.min(3.2, HELI_W_SAMP.windX * 0.22));
+      const wz = Math.max(-3.2, Math.min(3.2, HELI_W_SAMP.windZ * 0.22));
+      v.vx += wx * dt * 1.4; v.vz += wz * dt * 1.4;
+    }
     const vh = dmath.hypot(v.vx, v.vz), d = Math.min(0.95, (HELI.DRAG * vh + HELI.LIN) * dt);
     v.vx -= v.vx * d; v.vz -= v.vz * d;
     // (a pilot's hands hold the hover; nobody at the stick, nothing does)

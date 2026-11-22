@@ -101,6 +101,10 @@ export interface GameAudio {
   /** the match is over (back to the title / the lobby room): every game sound — loops, beds, the storm, the plane, the
    *  surf, one-shots in flight — fades out now; UI sounds keep playing. The next update() starts the world again. */
   endSession?(): void;
+  /** update continuous tropical rain ambience (0..1), indoor muffle (0..1), and metal-roof patter (0..1) */
+  setWeather?(rain: number, indoors?: number, metalRoof?: number): void;
+  /** trigger speed-of-sound delayed thunder at a lightning strike position */
+  triggerThunder?(x: number, y: number, z: number): void;
   /** the tuk-tuk radio (audio/radio.ts) — null offline / in renders */
   readonly radio?: import("./radio").Radio | null;
 }

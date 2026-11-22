@@ -22,6 +22,7 @@ import {
 import { Rng } from "./rng";
 import { fillTeams } from "./teams";
 import { inStorm, makeStormState, planStorm, stormAt, STORM_TICK_S, type StormPlan, type StormState } from "./storm";
+import { WEATHER_STRIKE_DAMAGE, WEATHER_STRIKE_RADIUS_M, makeWeatherState, planWeather, setActiveWeather, weatherAt, type WeatherPlan, type WeatherState } from "./weather";
 import { makeHit, type StaticWorld } from "./world";
 import { ANN, Events, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, SURF_PLAYER, VK, histSlot, yawDec, yawEnc } from "../net/proto";
 import {
@@ -102,6 +103,8 @@ export class Match {
   private readonly botAimRange: number;
   phase: Phase = Phase.Warmup; phaseT = 0; tick = 0; time = 0;
   readonly plan: StormPlan; readonly storm: StormState = makeStormState();
+  readonly weatherPlan: WeatherPlan; readonly weather: WeatherState = makeWeatherState();
+  private weatherTick = -1; private lastStrikeKey = -1;
   chests: Chest[]; items: Item[]; nextItemId: number;
   private deathLoot: Array<{ kind: IK; sub: number; rarity: number; count: number; loaded?: number; x: number; y: number; z: number; owner: number }> = [];
   /** Publish after simulation, so a new drop cannot be picked up before its SpawnItem event. */
@@ -206,6 +209,7 @@ export class Match {
       this.brains[id] = this.players[id].bot ? new BotBrain(id, this.rng.next() * 1e9 | 0, this.botDifficulty) : null;
     }
     this.plan = planStorm(o.seed, this.terrain, this.world);
+    this.weatherPlan = planWeather(o.seed);
     if (this.range) { this.chests = []; this.items = []; this.nextItemId = 0; }
     else { const loot = placeLoot(o.seed, this.world); this.chests = loot.chests; this.items = loot.items; this.nextItemId = this.items.length; }
     // the stands stand all match long: solid counters in the cover set (permanent, never hurt)
@@ -502,10 +506,15 @@ export class Match {
   }
   /** lag-compensation history for this tick, written AFTER every state change of the tick (moves, shots, deaths,
    * warm-up respawns, redeploys) — it must equal what this tick's snapshot carries, or a rewind to it disagrees */
-  private recordAll() { for (const p of this.players) recordHistory(p, this.tick); for (const v of this.vehs.list) if (v.live) recordVehicle(v, this.tick); }
+  private recordAll() { this.stepWeatherHazards(); for (const p of this.players) recordHistory(p, this.tick); for (const v of this.vehs.list) if (v.live) recordVehicle(v, this.tick); }
 
   /** apply ONE input to a player: movement + hands (stepPlayer), then everything that input triggers */
   private simulate(p: Player, inp: Input) {
+    if (this.weatherTick !== this.tick) {
+      this.weatherTick = this.tick;
+      if (!this.range) weatherAt(this.weatherPlan, this.time, this.storm.phase, this.phase, this.weather);
+      setActiveWeather(this.range ? undefined : this.weather);
+    }
     if (p.st === PS.Plane) {
       // exit at the plane position of the tick the client was showing (inp.lerpA while riding), clamped to a short
       // window around ours — the client predicts the very same exit (shared/sim/plane.ts), so there is no snap
@@ -524,7 +533,7 @@ export class Match {
     if (hadUse && p.st === PS.Ground && alive(p)) { p.yaw = inp.yaw; p.pitch = inp.pitch; p.useTaken = this.useClaimed(p); }
     // the radio key (any seat): the next station — match state, not the predicted step (a replay must not re-tune it)
     if (wasSt === PS.Ride && (inp.buttons & ~p.prevButtons & B.RADIO)) { const rv = this.vehs.list[p.veh]; if (rv && rv.st === VS.Ok && rv.kind === VKind.Tuk) { rv.radio = (rv.radio + 1) % TUK.RADIO_N; rv.touch = this.tick; } }
-    stepPlayer(p, inp, this.world, DT);
+    stepPlayer(p, inp, this.world, DT, this.range ? undefined : this.weather);
     p.lastSeq = inp.seq;
     // out of a helicopter's door in the air: its rotor and its hull spare this kong for a moment (they still move
     // as one — the kong drops away from the door: vehicle.ts exitVehicle)
@@ -965,6 +974,32 @@ export class Match {
       if (drv) drv.damage += dealt;
       this.ev.hit(by, q.id, 0, dealt, q.x, q.y + 1, q.z, q.hp <= 0, hadShield && q.shield <= 0);
       if (q.hp <= 0) this.kill(q, by, cause); else this.brains[q.id]?.onHurt(by);
+    }
+  }
+  private stepWeatherHazards() {
+    if (this.range) return;
+    if (this.weatherTick !== this.tick) {
+      this.weatherTick = this.tick;
+      weatherAt(this.weatherPlan, this.time, this.storm.phase, this.phase, this.weather);
+      setActiveWeather(this.weather);
+    }
+    if (this.weather.strike.discharging && this.weather.strike.strikeKey !== this.lastStrikeKey) {
+      this.lastStrikeKey = this.weather.strike.strikeKey;
+      const sx = this.weather.strike.x, sz = this.weather.strike.z;
+      const r2 = WEATHER_STRIKE_RADIUS_M * WEATHER_STRIKE_RADIUS_M;
+      for (const q of this.players) {
+        if (!alive(q) || q.st === PS.Plane) continue;
+        const dx = q.x - sx, dz = q.z - sz;
+        if (dx * dx + dz * dz > r2) continue;
+        this.world.raycast(q.x, q.y + 1.5, q.z, 0, 1, 0, 28, HIT, true);
+        if (HIT.hit) continue;
+        const hadShield = q.shield > 0;
+        const absorbed = Math.min(q.shield, WEATHER_STRIKE_DAMAGE);
+        q.shield -= absorbed;
+        q.hp -= WEATHER_STRIKE_DAMAGE - absorbed;
+        this.ev.hit(-1, q.id, 0, WEATHER_STRIKE_DAMAGE, q.x, q.y + 1, q.z, q.hp <= 0, hadShield && q.shield <= 0);
+        if (q.hp <= 0) this.kill(q, -1, 255);
+      }
     }
   }
   private stepVehicles() {

@@ -633,6 +633,21 @@ export class Clouds {
     if (w.__kr) w.__kr.atmosCloudShadowMs = Math.round(performance.now() - t0);
   }
 
+  private rainK = -1;
+  private baseLit = new THREE.Color();
+  private baseShade = new THREE.Color();
+  private baseTop = new THREE.Color();
+  private baseBase = new THREE.Color();
+  private baseWisp = 0;
+  private baseRim = 0.35;
+  private baseFuzzPx = 3;
+  private baseWrap = 0.6;
+  private baseBigNormal = 0.6;
+  private baseCap = new THREE.Vector4();
+  private rainShade = new THREE.Color();
+  private rainTop = new THREE.Color();
+  private rainBase = new THREE.Color();
+
   applyPreset() {
     const p = this.state.preset;
     const u = this.shared;
@@ -645,25 +660,54 @@ export class Clouds {
     set(u.uCloudBase.value as THREE.Color, p.cloudBase ?? p.cloudShade);
     const tint = new THREE.Color(p.cloudLit), sc = this.state.sunColorLin;
     (u.uCloudLit.value as THREE.Color).setRGB(tint.r / Math.max(sc.r, 0.05), tint.g / Math.max(sc.g, 0.05), tint.b / Math.max(sc.b, 0.05), THREE.LinearSRGBColorSpace).multiplyScalar(p.cloudSun ?? 1);
+    this.baseShade.copy(u.uCloudShade.value as THREE.Color);
+    this.baseTop.copy(u.uCloudTop.value as THREE.Color);
+    this.baseBase.copy(u.uCloudBase.value as THREE.Color);
+    this.baseLit.copy(u.uCloudLit.value as THREE.Color);
+    set(this.rainShade, "#5a6778");
+    set(this.rainTop, "#adb7c4");
+    set(this.rainBase, "#384454");
     u.uOpacity.value = p.cloudOpacity;
-    u.uRim.value = p.cloudRim ?? 0.35;
+    u.uRim.value = this.baseRim = p.cloudRim ?? 0.35;
     u.uKeyToCam.value = p.cloudKeyToCam ?? 0.3;
     u.uKeyUp.value = p.cloudKeyUp ?? 0;
-    u.uFuzzPx.value = p.cloudFuzz ?? 3;
-    u.uWrap.value = p.cloudWrap ?? 0.6;
-    u.uBigNormal.value = p.cloudBigNormal ?? 0.6;
+    u.uFuzzPx.value = this.baseFuzzPx = p.cloudFuzz ?? 3;
+    u.uWrap.value = this.baseWrap = p.cloudWrap ?? 0.6;
+    u.uBigNormal.value = this.baseBigNormal = p.cloudBigNormal ?? 0.6;
     u.uKeyNearSun.value = p.cloudKeyNearSun ?? 0;
-    u.uWisp.value = p.cloudWisp ?? 0;
+    u.uWisp.value = this.baseWisp = p.cloudWisp ?? 0;
+    this.rainK = 0;
     {
       // the highlight caps: luminance of the display whites through the inverse grade
       const Y = (hex: string) => { const v = gradeInv(hex, gp); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
       (u.uCloudCap.value as THREE.Vector4).set(p.cloudCapFar ? Y(p.cloudCapFar) : 0, p.cloudCapNear ? Y(p.cloudCapNear) : 0, p.cloudNearSunBoost ?? 0, 0);
+      this.baseCap.copy(u.uCloudCap.value as THREE.Vector4);
     }
     u.uCotton.value = this.tier.detail ? p.cloudCotton ?? 0 : 0;
     u.uFluff.value = p.cloudFluff ?? 0.007;
     if (this.tier.detail) { u.uDetailAmp.value = p.cloudDetailAmp ?? 0.02; u.uDetailFreq.value = p.cloudDetailFreq ?? 2.2; }
     this.u.uAtmCloudShadowParams.value.w = p.cloudShadow;
     if (this.insts.length && this.paintedSun.distanceTo(this.state.sunDir) > 1e-4) this.paintShadow(); // the sun moved
+    this.invalidate();
+  }
+
+  /** Darken cumulus cloud shading smoothly during rain (0..1) without rebuilding the cloud field. */
+  setRain(rain: number) {
+    const r = Math.max(0, Math.min(1, rain));
+    if (this.rainK >= 0 && Math.abs(r - this.rainK) < 0.03 && r !== 0 && r !== 1) return;
+    if (r === this.rainK) return;
+    this.rainK = r;
+    const u = this.shared;
+    (u.uCloudShade.value as THREE.Color).copy(this.baseShade).lerp(this.rainShade, r);
+    (u.uCloudTop.value as THREE.Color).copy(this.baseTop).lerp(this.rainTop, r);
+    (u.uCloudBase.value as THREE.Color).copy(this.baseBase).lerp(this.rainBase, r);
+    (u.uCloudLit.value as THREE.Color).copy(this.baseLit).multiplyScalar(1 - 0.58 * r);
+    u.uWisp.value = this.baseWisp + (0.95 - this.baseWisp) * r;
+    u.uRim.value = this.baseRim + (0.25 - this.baseRim) * r;
+    u.uFuzzPx.value = this.baseFuzzPx + (12.0 - this.baseFuzzPx) * r;
+    u.uWrap.value = this.baseWrap + (0.68 - this.baseWrap) * r;
+    u.uBigNormal.value = this.baseBigNormal + (0.85 - this.baseBigNormal) * r;
+    (u.uCloudCap.value as THREE.Vector4).copy(this.baseCap).multiplyScalar(1 - 0.22 * r);
     this.invalidate();
   }
 
