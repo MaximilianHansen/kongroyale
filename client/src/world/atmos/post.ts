@@ -1257,7 +1257,7 @@ void main() {
     bool haveWp = !isSky && !isVM && zs < 90.0;
     vec3 P = haveWp ? viewAt(vUv, zs) : vec3(0.0);
     vec3 wp = haveWp ? (uCamWorld * vec4(P, 1.0)).xyz : vec3(0.0);
-    float roofK = haveWp ? roofOcc(wp) : 0.0;
+    float roofK = -1.0;
     // ---- puddles: flat ground within 90 m, a world-space mask; darker wet base + a screen-space mirror reflection
     if (uRain.z > 0.0 && haveWp) {
       ivec2 ax = min(ip + ivec2(1, 0), mx), ay = min(ip + ivec2(0, 1), mx);
@@ -1265,13 +1265,17 @@ void main() {
       vec3 Nv = normalize(cross(Px - P, Py - P));
       if (dot(Nv, P) > 0.0) Nv = -Nv;
       vec3 Nw = (uCamWorld * vec4(Nv, 0.0)).xyz;
-      float pm = Nw.y > 0.965 ? puddleMask(wp.xz) * uRain.z * smoothstep(90.0, 50.0, zs) * (1.0 - roofK) : 0.0;
+      float pm = Nw.y > 0.965 ? puddleMask(wp.xz) * uRain.z * smoothstep(90.0, 50.0, zs) : 0.0;
+      if (pm > 0.001) {
+        roofK = roofOcc(wp);
+        pm *= 1.0 - roofK;
+      }
       if (pm > 0.001) {
         vec3 up = vec3(uCamWorld[0][1], uCamWorld[1][1], uCamWorld[2][1]);
         vec3 V = normalize(P), R = reflect(V, up);
         vec3 refl = mix(uRainSkyLow, uRainSky, smoothstep(0.0, 0.5, (uCamWorld * vec4(R, 0.0)).y));
-        float t = 0.25, hitK = 0.0;
-        for (int i = 0; i < 28; i++) {
+        float t = 0.30, hitK = 0.0;
+        for (int i = 0; i < 16; i++) {
           vec3 Q = P + R * t;
           if (Q.z > -0.05) break;
           vec2 quv = ((Q.xy / -Q.z) * uProjInfo.xy - uProjInfo.zw) * 0.5 + 0.5;
@@ -1279,7 +1283,7 @@ void main() {
           float sz = linZ(texture2D(tDepth, quv).r);
           float qz = -Q.z;
           if (qz > sz + 0.02 && qz < sz + 0.6 + 0.06 * sz) { refl = texture2D(tColor, quv).rgb; hitK = 1.0; break; }
-          t *= 1.17;
+          t *= 1.32;
         }
         float cosT = clamp(dot(-V, up), 0.0, 1.0);
         float F = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
@@ -1299,9 +1303,14 @@ void main() {
     // ---- rain streaks (sunlit, a touch brighter toward the sun; hidden over covered indoor surfaces)
     if (uRain.x > 0.0) {
       float st = rainStreaks(gl_FragCoord.xy, zs, uRain.w);
-      if (haveWp && zs < 45.0) st *= 1.0 - roofK;
-      float sunward = pow(max(dot(rdw, uAtmSunDir), 0.0), 3.0);
-      c += vec3(0.85, 0.9, 1.0) * st * uRain.x * (0.5 + 0.8 * sunward + 0.4 * dot(c, LUMA));
+      if (st > 0.001 && haveWp && zs < 45.0) {
+        if (roofK < 0.0) roofK = roofOcc(wp);
+        st *= 1.0 - roofK;
+      }
+      if (st > 0.001) {
+        float sunward = pow(max(dot(rdw, uAtmSunDir), 0.0), 3.0);
+        c += vec3(0.85, 0.9, 1.0) * st * uRain.x * (0.5 + 0.8 * sunward + 0.4 * dot(c, LUMA));
+      }
     }
   }
   if (uPostFog > 0.0) {
