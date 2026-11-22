@@ -15,9 +15,10 @@ import { ReloadTrigger } from "../weapons/reload-edge";
 import type { Engine } from "../engine/engine";
 import type { AtmosApi } from "../world/atmos";
 import { parseWeatherFlag, puddleAt } from "../world/atmos/weather";
-import { MAX_WEATHER_CELLS, WeatherKind, makeWeatherSample, sampleWeatherAt, weatherAt } from "../../../shared/sim/weather";
+import { MAX_WEATHER_CELLS, WeatherKind, makeWeatherSample, makeWeatherState, sampleWeatherAt, weatherAt } from "../../../shared/sim/weather";
 
 const W_SAMP = makeWeatherSample();
+const HUD_PREVIEW_WEATHER = makeWeatherState();
 const HUD_WX_POOL = Array.from({ length: MAX_WEATHER_CELLS }, () => ({ kind: 0, x: 0, z: 0, vx: 0, vz: 0, radius: 0, rain: 0, fog: 0, storm: 0 }));
 const HUD_WX_LIST: typeof HUD_WX_POOL = [];
 import type { KongActor, KongPose, KongState } from "../actors/api";
@@ -1208,10 +1209,10 @@ export class GameRender implements EventSink {
   private nextDistantThunderT = 0;
   private announceWeatherForecast() {
     if (!this.cm.weatherPlan) return;
-    weatherAt(this.cm.weatherPlan, this.cm.time, this.cm.storm.phase, 1, this.cm.weather);
+    weatherAt(this.cm.weatherPlan, this.cm.time, this.cm.storm.phase, 1, HUD_PREVIEW_WEATHER);
     let topKind = WeatherKind.Clear;
-    for (let i = 0; i < this.cm.weather.count; i++) {
-      const c = this.cm.weather.cells[i];
+    for (let i = 0; i < HUD_PREVIEW_WEATHER.count; i++) {
+      const c = HUD_PREVIEW_WEATHER.cells[i];
       if (c.kind === WeatherKind.Storm || c.storm > 0.25) { topKind = WeatherKind.Storm; break; }
       if (c.kind === WeatherKind.Rain || c.rain > 0.15) topKind = WeatherKind.Rain;
       else if (topKind === WeatherKind.Clear && (c.kind === WeatherKind.Fog || c.fog > 0.2)) topKind = WeatherKind.Fog;
@@ -1229,10 +1230,10 @@ export class GameRender implements EventSink {
       wx?.setWeatherCells?.(this.cm.weather.cells, 0);
       this.kits.audio.setWeather?.(0, 0);
       if (this.cm.phase === 0 && !this.range && this.cm.weatherPlan) {
-        weatherAt(this.cm.weatherPlan, 0, this.cm.storm.phase, 1, this.cm.weather);
+        weatherAt(this.cm.weatherPlan, 0, this.cm.storm.phase, 1, HUD_PREVIEW_WEATHER);
         HUD_WX_LIST.length = 0;
-        for (let i = 0; i < this.cm.weather.count; i++) {
-          const src = this.cm.weather.cells[i], dst = HUD_WX_POOL[i];
+        for (let i = 0; i < HUD_PREVIEW_WEATHER.count; i++) {
+          const src = HUD_PREVIEW_WEATHER.cells[i], dst = HUD_WX_POOL[i];
           dst.kind = src.kind; dst.x = src.x; dst.z = src.z; dst.vx = src.vx; dst.vz = src.vz;
           dst.radius = src.radius; dst.rain = src.rain; dst.fog = src.fog; dst.storm = src.storm;
           HUD_WX_LIST.push(dst);
