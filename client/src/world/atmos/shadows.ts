@@ -66,6 +66,8 @@ const _camL = new THREE.Vector3();
 const _near = [0, 1, 2, 3].map(() => new THREE.Vector3());
 const _far = [0, 1, 2, 3].map(() => new THREE.Vector3());
 const _slice = Array.from({ length: 8 }, () => new THREE.Vector3());
+const _cascadeCenters = [new THREE.Vector3(), new THREE.Vector3()];
+const _cascadeRadii = [0, 0];
 
 /**
  * SunLightShadow with our cascade fit: fixed split + reach, a caster ceiling `reach` metres toward the sun, one shared
@@ -175,8 +177,9 @@ class AtmosSunShadow extends SunLightShadow {
     maxZ += this.reach; // casters up to `reach` metres toward the sun still land in the cascades (ridges, towers)
 
     const shadowNear = 1;
-    const centers: THREE.Vector3[] = [new THREE.Vector3(), new THREE.Vector3()];
-    const radii = [0, 0];
+    const centers = _cascadeCenters;
+    const radii = _cascadeRadii;
+    radii[0] = 0; radii[1] = 0;
     let minZ = Infinity;
     // alternation: the plan (which cascade) was made by plan() before the shadow renderer read the face count
     const full = !this.partial, only = this.faceBase;

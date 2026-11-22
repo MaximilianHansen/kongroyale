@@ -858,6 +858,7 @@ export class StaticWorld {
     const ex = ox + dx * out.t, ez = oz + dz * out.t;
     const rx0 = Math.min(ox, ex), rx1 = Math.max(ox, ex), rz0 = Math.min(oz, ez), rz1 = Math.max(oz, ez);
     const cx0 = this.cell(rx0 - 1), cx1 = this.cell(rx1 + 1), cz0 = this.cell(rz0 - 1), cz1 = this.cell(rz1 + 1);
+    this.nextGen();
     const span = (cx1 - cx0 + 1) * (cz1 - cz0 + 1);
     if (span <= 64) {
       // a diagonal ray's cell rectangle is mostly cells it never enters: skip a cell (grown by the 1 m margin above)
@@ -902,8 +903,11 @@ export class StaticWorld {
   private lastCellVisited = -1;
   /** test the boxes of grid cell c; rx0..rz1 bound the ray segment in x/z (a box outside it can't be hit) */
   private rayCell(c: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, out: Hit, bullets: boolean, rx0: number, rx1: number, rz0: number, rz1: number) {
+    const rs = this.stamp, g = this.gen;
     for (let k = this.cellStart[c]; k < this.cellStart[c + 1]; k++) {
       const i = this.cellItems[k];
+      if (rs[i] === g) continue;
+      rs[i] = g;
       if (bullets ? this.noShoot[i] : this.noWalk[i] || (this.drive && this.noDrive[i])) continue;
       if (this.bx1[i] < rx0 || this.bx0[i] > rx1 || this.bz1[i] < rz0 || this.bz0[i] > rz1) continue;
       this.rayBox(i, ox, oy, oz, dx, dy, dz, out);

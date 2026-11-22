@@ -464,7 +464,7 @@ class AtmosAOPass extends Pass {
       tDepth: { value: null }, uFull: { value: new THREE.Vector2(this.fullW, this.fullH) }, uRadius: { value: radius }, uIntensity: { value: intensity },
       uFrame: { value: 0 }, uMaxDist: { value: 320 }, uBias: { value: prev?.uniforms.uBias.value ?? 0.004 }, uNear: { value: 0.1 }, uFar: { value: 1000 }, uProjInfo: { value: new THREE.Vector4() },
       tHist: { value: null }, uPrevVP: { value: new THREE.Matrix4() }, uGI: { value: new THREE.Vector2(this.giRadius, 0) }, uGIFrame: { value: 0 },
-    }, { AO_SAMPLES: this.samples, AO_SCALE: s, AO_CAP: "40.0", AO_CAP_NEAR: "11.0", ...(this.noBlur ? { AO_ROT2: 1 } : {}), ...(gi ? { AO_GI: 1, GI_SAMPLES: 8, ...(atmosFlags().has("gidbgcount") ? { GI_DBG: 1 } : {}) } : {}) });
+    }, { AO_SAMPLES: this.samples, AO_SCALE: s, AO_CAP: "40.0", AO_CAP_NEAR: "11.0", ...(this.noBlur ? { AO_ROT2: 1 } : {}), ...(gi ? { AO_GI: 1, GI_SAMPLES: 6, ...(atmosFlags().has("gidbgcount") ? { GI_DBG: 1 } : {}) } : {}) });
     m.glslVersion = THREE.GLSL3;
     return m;
   }
