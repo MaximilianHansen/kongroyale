@@ -980,16 +980,13 @@ export function polyBoxes(p: P2[], y0: number, y1: number, surf: Surface = "ston
   if (q > 0.1) out.push({ c: [c[0], cy, c[1]], h: [q, hy, q], yaw: yaw0, surf });
   // any hole left (a short edge next to a long one): inscribed strips across the polygon, only where a hole is
   // (each box's cos / sin once: `out` only grows, so box i's pair is computed the first time a test reaches it)
-  const cs: number[] = [], sn: number[] = [], bcx: number[] = [], bcz: number[] = [], bh0: number[] = [], bh2: number[] = [];
+  const cs: number[] = [], sn: number[] = [];
   const inAny = (x: number, z: number) => {
-    for (let i = cs.length; i < out.length; i++) {
-      const b = out[i], yw = b.yaw ?? 0;
-      cs.push(dmath.cos(yw)); sn.push(dmath.sin(yw));
-      bcx.push(b.c[0]); bcz.push(b.c[2]); bh0.push(b.h[0] + 1e-3); bh2.push(b.h[2] + 1e-3);
-    }
     for (let i = 0; i < out.length; i++) {
-      const dx = x - bcx[i], dz = z - bcz[i];
-      if (Math.abs(dx * cs[i] + dz * sn[i]) <= bh0[i] && Math.abs(-dx * sn[i] + dz * cs[i]) <= bh2[i]) return true;
+      const b = out[i];
+      if (i === cs.length) { const yw = b.yaw ?? 0; cs.push(dmath.cos(yw)); sn.push(dmath.sin(yw)); }
+      const dx = x - b.c[0], dz = z - b.c[2];
+      if (Math.abs(dx * cs[i] + dz * sn[i]) <= b.h[0] + 1e-3 && Math.abs(-dx * sn[i] + dz * cs[i]) <= b.h[2] + 1e-3) return true;
     }
     return false;
   };
@@ -1051,8 +1048,7 @@ function rockSolid(s: SolidSpec): RockSolid {
   const ring = (y: number): P2[] => {
     const h = Math.max(0, Math.min(1, (y - s.yg) / H));
     const dh = dome ? dome * dmath.pow(h, 2.4) : 0, lh = lean ? dmath.pow(h, 1.5) : 0;
-    const my = Math.max(0, Math.min(y, yw) - s.yg), cy = y > yw ? (y - yw) / s.ch : 0;
-    const sh = shrink2(s.plan, s.plan.map((_, i) => tp[i] * my + dh * Rv[i] * dk[i] + (cy ? ci[i] * cy : 0)));
+    const sh = shrink2(s.plan, s.plan.map((_, i) => tp[i] * Math.max(0, Math.min(y, yw) - s.yg) + dh * Rv[i] * dk[i] + (y > yw ? (ci[i] * (y - yw)) / s.ch : 0)));
     const ang = tw * h, ca = dmath.cos(ang), sa = dmath.sin(ang), ox = cla * lh, oz = sla * lh;
     return convexify(sh.map(([x, z]) => { const dx = x - c0[0], dz = z - c0[1]; return [c0[0] + dx * ca - dz * sa + ox, c0[1] + dx * sa + dz * ca + oz] as P2; }));
   };
@@ -1060,19 +1056,12 @@ function rockSolid(s: SolidSpec): RockSolid {
   // sim band = that lerp at mid-height → |drawn − collider| ≤ maxStep / 2)
   const rings = [{ y: s.y0, pts: ring(s.y0) }, { y: s.yg, pts: ring(s.yg) }];
   let last = rings[1];
-  const maxStep2 = s.maxStep * s.maxStep * 0.999999;
-  const exceeds = (a: P2[], b: P2[]) => {
-    for (let i = 0; i < a.length; i++) {
-      const dx = a[i][0] - b[i][0], dz = a[i][1] - b[i][1];
-      if (dx * dx + dz * dz > maxStep2 && dmath.hypot(dx, dz) > s.maxStep) return true;
-    }
-    return false;
-  };
+  const dist = (a: P2[], b: P2[]) => Math.max(...a.map((q, i) => dmath.hypot(q[0] - b[i][0], q[1] - b[i][1])));
   let cand = s.yg + 0.02 < s.top - 1e-6 ? ring(s.yg + 0.02) : last.pts;
   for (let y = s.yg + 0.02; y < s.top - 1e-6; y += 0.02) {
     const nxt = ring(Math.min(s.top, y + 0.02));
     const crossW = y < yw && y + 0.02 >= yw;
-    if (crossW || exceeds(nxt, last.pts) || y + 0.02 - last.y > s.band) { last = { y, pts: cand }; rings.push(last); }
+    if (crossW || dist(nxt, last.pts) > s.maxStep || y + 0.02 - last.y > s.band) { last = { y, pts: cand }; rings.push(last); }
     cand = nxt;
   }
   rings.push({ y: s.top, pts: ring(s.top) });

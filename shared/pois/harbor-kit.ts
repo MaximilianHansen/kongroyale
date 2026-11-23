@@ -451,19 +451,18 @@ export function floorUnder(boxes: Box[], x: number, yHint: number, z: number, m 
 export const faceYaw = (x: number, z: number, tx: number, tz: number) => dmath.atan2(tx - x, tz - z);
 /** a spatial index for floorUnder over many boxes (cell 8 m) */
 export function boxGrid(boxes: Box[], cell = 8): (x: number, z: number, pad?: number) => Box[] {
-  const g = new Map<number, Box[]>();
-  const key = (i: number, k: number) => (i + 32768) * 65536 + (k + 32768);
+  const g = new Map<string, Box[]>();
   for (const b of boxes) {
     const r = dmath.hypot(b.h[0], b.h[2]);
     for (let i = Math.floor((b.c[0] - r) / cell); i <= Math.floor((b.c[0] + r) / cell); i++)
-      for (let k = Math.floor((b.c[2] - r) / cell); k <= Math.floor((b.c[2] + r) / cell); k++) { const c = key(i, k); let a = g.get(c); if (!a) g.set(c, (a = [])); a.push(b); }
+      for (let k = Math.floor((b.c[2] - r) / cell); k <= Math.floor((b.c[2] + r) / cell); k++) { const key = i + "," + k; let a = g.get(key); if (!a) g.set(key, (a = [])); a.push(b); }
   }
   // (every cell within `pad` of the point: a box just across a cell edge still counts)
   return (x, z, pad = 1.5) => {
     const i0 = Math.floor((x - pad) / cell), i1 = Math.floor((x + pad) / cell), k0 = Math.floor((z - pad) / cell), k1 = Math.floor((z + pad) / cell);
-    if (i0 === i1 && k0 === k1) return g.get(key(i0, k0)) ?? [];
+    if (i0 === i1 && k0 === k1) return g.get(i0 + "," + k0) ?? [];
     const out = new Set<Box>();
-    for (let i = i0; i <= i1; i++) for (let k = k0; k <= k1; k++) for (const b of g.get(key(i, k)) ?? []) out.add(b);
+    for (let i = i0; i <= i1; i++) for (let k = k0; k <= k1; k++) for (const b of g.get(i + "," + k) ?? []) out.add(b);
     return [...out];
   };
 }

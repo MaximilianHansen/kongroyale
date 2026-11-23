@@ -127,39 +127,30 @@ export function bakeCloudVolume(renderer: THREE.WebGLRenderer, proto: CloudProto
 export function makeDetailNoise(size = 64, cells = 12, seed = 9): THREE.Data3DTexture {
   let a = seed >>> 0;
   const rnd = () => { a = (a * 1664525 + 1013904223) >>> 0; return a / 4294967296; };
-  const c2 = cells * cells, c3 = c2 * cells;
-  const pts = new Float32Array(c3 * 3);
+  const c2 = cells * cells, c3 = c2 * cells, pts = new Float32Array(c3 * 3);
   for (let i = 0; i < c3; i++) { pts[i * 3] = 0.15 + 0.7 * rnd(); pts[i * 3 + 1] = 0.15 + 0.7 * rnd(); pts[i * 3 + 2] = 0.15 + 0.7 * rnd(); }
-  const data = new Uint8Array(size * size * size);
-  const invCs = cells / size, R2 = 0.95 * 0.95, invR2 = 1 / R2;
-  const czW = new Int32Array(3), cyW = new Int32Array(3), cxW = new Int32Array(3);
+  const data = new Uint8Array(size * size * size), invCs = cells / size, R2 = 0.95 * 0.95, invR2 = 1 / R2;
+  const w = (v: number) => (v < 0 ? cells - 1 : v === cells ? 0 : v);
   for (let z = 0; z < size; z++) {
     const fz = (z + 0.5) * invCs, iz = fz | 0;
-    czW[0] = (iz === 0 ? cells - 1 : iz - 1) * c2; czW[1] = iz * c2; czW[2] = (iz + 1 === cells ? 0 : iz + 1) * c2;
-    const zOff = z * size;
     for (let y = 0; y < size; y++) {
-      const fy = (y + 0.5) * invCs, iy = fy | 0;
-      cyW[0] = (iy === 0 ? cells - 1 : iy - 1) * cells; cyW[1] = iy * cells; cyW[2] = (iy + 1 === cells ? 0 : iy + 1) * cells;
-      const yzOff = (zOff + y) * size;
+      const fy = (y + 0.5) * invCs, iy = fy | 0, yz = (z * size + y) * size;
       for (let x = 0; x < size; x++) {
         const fx = (x + 0.5) * invCs, ix = fx | 0;
-        cxW[0] = ix === 0 ? cells - 1 : ix - 1; cxW[1] = ix; cxW[2] = ix + 1 === cells ? 0 : ix + 1;
         let minD2 = R2;
-        for (let dz = 0; dz < 3; dz++) {
-          const cz = iz + dz - 1, wz = czW[dz];
-          for (let dy = 0; dy < 3; dy++) {
-            const cy = iy + dy - 1, wyz = wz + cyW[dy];
-            for (let dx = 0; dx < 3; dx++) {
-              const k = (wyz + cxW[dx]) * 3;
-              const ddx = fx - (ix + dx - 1 + pts[k]);
-              const ddy = fy - (cy + pts[k + 1]);
-              const ddz = fz - (cz + pts[k + 2]);
-              const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+        for (let dz = -1; dz <= 1; dz++) {
+          const wz = w(iz + dz) * c2;
+          for (let dy = -1; dy <= 1; dy++) {
+            const wyz = wz + w(iy + dy) * cells;
+            for (let dx = -1; dx <= 1; dx++) {
+              const k = (wyz + w(ix + dx)) * 3;
+              const a0 = fx - (ix + dx + pts[k]), a1 = fy - (iy + dy + pts[k + 1]), a2 = fz - (iz + dz + pts[k + 2]);
+              const d2 = a0 * a0 + a1 * a1 + a2 * a2;
               if (d2 < minD2) minD2 = d2;
             }
           }
         }
-        data[yzOff + x] = minD2 < R2 ? Math.round(Math.sqrt(1 - minD2 * invR2) * 255) : 0;
+        data[yz + x] = minD2 < R2 ? Math.round(Math.sqrt(1 - minD2 * invR2) * 255) : 0;
       }
     }
   }

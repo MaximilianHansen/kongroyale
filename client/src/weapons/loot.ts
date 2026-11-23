@@ -243,10 +243,11 @@ export class LootSystem {
     let n = 0, ng = 0;
     const bm = this.beams.instanceMatrix.array as Float32Array, gm = this.glows.instanceMatrix.array as Float32Array;
     const bc = this.beams.instanceColor!.array as Float32Array, gc = this.glows.instanceColor!.array as Float32Array;
+    const umw = (o: THREE.Object3D, p: boolean) => { if (o.matrixAutoUpdate || o.matrixWorldNeedsUpdate) o.updateWorldMatrix(p, false); };
     for (const mb of this.members) {
       const o = mb.v.object;
       if (!drawn(o, scene)) continue;
-      if (o.matrixAutoUpdate || o.matrixWorldNeedsUpdate) o.updateWorldMatrix(true, false);
+      umw(o, true);
       this._p.setFromMatrixPosition(o.matrixWorld);
       const d = this._p.distanceTo(cp);
       const near = d < LootSystem.NEAR_R;
@@ -256,7 +257,7 @@ export class LootSystem {
       if (!this.cull.sees(this._p, 1.4)) continue;
       const ff = d > LootSystem.FADE_R ? 1 - smooth01((d - LootSystem.FADE_R) / (LootSystem.CULL_R - LootSystem.FADE_R)) : 1;
       if (!near) {
-        if (mb.v.bob.matrixAutoUpdate || mb.v.bob.matrixWorldNeedsUpdate) mb.v.bob.updateWorldMatrix(false, false);
+        umw(mb.v.bob, false);
         this.farBatch(mb.item, d < LootSystem.FAR2_R ? 0 : 1, mb.myth).push(ff < 1 ? this._f.copy(mb.v.bob.matrixWorld).scale(this._s.setScalar(Math.max(0.001, ff))) : mb.v.bob.matrixWorld);
       }
       if (n < 512) {
@@ -297,16 +298,9 @@ export function createLootView(_ctx: WorldCtx, _floorY: number, item: Item, rari
   const bob = new THREE.Group(); bob.name = "loot-bob"; bob.add(holder);
   object.add(bob);
   if (sys) {
-    bob.matrixAutoUpdate = false;
-    bob.updateMatrix();
-    // Skip walking 10-20 child meshes per loot item while itemRoot is hidden (> 4.5 m away).
-    const ownUMW = holder.updateMatrixWorld;
-    let was = 1;
-    holder.updateMatrixWorld = function (f?: boolean) {
-      if (!this.visible) { was = 0; return; }
-      ownUMW.call(this, f || !was);
-      was = 1;
-    };
+    bob.matrixAutoUpdate = false; bob.updateMatrix();
+    const own = holder.updateMatrixWorld; let was = 1;
+    holder.updateMatrixWorld = function (f?: boolean) { if (!this.visible) { was = 0; return; } own.call(this, f || !was); was = 1; };
   }
   holder.traverse((o) => { if ((o as THREE.Mesh).isMesh) { (o as THREE.Mesh).castShadow = true; (o as THREE.Mesh).receiveShadow = true; } });
   if (!sys) {

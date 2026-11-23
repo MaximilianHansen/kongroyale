@@ -141,7 +141,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
   // chests are the dopamine: a bot that is roaming / hunting pops any closed chest within 40 m of it on the way
   if ((b.state === S.Roam || b.state === S.Hunt) && b.enemy < 0 && !closingDuel && ((m.tick + p.id) % 30) === 0 && !inStorm) {
     let bc = -1, bd = 40 * 40;
-    for (const c of m.chests) { if (c.opened || (c.box && !lowAmmo(p))) continue; const d = dmath.pow(c.x - p.x, 2) + dmath.pow(c.z - p.z, 2); if (d < bd && Math.abs(c.y - p.y) < 2.5 && !gaveUpOn(b, c.id)) { bd = d; bc = c.id; } }
+    for (const c of m.chests) { if (c.opened || (c.box && !lowAmmo(p))) continue; const dx = c.x - p.x, dz = c.z - p.z, d = dx * dx + dz * dz; if (d < bd && Math.abs(c.y - p.y) < 2.5 && !gaveUpOn(b, c.id)) { bd = d; bc = c.id; } }
     if (bc >= 0) { b.state = S.Loot; b.lootChest = bc; b.lootItem = -1; b.lootT = 0; b.nearT = 0; }
   }
   inp.buttons &= ~(B.FIRE | B.SCOPE | B.CROUCH | B.SPRINT);

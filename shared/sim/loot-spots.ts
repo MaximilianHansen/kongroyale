@@ -1505,7 +1505,7 @@ function* wild(world: StaticWorld, spots: LootSpot[], rejected: Rejected[], pool
     for (let k = 0; k < 8; k++) {
       const h = hash32(Math.round(gx) + k * 7919, Math.round(gz) - k * 104729);
       const x = gx + ((h & 1023) / 1023 - 0.5) * STEP * 0.7, z = gz + (((h >>> 10) & 1023) / 1023 - 0.5) * STEP * 0.7;
-      if (POIS.some((p) => dmath.pow(p.x - x, 2) + dmath.pow(p.z - z, 2) < dmath.pow(p.r + 25, 2))) continue;
+      if (POIS.some((p) => (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z) < (p.r + 25) * (p.r + 25))) continue;
       const y = world.ground(x, z);
       if (y < 1.5) continue;
       const n = world.terrain.normal(x, z); if (n[1] < 0.9) continue;
@@ -1548,8 +1548,8 @@ function walkTop(world: StaticWorld, x: number, z: number): { y: number; deck: b
 export function pathSpots(world: StaticWorld): PathSpot[] {
   const got = PATH_C.get(world); if (got) return got;
   const out: PathSpot[] = [];
-  const far = (x: number, z: number) => !out.some((q) => dmath.pow(q.x - x, 2) + dmath.pow(q.z - z, 2) < PATH_GAP * PATH_GAP);
-  const inPoi = (x: number, z: number) => POIS.some((p) => dmath.pow(p.x - x, 2) + dmath.pow(p.z - z, 2) < dmath.pow(p.r + 10, 2));
+  const far = (x: number, z: number) => !out.some((q) => (q.x - x) * (q.x - x) + (q.z - z) * (q.z - z) < PATH_GAP * PATH_GAP);
+  const inPoi = (x: number, z: number) => POIS.some((p) => (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z) < (p.r + 10) * (p.r + 10));
   const sheltered = (x: number, y: number, z: number) => { for (let d = 0; d < 8; d++) { const a = d / 8 * Math.PI * 2; world.raycast(x, y + 0.9, z, dmath.cos(a), 0, dmath.sin(a), 5, PH, true); if (PH.hit && PH.box >= 0) return true; } return false; };
   const tryAt = (x: number, z: number, line: string, deckOnly: boolean): boolean => {
     const t = walkTop(world, x, z); if (!t || t.y < PATH_DRY || (deckOnly && !t.deck)) return false;

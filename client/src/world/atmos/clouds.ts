@@ -577,50 +577,32 @@ export class Clouds {
    */
   paintShadow() {
     const t0 = performance.now();
-    const S = SHADOW_RES, scale = S / WRAP, half = WRAP / 2;
-    const s = this.state.sunDir;
+    const S = SHADOW_RES, scale = S / WRAP, half = WRAP / 2, s = this.state.sunDir;
     const out = this.shadowTex.image.data as Uint8Array;
     out.fill(255);
-    // the sun's ground azimuth in tile space (x = +X, y = +Z) and the elongation of a sphere's shadow along it
     const azA = Math.atan2(s.z, s.x), ca = Math.cos(azA), sa = Math.sin(azA);
-    const el = Math.min(2.5, 1 / Math.max(0.3, s.y)), invEl = 1 / el;
-    const sx = s.x / s.y, sz = s.z / s.y;
+    const el = Math.min(2.5, 1 / Math.max(0.3, s.y)), invEl = 1 / el, sx = s.x / s.y, sz = s.z / s.y;
+    const mod = (v: number, m: number) => ((v % m) + m) % m;
     for (const inst of this.insts) {
-      // only the low fair-weather puffs cast (the aerial target art shows a few small clouds casting shadows). The composed
-      // heroes sit 2–9 km out for the ground views; their 1–2 km shadows darkened half the island in the aerial and
-      // would sweep over the POIs during a match
       if (inst.spec.tag !== "aerial") continue;
-      const cr = Math.cos(inst.spec.rot), sr = Math.sin(inst.spec.rot);
-      const ix = inst.spec.x, iy = inst.spec.y, iz = inst.spec.z, w = inst.spec.w;
-      const sp = inst.vol.proto.spheres;
+      const { x: ix, y: iy, z: iz, rot, w } = inst.spec, cr = Math.cos(rot), sr = Math.sin(rot), sp = inst.vol.proto.spheres;
       for (let i = 0; i < inst.vol.proto.count; i++) {
         const r = sp[i * 5 + 3] * w;
-        if (r < w * 0.02) continue; // beads are below the tile's resolution (florets paint — the scalloped outline)
+        if (r < w * 0.02) continue;
         const lx = sp[i * 5] * w, ly = sp[i * 5 + 1] * w, lz = sp[i * 5 + 2] * w;
-        const vx = ix + lx * cr + lz * sr, vy = iy + ly, vz = iz - lx * sr + lz * cr;
-        const gx = vx - sx * vy, gz = vz - sz * vy;
-        // wrap into the tile (periodic)
-        const wx = (((gx + half) % WRAP) + WRAP) % WRAP, wz = (((gz + half) % WRAP) + WRAP) % WRAP;
-        const rr = Math.max(1.5, r * 1.04 * scale), rOut = rr + 0.6; // sphere footprint + penumbra + 0.6 px edge softness
-        const rIn = Math.max(0, rr * 0.93 - 0.6), invSpan = 1 / Math.max(1e-3, rOut - rIn);
+        const bx = mod(ix + lx * cr + lz * sr - sx * (iy + ly) + half, WRAP) * scale;
+        const by = mod(iz - lx * sr + lz * cr - sz * (iy + ly) + half, WRAP) * scale;
+        const rr = Math.max(1.5, r * 1.04 * scale), rOut = rr + 0.6, rIn = Math.max(0, rr * 0.93 - 0.6);
+        const invSpan = 255 / Math.max(1e-3, rOut - rIn), rIn2 = rIn * rIn, rOut2 = rOut * rOut;
         const rx = Math.hypot(rOut * el * ca, rOut * sa), ry = Math.hypot(rOut * el * sa, rOut * ca);
-        const bx = wx * scale, by = wz * scale;
-        const x0 = Math.floor(bx - rx), x1 = Math.ceil(bx + rx);
-        const y0 = Math.floor(by - ry), y1 = Math.ceil(by + ry);
-        const rIn2 = rIn * rIn, rOut2 = rOut * rOut;
-        for (let py = y0; py <= y1; py++) {
-          const dy = py + 0.5 - by;
-          const row = (((py % S) + S) % S) * S;
-          const uBase = dy * sa, vBase = dy * ca;
-          for (let px = x0; px <= x1; px++) {
-            const dx = px + 0.5 - bx;
-            const u = (dx * ca + uBase) * invEl, v = -dx * sa + vBase;
-            const d2 = u * u + v * v;
+        for (let py = Math.floor(by - ry), y1 = Math.ceil(by + ry); py <= y1; py++) {
+          const dy = py + 0.5 - by, row = mod(py, S) * S, uB = dy * sa, vB = dy * ca;
+          for (let px = Math.floor(bx - rx), x1 = Math.ceil(bx + rx); px <= x1; px++) {
+            const dx = px + 0.5 - bx, u = (dx * ca + uB) * invEl, v = -dx * sa + vB, d2 = u * u + v * v;
             if (d2 >= rOut2) continue;
-            const col = ((px % S) + S) % S;
-            const idx = row + col;
+            const idx = row + mod(px, S);
             if (d2 <= rIn2) { out[idx] = 0; continue; }
-            const val = ((Math.sqrt(d2) - rIn) * invSpan * 255 + 0.5) | 0;
+            const val = ((Math.sqrt(d2) - rIn) * invSpan + 0.5) | 0;
             if (val < out[idx]) out[idx] = val;
           }
         }

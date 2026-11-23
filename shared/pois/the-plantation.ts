@@ -618,7 +618,7 @@ export const FLORA: Flora[] = (() => {
   // (one tree every ~20 m — denser, with the outer ring below, it reads as a double wall of palms round the field)
   for (let a = 0; a < Math.PI * 2; a += 20 / 146.5) {
     const d = 144 + r() * 5, aa = a + (r() - 0.5) * 0.02, x = PAD.x + dmath.cos(aa) * d, z = PAD.z + dmath.sin(aa) * d;
-    if (roadDist(x, z) < 2.5 || spots.some(([sx, sz]) => dmath.pow(sx - x, 2) + dmath.pow(sz - z, 2) < 2.2)) continue;
+    if (roadDist(x, z) < 2.5 || spots.some(([sx, sz]) => (sx - x) * (sx - x) + (sz - z) * (sz - z) < 2.2)) continue;
     const k = r();
     put(k < 0.55 ? "palm" : k < 0.75 ? "palm-leaning" : "jungle-tree", x, z, 0.95 + r() * 0.3);
   }
