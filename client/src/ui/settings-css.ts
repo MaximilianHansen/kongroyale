@@ -60,6 +60,8 @@ html.kr-settings-open .kr-padhints { visibility: hidden !important; }
 @keyframes tn-set-swap { from { opacity: 0; transform: translateY(${T(10)}); } }
 .tn-set-row { position: relative; display: flex; flex-wrap: wrap; align-items: center; column-gap: ${T(24)}; row-gap: ${T(10)}; min-height: ${T(84)};
   padding: ${T(12)} ${T(24)} ${T(12)} ${T(40)}; outline: none; }
+.tn-set-row[data-id^="slotPref-"] { min-height: ${T(54)}; padding-top: ${T(6)}; padding-bottom: ${T(6)}; }
+.tn-set-table:has([data-id^="autoSort"]) { align-content: start; }
 .tn-set-row .lbl { flex: 1 1 ${T(220)}; min-width: 0; }
 .tn-set-row .lbl small { display: block; margin-top: ${T(2)}; font-family: var(--kong-font-ui); font-weight: 800; font-size: var(--kong-fs-support); line-height: var(--kong-lh-support); color: var(--kong-text-muted); }
 .tn-set-err { flex: 1 0 100%; order: 3; margin-top: ${T(-4)}; font-family: var(--kong-font-ui); font-weight: 800; font-size: var(--kong-fs-support); line-height: var(--kong-lh-support); color: var(--kong-danger); }
