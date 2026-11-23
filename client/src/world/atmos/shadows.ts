@@ -663,17 +663,17 @@ export class SunShadows {
     // (every 120 frames after the load window, half a period after the sweep — the two full-scene walks never share
     // a frame)
     const streaming = performance.now() < this.streamUntil || !this.streamUntil;
-    if (streaming ? this.frame % 30 === 0 : this.frame % 120 === 60) this.findNoCasterRoots();
-    // material sweep: every 24 frames while the world streams in, every 120 after (a scene traversal of ~2k objects)
-    const every = performance.now() < this.streamUntil || !this.streamUntil ? 24 : 120;
+    if (streaming ? this.frame % 48 === 0 : this.frame % 240 === 120) this.findNoCasterRoots();
+    // material sweep: every 48 frames while the world streams in, every 240 after (a scene traversal of ~2k objects)
+    const every = streaming ? 48 : 240;
     if ((this.frame++ % every) === 0) {
       const n = this.sweep();
       if (n !== this.farCasterKey) {
-        // new static casters appeared (async POI content): re-bake, but only a few times and never back-to-back
+        // new static casters appeared (async POI content): coalesce re-bakes to avoid 1 s streaming hitches
         const first = this.farCasterKey < 0;
         this.farCasterKey = n;
         const now = performance.now();
-        if (!first && this.farBakes < 6 && now < this.streamUntil && now - this.farLastBake > 1500) this.requestFarBake();
+        if (!first && this.farBakes < 2 && now < this.streamUntil && now - this.farLastBake > 5000) this.requestFarBake();
       }
     }
   }

@@ -725,7 +725,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     // without KHR_parallel_shader_compile (Linux / ANGLE-Vulkan, some drivers) every compile is synchronous —
     // then the objects go in small batches between frames (the program cache makes repeats free), so a module's shaders
     // never freeze one frame for 0.5-2.7 s (measured in the warm-up)
-    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile");
+    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile") && objs.length < 25;
     const tag = String(kr.streamStage ?? "").replace(/:(compile|draw|first-use|textures)$/, "");
     const phase = (p: string) => { if (tag.startsWith("integrate")) kr.streamStage = `${tag}:${p}`; };
     phase("compile");
@@ -773,7 +773,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
         await nextFrame();
         const chunks: THREE.Object3D[][] = [];
         let cur: THREE.Object3D[] = [], n = 0;
-        const CH = engine.sliceMs <= 8 ? 12 : 24;
+        const CH = engine.sliceMs <= 8 ? 6 : 10;
         // whole subtrees while they are small, their children otherwise (the mesh count bounds one warm draw)
         const meshes = (o: THREE.Object3D) => { let k = 0; o.traverse((x) => { if ((x as THREE.Mesh).isMesh) k++; }); return k; };
         const split = (o: THREE.Object3D) => {
