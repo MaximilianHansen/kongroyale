@@ -1188,10 +1188,10 @@ function inRect(k: { x: number; z: number; yaw: number; w: number; d: number }, 
  *  on a deck the walk overlaps) is removed, so walks open onto the decks they join and decks open where walks and
  *  stairs meet them. Spans shorter than 0.6 m are dropped. */
 function fixRails(decks: MDeck[], flights: Flight[]) {
-  const fr = flights.map((f) => { const run = f.n * f.tread; return { x: f.x + f.dx * run / 2, z: f.z + f.dz * run / 2, yaw: dmath.atan2(f.dx, f.dz), w: f.w + 0.2, d: run + 0.3, y: f.yTop }; });
-  const bR = new Map(decks.map((o) => [o, dmath.pow(o.w + o.d, 2) / 4 + 0.5]));
-  for (const k of decks) {
-    const r = k.rails; if (!r) continue;
+  const fr = flights.map((f) => { const run = f.n * f.tread, w = f.w + 0.2, d = run + 0.3, s = w + d; return { x: f.x + f.dx * run / 2, z: f.z + f.dz * run / 2, yaw: dmath.atan2(f.dx, f.dz), w, d, y: f.yTop, r2: s * s * 0.25 + 0.5 }; });
+  const bR = decks.map((o) => { const s = o.w + o.d; return s * s * 0.25 + 0.5; });
+  for (let ki = 0; ki < decks.length; ki++) {
+    const k = decks[ki], r = k.rails; if (!r) continue;
     for (const key of ["nx", "px", "nz", "pz"] as const) {
       const spans = r[key]; if (!spans) continue;
       const len = key === "nx" || key === "px" ? k.d : k.w;
@@ -1205,8 +1205,15 @@ function fixRails(decks: MDeck[], flights: Flight[]) {
           const [x, z] = toWorld(k, lx, lz);
           let blocked = false;
           // (bounding-circle reject first: this ran 27 ms of the module's import on the client's main thread)
-          for (const o of decks) if (o !== k && Math.abs(o.y - k.y) < 0.75 && dmath.pow(x - o.x, 2) + dmath.pow(z - o.z, 2) < bR.get(o)! && inRect(o, x, z, 0.12)) { blocked = true; break; }
-          if (!blocked) for (const f of fr) if (Math.abs(f.y - k.y) < 0.3 && dmath.pow(x - f.x, 2) + dmath.pow(z - f.z, 2) < dmath.pow(f.w + f.d, 2) / 4 + 0.5 && inRect(f, x, z, 0.1)) { blocked = true; break; }
+          for (let oi = 0; oi < decks.length; oi++) {
+            if (oi === ki) continue;
+            const o = decks[oi], dx = x - o.x, dz = z - o.z;
+            if (Math.abs(o.y - k.y) < 0.75 && dx * dx + dz * dz < bR[oi] && inRect(o, x, z, 0.12)) { blocked = true; break; }
+          }
+          if (!blocked) for (const f of fr) {
+            const dx = x - f.x, dz = z - f.z;
+            if (Math.abs(f.y - k.y) < 0.3 && dx * dx + dz * dz < f.r2 && inRect(f, x, z, 0.1)) { blocked = true; break; }
+          }
           if (!blocked && cur === null) cur = Math.min(u, b);
           if ((blocked || u >= b - 1e-6) && cur !== null) { const e = blocked ? u - 0.1 : b; if (e - cur > 0.6) out.push([cur, e]); cur = null; }
         }

@@ -1137,10 +1137,16 @@ const crossSeg = (a: Vec2, b: Vec2, c: Vec2, d: Vec2) => { const o = (p: Vec2, q
 export function polyGap(P: Vec2[], Q: Vec2[]): number {
   for (let i = 0; i < P.length; i++) for (let j = 0; j < Q.length; j++) if (crossSeg(P[i], P[(i + 1) % P.length], Q[j], Q[(j + 1) % Q.length])) return 0;
   if (inPolyXZ(Q, P[0][0], P[0][1]) || inPolyXZ(P, Q[0][0], Q[0][1])) return 0;
-  let m = Infinity;
-  for (const p of P) for (let j = 0; j < Q.length; j++) m = Math.min(m, segDist2(p[0], p[1], Q[j], Q[(j + 1) % Q.length]));
-  for (const q of Q) for (let i = 0; i < P.length; i++) m = Math.min(m, segDist2(q[0], q[1], P[i], P[(i + 1) % P.length]));
-  return m;
+  let m2 = Infinity, bdx = 0, bdz = 0;
+  const check = (px: number, pz: number, a: Vec2, b: Vec2) => {
+    const ex = b[0] - a[0], ez = b[1] - a[1], l2 = ex * ex + ez * ez || 1e-9;
+    const t = Math.max(0, Math.min(1, ((px - a[0]) * ex + (pz - a[1]) * ez) / l2));
+    const dx = px - a[0] - t * ex, dz = pz - a[1] - t * ez, d2 = dx * dx + dz * dz;
+    if (d2 < m2) { m2 = d2; bdx = dx; bdz = dz; }
+  };
+  for (const p of P) for (let j = 0; j < Q.length; j++) check(p[0], p[1], Q[j], Q[(j + 1) % Q.length]);
+  for (const q of Q) for (let i = 0; i < P.length; i++) check(q[0], q[1], P[i], P[(i + 1) % P.length]);
+  return dmath.hypot(bdx, bdz);
 }
 /** a growing set of footprints + street segments with a 16 m spatial hash: gap and street-clearance queries */
 export class TownSite {

@@ -544,6 +544,7 @@ const CP_L = -7.02846165095275826516e-09, IVLN2 = 1.44269504088896338700e+00, IV
 const IVLN2_L = 1.92596299112661746887e-08, POW_TINY = 1.0e-300;
 
 export function pow(x: number, y: number): number {
+  if (y === 2) return x * x;
   let z: number, ax: number, zH: number, zL: number, pH: number, pL: number;
   let y1: number, t1: number, t2: number, r: number, s: number, t: number, u: number, v: number, w: number;
   let i: number, j: number, k: number, n: number;

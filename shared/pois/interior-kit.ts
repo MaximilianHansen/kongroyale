@@ -671,6 +671,31 @@ class Placer {
 
   // ---------------------------------------------------------------- reachability
   private wallMask: Uint8Array | null = null;
+  private occMask: Uint8Array | null = null;
+  private tmpMask: Uint8Array | null = null;
+  private occCount = 0;
+  private occLast: Placed | null = null;
+  private labBuf: Int32Array | null = null;
+  private qBuf: Int32Array | null = null;
+  private stampItems(g: Uint8Array, items: InteriorItem[]) {
+    const { w, d } = this.room, W = this.gridW, D = this.gridD, cw = w / W, cd = d / D, R2 = CLEAR_R * CLEAR_R;
+    for (const it of items) {
+      if (it.col === 0 || it.y + it.h <= 0.5 || it.y > 1.85) continue;   // ≤ 0.5 m = the capsule steps over it (STEP_H 0.55)
+      const r = itemRect(it);
+      const i0 = Math.max(0, Math.floor((r.x0 - CLEAR_R + w / 2) / cw)), i1 = Math.min(W - 1, Math.floor((r.x1 + CLEAR_R + w / 2) / cw));
+      const j0 = Math.max(0, Math.floor((r.z0 - CLEAR_R + d / 2) / cd)), j1 = Math.min(D - 1, Math.floor((r.z1 + CLEAR_R + d / 2) / cd));
+      for (let j = j0; j <= j1; j++) {
+        const z = -d / 2 + (j + 0.5) * cd, dz = Math.max(r.z0 - z, 0, z - r.z1), dz2 = dz * dz;
+        if (dz2 >= R2) continue;
+        const row = j * W;
+        for (let i = i0; i <= i1; i++) {
+          if (g[row + i]) continue;
+          const x = -w / 2 + (i + 0.5) * cw, dx = Math.max(r.x0 - x, 0, x - r.x1);
+          if (dx * dx + dz2 < R2) g[row + i] = 1;
+        }
+      }
+    }
+  }
   blocked(): Uint8Array {
     const { w, d } = this.room;
     const W = this.gridW, D = this.gridD, cw = w / W, cd = d / D;
@@ -694,23 +719,23 @@ class Placer {
       }
       this.wallMask = m;
     }
-    const g = this.wallMask.slice();
-    const R2 = CLEAR_R * CLEAR_R;
-    for (const u of this.used) for (const it of u.items) {
-      if (it.col === 0) continue;
-      if (it.y + it.h <= 0.5 || it.y > 1.85) continue;   // ≤ 0.5 m = the capsule steps over it (STEP_H 0.55)
-      const r = itemRect(it);
-      const i0 = Math.max(0, Math.floor((r.x0 - CLEAR_R + w / 2) / cw)), i1 = Math.min(W - 1, Math.floor((r.x1 + CLEAR_R + w / 2) / cw));
-      const j0 = Math.max(0, Math.floor((r.z0 - CLEAR_R + d / 2) / cd)), j1 = Math.min(D - 1, Math.floor((r.z1 + CLEAR_R + d / 2) / cd));
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-        const c = j * W + i;
-        if (g[c]) continue;
-        const x = -w / 2 + (i + 0.5) * cw, z = -d / 2 + (j + 0.5) * cd;
-        // rounded corners: the capsule is round
-        const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1);
-        if (dx * dx + dz * dz < R2) g[c] = 1;
-      }
+    const nUsed = this.used.length;
+    if (nUsed === 0) return this.wallMask;
+    if (!this.occMask) { this.occMask = this.wallMask.slice(); this.tmpMask = new Uint8Array(W * D); }
+    const prefix = nUsed - 1;
+    if (this.occCount > prefix || (this.occCount > 0 && this.used[this.occCount - 1] !== this.occLast)) {
+      this.occMask.set(this.wallMask);
+      this.occCount = 0;
+      this.occLast = null;
     }
+    while (this.occCount < prefix) {
+      const u = this.used[this.occCount++];
+      this.stampItems(this.occMask, u.items);
+      this.occLast = u;
+    }
+    const g = this.tmpMask!;
+    g.set(this.occMask);
+    this.stampItems(g, this.used[prefix].items);
     return g;
   }
   cellOf(x: number, z: number): number {
@@ -732,19 +757,23 @@ class Placer {
   private seeds(): Array<[number, number]> { return this.doorPts.length ? this.doorPts : this.walkPts.length ? this.walkPts : [[0, 0]]; }
   /** components of the free cells reached from `pts` (label per cell, 0 = not reached) + each point's label (0 = blocked) */
   private label(b: Uint8Array, pts: Array<[number, number]>): { cell: Int32Array; pt: number[] } {
-    const W = this.gridW, D = this.gridD, cell = new Int32Array(W * D), pt: number[] = [];
+    const W = this.gridW, D = this.gridD, N = W * D;
+    const cell = this.labBuf ?? (this.labBuf = new Int32Array(N));
+    cell.fill(0);
+    const q = this.qBuf ?? (this.qBuf = new Int32Array(N));
+    const pt: number[] = [];
     let next = 0;
     for (const p of pts) {
       const st = this.nearestFree(b, p[0], p[1]);
       if (st < 0) { pt.push(0); continue; }
       if (cell[st]) { pt.push(cell[st]); continue; }
-      const L = ++next, q = [st]; cell[st] = L; pt.push(L);
-      while (q.length) {
-        const c = q.pop()!, i = c % W, j = (c / W) | 0;
-        if (i > 0 && !cell[c - 1] && !b[c - 1]) { cell[c - 1] = L; q.push(c - 1); }
-        if (i < W - 1 && !cell[c + 1] && !b[c + 1]) { cell[c + 1] = L; q.push(c + 1); }
-        if (j > 0 && !cell[c - W] && !b[c - W]) { cell[c - W] = L; q.push(c - W); }
-        if (j < D - 1 && !cell[c + W] && !b[c + W]) { cell[c + W] = L; q.push(c + W); }
+      const L = ++next; let qp = 0; q[qp++] = st; cell[st] = L; pt.push(L);
+      while (qp > 0) {
+        const c = q[--qp], i = c % W, j = (c / W) | 0;
+        if (i > 0 && !cell[c - 1] && !b[c - 1]) { cell[c - 1] = L; q[qp++] = c - 1; }
+        if (i < W - 1 && !cell[c + 1] && !b[c + 1]) { cell[c + 1] = L; q[qp++] = c + 1; }
+        if (j > 0 && !cell[c - W] && !b[c - W]) { cell[c - W] = L; q[qp++] = c - W; }
+        if (j < D - 1 && !cell[c + W] && !b[c + W]) { cell[c + W] = L; q[qp++] = c + W; }
       }
     }
     return { cell, pt };
@@ -753,11 +782,17 @@ class Placer {
     const W = this.gridW, D = this.gridD, { w, d } = this.room, cw = w / W, cd = d / D;
     const ci = Math.floor((x + w / 2) / cw), cj = Math.floor((z + d / 2) / cd), k = Math.ceil(0.5 / Math.min(cw, cd));
     let best = -1, bd = 0.5;   // within 0.5 m
-    for (let j = Math.max(0, cj - k); j <= Math.min(D - 1, cj + k); j++) for (let i = Math.max(0, ci - k); i <= Math.min(W - 1, ci + k); i++) {
-      const c = j * W + i;
-      if (b[c]) continue;
-      const dd = dmath.hypot(-w / 2 + (i + 0.5) * cw - x, -d / 2 + (j + 0.5) * cd - z);
-      if (dd < bd) { bd = dd; best = c; }
+    for (let j = Math.max(0, cj - k); j <= Math.min(D - 1, cj + k); j++) {
+      const dz = -d / 2 + (j + 0.5) * cd - z, dz2 = dz * dz;
+      for (let i = Math.max(0, ci - k); i <= Math.min(W - 1, ci + k); i++) {
+        const c = j * W + i;
+        if (b[c]) continue;
+        const dx = -w / 2 + (i + 0.5) * cw - x;
+        if (dx * dx + dz2 < bd * bd * 1.000001) {
+          const dd = dmath.hypot(dx, dz);
+          if (dd < bd) { bd = dd; best = c; }
+        }
+      }
     }
     return best;
   }
@@ -1295,13 +1330,23 @@ function lootSlots(p: Placer): { chests: Array<[number, number, number]>; floor:
   // floor loot lies BESIDE furniture, the way a player finds it (at the foot of the bed, by the counter, in
   // front of a shelf): 0.3 m off a floor-standing piece's front or side, outside every footprint and door corridor, ≥ 0.3 m
   // off the walls, with a reachable standing cell within 0.95 m (the match generator re-validates every slot)
+  const pieces = p.used.flatMap((u) => u.items).filter((it) => it.col && it.y < 0.3 && !FLAT.has(it.kind) && !(it as InteriorItem & { chest?: boolean }).chest);
+  const pCs = pieces.map((it) => dmath.cos(it.yaw)), pSn = pieces.map((it) => dmath.sin(it.yaw));
   {
-    const pieces = p.used.flatMap((u) => u.items).filter((it) => it.col && it.y < 0.3 && !FLAT.has(it.kind) && !(it as InteriorItem & { chest?: boolean }).chest);
-    const inside = (x: number, z: number, m: number) => pieces.some((it) => { const c = dmath.cos(it.yaw), s = dmath.sin(it.yaw), dx = x - it.x, dz = z - it.z; return Math.abs(dx * c - dz * s) < it.w / 2 + m && Math.abs(dx * s + dz * c) < it.d / 2 + m; });
-    const reachNear = (x: number, z: number) => { for (const [cx, cz] of all) if (dmath.hypot(cx - x, cz - z) < 0.95) return true; return false; };
+    const inside = (x: number, z: number, m: number) => {
+      for (let i = 0; i < pieces.length; i++) {
+        const it = pieces[i], dx = x - it.x, dz = z - it.z;
+        if (Math.abs(dx * pCs[i] - dz * pSn[i]) < it.w / 2 + m && Math.abs(dx * pSn[i] + dz * pCs[i]) < it.d / 2 + m) return true;
+      }
+      return false;
+    };
+    const reachNear = (x: number, z: number) => {
+      for (const [cx, cz] of all) { const dx = cx - x, dz = cz - z; if (dx * dx + dz * dz < 0.9026 && dmath.hypot(dx, dz) < 0.95) return true; }
+      return false;
+    };
     const beside: Array<[number, number]> = [];
-    for (const it of pieces) {
-      const c = dmath.cos(it.yaw), s = dmath.sin(it.yaw);
+    for (let i = 0; i < pieces.length; i++) {
+      const it = pieces[i], c = pCs[i], s = pSn[i];
       // item-local front +z, then the two sides
       for (const [lx, lz] of [[0, it.d / 2 + 0.32], [it.w / 2 + 0.32, 0], [-(it.w / 2 + 0.32), 0]] as Array<[number, number]>) {
         const x = it.x + lx * c + lz * s, z = it.z - lx * s + lz * c;
@@ -1316,14 +1361,29 @@ function lootSlots(p: Placer): { chests: Array<[number, number, number]>; floor:
   }
   // the rest: free cells hugging a floor-standing piece (≤ 0.4 m off its
   // footprint) first — spread ≥ 1.2 m — then the open floor
-  const pcs = p.used.flatMap((u) => u.items).filter((it) => it.col && it.y < 0.3 && !FLAT.has(it.kind) && !(it as InteriorItem & { chest?: boolean }).chest);
-  const off = (x: number, z: number) => { let m = 9; for (const it of pcs) { const c = dmath.cos(it.yaw), s = dmath.sin(it.yaw), dx = x - it.x, dz = z - it.z; m = Math.min(m, dmath.hypot(Math.max(0, Math.abs(dx * c - dz * s) - it.w / 2), Math.max(0, Math.abs(dx * s + dz * c) - it.d / 2))); } return m; };
+  const off = (x: number, z: number) => {
+    let m = 9;
+    for (let i = 0; i < pieces.length; i++) {
+      const it = pieces[i], dx = x - it.x, dz = z - it.z;
+      const qx = Math.max(0, Math.abs(dx * pCs[i] - dz * pSn[i]) - it.w / 2);
+      const qz = Math.max(0, Math.abs(dx * pSn[i] + dz * pCs[i]) - it.d / 2);
+      if (qx * qx + qz * qz < m * m * 1.000001) m = Math.min(m, dmath.hypot(qx, qz));
+    }
+    return m;
+  };
   const hug = pool.filter(([x, z]) => { const o = off(x, z); return o > 0.12 && o <= 0.4 && chests.every((q) => dmath.hypot(q[0] - x, q[1] - z) >= 1.0); });
   for (const src of [hug, pool]) {
     if (!floor.length && src.length) floor.push(src[Math.floor(r() * src.length)]);
     while (floor.length < n) {
       let best = -1, bd = -1;
-      for (let i = 0; i < src.length; i++) { const dmin = Math.min(...floor.map((f) => dmath.hypot(f[0] - src[i][0], f[1] - src[i][1]))); if (dmin > bd) { bd = dmin; best = i; } }
+      for (let i = 0; i < src.length; i++) {
+        let dmin = Infinity;
+        for (const f of floor) {
+          const dx = f[0] - src[i][0], dz = f[1] - src[i][1];
+          if (dx * dx + dz * dz < dmin * dmin * 1.000001) dmin = Math.min(dmin, dmath.hypot(dx, dz));
+        }
+        if (dmin > bd) { bd = dmin; best = i; }
+      }
       if (bd < 1.2) break;
       floor.push(src[best]);
     }
