@@ -23,7 +23,9 @@ export interface Chest { id: number; x: number; y: number; z: number; yaw: numbe
   sx?: number; sy?: number; sz?: number;
   /** server only (end-game regen): match time it was last opened, restocks so far, when it restocks
    * (Infinity = its coin said no) */
-  openedAt?: number; regens?: number; regenAt?: number }
+  openedAt?: number; regens?: number; regenAt?: number;
+  /** true = mid-match parachuting Supply Drop; targetY = landing ground Y */
+  supply?: boolean; targetY?: number }
 export interface Item { id: number; kind: IK; sub: number; rarity: number; count: number; x: number; y: number; z: number; taken: boolean; bornAt: number;
   /** server: the player who just dropped / swapped it out. Their auto-pickup skips it until they walk away once. */
   dropper?: number;
@@ -451,6 +453,22 @@ export function rollAmmoBox(rng: Rng): Array<{ kind: IK; sub: number; rarity: nu
 }
 /** what a chest spawns: [weapon, matching ammo, consumable] + a bonus at higher chest rarity. A MYTHIC chest (rarity
  * MYTHIC_R, one per POI) holds its POI's (`poi`) mythic gun, double ammo, a heal and a shield */
+/** Supply Drop: guaranteed high-tier (Epic/Legendary) weapon, double ammo, two heals, and Banana Bucks. */
+export function rollSupplyDropContents(rng: Rng): Array<{ kind: IK; sub: number; rarity: number; count: number }> {
+  const w = rollWeapon(rng);
+  const wr = rng.next() < 0.45 ? 4 : 3;
+  const ammoType = WEAPON_DEFS[WEAPONS[w]].ammo;
+  const sh = CONSUMABLES.indexOf("smoothie");
+  const gb = CONSUMABLES.indexOf("golden-banana");
+  return [
+    { kind: IK.Weapon, sub: w, rarity: wr, count: 1 },
+    { kind: IK.Ammo, sub: AMMO_TYPES.indexOf(ammoType), rarity: 0, count: AMMO_PICKUP[ammoType] * 2 },
+    { kind: IK.Consumable, sub: gb >= 0 ? gb : 0, rarity: 3, count: 1 },
+    { kind: IK.Consumable, sub: sh >= 0 ? sh : 0, rarity: 2, count: 2 },
+    { kind: IK.Cash, sub: 0, rarity: 0, count: ECON.chest[5] / 10 },
+  ];
+}
+
 export function rollChestContents(rng: Rng, chestRarity: number, poi = -1): Array<{ kind: IK; sub: number; rarity: number; count: number }> {
   const mk = chestRarity >= MYTHIC_R ? mythicIndexOfPoi(poi) : -1;
   if (mk >= 0) {

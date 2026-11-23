@@ -80,6 +80,8 @@ export interface EventSink {
   chest(id: number, by: number): void;
   /** end-game regen: an opened chest / ammo box is closed (and restocked) again */
   chestReset?(id: number): void;
+  /** mid-match supply drop spawned */
+  supplyDrop?(c: Chest): void;
   spawnItem(it: Item): void; takeItem(id: number, by: number): void;
   explosion(x: number, y: number, z: number, r: number): void;
   rocket(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number): void; rocketEnd(id: number): void;
@@ -155,7 +157,8 @@ export class ClientMatch {
   me = -1; readonly pred: Player; readonly auth: SelfState = makeSelfState(); authTick = 0;
   readonly remotes: Remote[] = [];
   names: string[] = [];
-  chests: Chest[] = []; items = new Map<number, Item>();
+  chests: Chest[] = [];
+  readonly supplyDrops: Chest[] = []; items = new Map<number, Item>();
   plan: StormPlan | null = null; readonly storm: StormState = makeStormState();
   /** firing range match (JSON "match".range): no storm / plane, infinite reserve ammo */
   range = false;
@@ -378,13 +381,23 @@ export class ClientMatch {
       this.stands = ((m.stands as number[][]) ?? []).map((r) => ({ x: r[0], y: r[1], z: r[2], yaw: r[3], poi: r[4] }));
       this.stands.forEach((s, i) => this.covers.add(STAND_ID0 + i, 255, s.x, s.y, s.z, s.yaw, 1e9, 0, STAND_SIZE));
       for (const c of (m.covers as number[][]) ?? []) { this.covers.add(c[0], c[1], c[2], c[3], c[4], c[5], c[6], this.time); this.sink?.cover?.(c[0], c[1], false); }
+      this.supplyDrops.length = 0;
+      for (const sd of (m.supplyDrops as number[][]) ?? []) {
+        const c: Chest = { id: sd[0], x: sd[1], y: sd[2], z: sd[3], targetY: sd[4], yaw: sd[5], rarity: 4, opened: !!sd[6], poi: -1, supply: true };
+        this.chests[c.id] = c; this.supplyDrops.push(c); this.sink?.supplyDrop?.(c);
+      }
       for (const row of (m.items as number[][]) ?? []) { const it: Item = { id: row[0], kind: row[1], sub: row[2], rarity: row[3], count: row[4], x: row[5], y: row[6], z: row[7], taken: false, bornAt: 0 }; this.items.set(it.id, it); this.sink?.spawnItem(it); }
       this.started = true; this.ackedSeq = this.inputSeq;
       this.sink?.phase(this.phase);
     } else if (m.t === "phase") {
       this.phase = m.phase as number; this.phaseTick = m.tick as number; this.phaseTime = 0; Object.assign(this.plane, m.plane as object); if (m.plan) this.plan = m.plan as StormPlan;
       this.planeStart = this.phase === 1 ? this.phaseTick : -1;
-      if (this.phase <= 1) { this.glass.reset(); this.resetVehicles(); for (const w of this.covers.list) if (w.live && !w.perm) { this.covers.remove(w.id); this.sink?.coverEnd?.(w.id, 0); } }   // warm-up / a new match: every pane whole again, a new fleet (the server reset too)
+      if (this.phase <= 1) {
+        this.chests.length -= this.supplyDrops.length;
+        this.supplyDrops.length = 0;
+        this.glass.reset(); this.resetVehicles();
+        for (const w of this.covers.list) if (w.live && !w.perm) { this.covers.remove(w.id); this.sink?.coverEnd?.(w.id, 0); }
+      }   // warm-up / a new match: every pane whole again, a new fleet (the server reset too)
       this.sink?.phase(this.phase);
     }
   }
@@ -573,6 +586,14 @@ export class ClientMatch {
         case EV.CoverEnd: { const id = r.u16(), why = r.u8(); this.covers.remove(id); s?.coverEnd?.(id, why); break; }
         case EV.CoverHit: { const id = r.u16(), hp = r.u16(); const w = this.covers.byId(id); if (w) w.hp = hp; s?.coverHit?.(id, hp); break; }
         case EV.VehHit: { const a = r.u8(), id = r.u8(), d = r.u16() / 4, x = r.f32(), y = r.f32(), z = r.f32(); s?.vehHit?.(a === 255 ? -1 : a, id, d, x, y, z); break; }
+        case EV.SupplyDrop: {
+          const id = r.u16(), x = r.f32(), y = r.f32(), z = r.f32(), targetY = r.f32(), yaw = yawDec(r.u16());
+          const c: Chest = { id, x, y, z, targetY, yaw, rarity: 4, opened: false, poi: -1, supply: true };
+          this.chests[id] = c;
+          if (!this.supplyDrops.some((q) => q.id === id)) this.supplyDrops.push(c);
+          s?.supplyDrop?.(c);
+          break;
+        }
         default: return; // unknown: cannot skip → stop
       }
     }
@@ -1043,7 +1064,7 @@ export class ClientMatch {
     let best: Chest | null = null, bd = reach ? Infinity : maxD; const p = this.pred;
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
     for (const c of this.chests) {
-      if (c.opened || (chestsOnly && c.box)) continue;
+      if (!c || c.opened || (chestsOnly && c.box) || (c.supply && c.targetY !== undefined && c.y > c.targetY + 0.5)) continue;
       if (!reach) { const d = Math.hypot(c.x - p.x, c.z - p.z, (c.y - p.y) * 0.5); if (d < bd) { bd = d; best = c; } continue; }
       const dx = c.x - p.x, dz = c.z - p.z, d = Math.hypot(dx, dz);
       if (d > maxD) continue;

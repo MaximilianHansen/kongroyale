@@ -591,14 +591,69 @@ export class GameRender implements EventSink {
     const c = this.cm.chests[id];
     if (c?.box) { this.boxes.open(id); this.play("chest:open", c.x, c.y + 0.3, c.z, 0.55); return; }
     const v = this.chestViews.get(id); if (v) { v.open(); this.kits.lights?.track(v.object); }
+    this.openSupply(id);
     if (c) { this.spillFrom.x = c.x; this.spillFrom.y = c.y; this.spillFrom.z = c.z; this.spillFrom.at = performance.now(); }
     if (by === this.cm.me) { this.chestsOpened++; this.humMuteUntil = performance.now() + HUM_MUTE_MS; if (this.humLoop >= 0) { this.stopLoop("chest:hum"); this.humLoop = -1; } if (this.mythHum >= 0) { this.stopLoop("mythic:hum"); this.mythHum = -1; } }
     if (c) this.play("chest:open", c.x, c.y + 0.5, c.z, 1);
     if (this.humLoop === id) { this.stopLoop("chest:hum"); this.humLoop = -1; }
     void by;
   }
-  /** end-game regen: the chest / ammo box closed again — the crate, its seam glow + halo come
-   * back (ChestView.close); the hum restarts by itself (the hum scan only skips opened chests) */
+  // Supply drops belong to one round: their scopes close before the next warm-up, while the match scope stays open.
+  private supplyViews = new Map<number, { group: THREE.Group; chute: THREE.Group; flare: THREE.Mesh; box: THREE.Mesh; scope: Scope }>();
+  private supplyHudPool: Array<{ x: number; z: number; landed: boolean }> = Array.from({ length: 4 }, () => ({ x: 0, z: 0, landed: false }));
+  supplyDrop(c: { id: number; x: number; y: number; z: number; targetY?: number; yaw: number; opened: boolean }) {
+    if (this.supplyViews.has(c.id)) return;
+    const scope = this.matchScope.child(`supply-${c.id}`);
+    const group = new THREE.Group();
+    group.position.set(c.x, c.y, c.z);
+    group.rotation.y = c.yaw;
+    const boxMat = scope.material(new THREE.MeshStandardMaterial({ color: 0xffd21a, emissive: 0x805500, emissiveIntensity: 0.6, roughness: 0.35, metalness: 0.35 }));
+    const box = new THREE.Mesh(scope.geometry("geo.world", new THREE.BoxGeometry(1.15, 0.9, 0.9)), boxMat);
+    box.position.y = 0.45;
+    box.castShadow = true;
+    group.add(box);
+    const chute = new THREE.Group();
+    chute.position.y = 2.6;
+    const canopyMat = scope.material(new THREE.MeshStandardMaterial({ color: 0xfff8e7, emissive: 0x332800, emissiveIntensity: 0.25, roughness: 0.8, side: THREE.DoubleSide }));
+    const canopy = new THREE.Mesh(scope.geometry("geo.world", new THREE.SphereGeometry(1.75, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.5)), canopyMat);
+    chute.add(canopy);
+    const cordMat = scope.material(new THREE.MeshBasicMaterial({ color: 0x222222 }));
+    const cordGeo = scope.geometry("geo.world", new THREE.CylinderGeometry(0.02, 0.02, 2.2, 4));
+    for (const cz of [-0.4, 0.4]) for (const cx of [-0.55, 0.55]) {
+      const cord = new THREE.Mesh(cordGeo, cordMat);
+      cord.position.set(cx * 0.65, -1.0, cz * 0.65);
+      chute.add(cord);
+    }
+    group.add(chute);
+    const flareMat = scope.material(new THREE.MeshBasicMaterial({ color: 0xffd21a, transparent: true, opacity: 0.24, depthWrite: false }));
+    const flare = new THREE.Mesh(scope.geometry("geo.world", new THREE.CylinderGeometry(0.18, 0.55, 95, 8, 1, true)), flareMat);
+    flare.position.y = 47.5;
+    group.add(flare);
+    this.engine.scene.add(group);
+    scope.defer(() => group.removeFromParent());
+    this.supplyViews.set(c.id, { group, chute, flare, box, scope });
+    if (c.opened) this.openSupply(c.id);
+    if (!c.opened && this.cm.phase === 2) this.announce("SUPPLY DROP INBOUND", "GOLDEN CRATE PARACHUTING IN", "info");
+  }
+  private openSupply(id: number) {
+    const v = this.supplyViews.get(id);
+    if (v) { v.flare.visible = v.chute.visible = false; v.box.scale.y = 0.45; v.box.position.y = 0.25; }
+  }
+  private stepSupplyViews(dt: number) {
+    const list = this.cm.supplyDrops;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (!c.opened && c.targetY !== undefined && c.y > c.targetY) c.y = Math.max(c.targetY, c.y - 12 * dt);
+      const v = this.supplyViews.get(c.id);
+      if (!v) continue;
+      v.group.position.set(c.x, c.y, c.z);
+      const airborne = !c.opened && c.targetY !== undefined && c.y > c.targetY + 0.05;
+      v.chute.visible = airborne;
+      if (airborne) v.chute.rotation.z = Math.sin(performance.now() * 0.002 + c.id) * 0.08;
+      v.flare.visible = !c.opened;
+    }
+  }
+  /** End-game regen restores a chest's glow and hum when it closes again. */
   chestReset(id: number) {
     const c = this.cm.chests[id];
     if (c?.box) { this.boxes.close(id); return; }
@@ -819,9 +874,14 @@ export class GameRender implements EventSink {
     this.pendPush(r.victim, dmg, now);
   }
   phase(phase: number) {
-    if (phase === 0 || phase === 1) this.input.slotWanted = 0;
+    if (phase === 0 || phase === 1) {
+      for (const v of this.supplyViews.values()) v.scope.dispose();
+      this.supplyViews.clear();
+      this.hud.supplyDrops = [];
+      this.input.slotWanted = 0; this.victoryAt = -1;
+      if (this.meActor) this.meActor.setVisible(false);
+    }
     if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; }   // (the warm-up's map pin stays: it marks your drop)
-    if (phase === 0 || phase === 1) { this.victoryAt = -1; if (this.meActor) this.meActor.setVisible(false); }
     if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
   }
   inventory() { this.syncViewModel(); }
@@ -1007,6 +1067,7 @@ export class GameRender implements EventSink {
     // the local door gunner holds TOP BANANA under its camera (actors/heli-tripo.ts gunnerView): after the camera is final
     if (myVeh && myVeh.kind === VKind.Heli) (this.tuks.get(myVeh.id) as (TukView & { gunnerView?(c: THREE.Camera | null): void }) | undefined)?.gunnerView?.(p.seat === HELI.GUN_SEAT && !dead ? this.engine.camera : null);
     this.dropCamera(dt, inPlane || dead || victory || !!spec || !!myVeh || !!this.caster);
+    this.stepSupplyViews(dt);
     // actors: my own kong in first person while falling /
     // gliding — arms in frame in freefall, fists on the bar + legs below under the glider
     if (inPlane && !this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
@@ -2391,7 +2452,7 @@ export class GameRender implements EventSink {
     this.kits.viewModel.object.visible = false; this.kits.plane.object.visible = false;
     this.kits.hud.onMapClick = null; this.kits.hud.onMapClear = null;
     this.stopAllLoops();
-    this.actors.clear(); this.lootViews.clear(); this.chestViews.clear(); this.rockets.clear(); this.shotPings.clear();
+    this.actors.clear(); this.lootViews.clear(); this.chestViews.clear(); this.supplyViews.clear(); this.rockets.clear(); this.shotPings.clear();
   }
 
   private fillHud(dt: number, inside: number) {
@@ -2486,6 +2547,14 @@ export class GameRender implements EventSink {
     while (h.killfeed.length && now - h.killfeed[0].at > 7000) h.killfeed.shift();
     while (h.damageDirs.length && now - h.damageDirs[0].at > 1600) h.damageDirs.shift();
     this.dmgDirsAim();
+    const sdHud = (h.supplyDrops ??= []); sdHud.length = 0;
+    for (const c of cm.supplyDrops) {
+      if (c.opened) continue;
+      const slot = this.supplyHudPool[sdHud.length];
+      if (!slot) break;
+      slot.x = c.x; slot.z = c.z; slot.landed = c.targetY === undefined || c.y <= c.targetY + 0.5;
+      sdHud.push(slot);
+    }
     if (h.hitMarker && now - h.hitMarker.at > 400) h.hitMarker = null;
     if (h.announce && now - h.announce.at > 4500) h.announce = null;
     // damage numbers: project (a stack keeps its `at` key; the HUD merges amount changes into the same number)
