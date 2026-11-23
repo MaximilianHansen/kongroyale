@@ -290,7 +290,7 @@ export class GameRender implements EventSink {
     const geos = new Set<THREE.BufferGeometry>();
     proto.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) geos.add(m.geometry); });
     for (const g of geos) res.geometry("geo.world", g);
-    const views = this.standViews = this.cm.stands.map((s) => { const o = proto.clone(true); o.position.set(s.x, s.y, s.z); o.rotation.y = s.yaw; o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = !m.userData.noCast; m.receiveShadow = true; } }); this.engine.scene.add(o); patchTree(this.engine, o); return o; });
+    const views = this.standViews = this.cm.stands.map((s) => { const o = proto.clone(true); o.position.set(s.x, s.y, s.z); o.rotation.y = s.yaw; o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = !m.userData.noCast; m.receiveShadow = true; } }); this.engine.scene.add(o); patchTree(this.engine, o); this.engine.statics.register(o); return o; });
     res.defer(() => { for (const o of views) o.removeFromParent(); });
   }
   /** the buy menu's view of the offers for this kong right now (the server re-checks every rule) */
@@ -1761,7 +1761,7 @@ export class GameRender implements EventSink {
         continue;
       }
       if (v && v.kind !== vr.kind) { v.dispose(); this.tuks.delete(vr.id); v = undefined; }
-      if (!v) { v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.tuks.set(vr.id, v); }
+      if (!v) { v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.engine.statics.register(v.object); this.tuks.set(vr.id, v); }
       if (!A) { A = { horn: -1e9, on: { I: "", D: "", S: "", F: "", H: "", G: "", O: "", B: "" }, fuseAt: -1, sunkAt: -1, exh: 0, smk: 0, fire: 0, dust: 0, lx: D0, ly: 0, lz: 0, seen: false, lastVf: 0, popAt: 0, radio: -1, radioSt: -1, pilot: false, vy: 0, gunLock: false, gunSt: vr.gunSpin > 0 ? 1 : 0, gunRef: vr.gunSpin }; this.tukAudio.set(vr.id, A); }
       v.object.visible = true;
       if (vr.st === VS.Sunk) { if (A.sunkAt < 0) A.sunkAt = now; } else A.sunkAt = -1;
@@ -2289,7 +2289,7 @@ export class GameRender implements EventSink {
     for (const [o, t0] of this.grow) {
       const t = t0 + dt, u = Math.min(1, t / GROW_S), k = u * u * (3 - 2 * u);
       o.scale.setScalar(Math.max(0.001, k));
-      if (u >= 1) this.grow.delete(o); else this.grow.set(o, t);
+      if (u >= 1) { this.grow.delete(o); o.updateMatrix(); o.matrixAutoUpdate = false; } else this.grow.set(o, t);
     }
   }
   /** a view just built: grow it in when it is within the distance it would be drawn at (else it already fades in with distance) */
@@ -2322,7 +2322,7 @@ export class GameRender implements EventSink {
         if (this.disposed || it.taken || !this.cm.items.has(it.id)) { v.dispose(); return; }
         v.object.position.set(it.x, it.y, it.z); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.lootViews.set(it.id, v);
         if (it.bornAt > 0 && this.cm.time - it.bornAt < 1.2) this.startDrop(v, it);
-        else this.growIn(v.object, LOOT_DRAW_R);
+        else { this.growIn(v.object, LOOT_DRAW_R); if (!this.grow.has(v.object)) { v.object.updateMatrix(); v.object.matrixAutoUpdate = false; } }
       });
     }
   }
@@ -2349,7 +2349,7 @@ export class GameRender implements EventSink {
       // touchdown: one small bounce (0.18 s)
       const b = a.t - a.d; if (b > 0) y = a.ey + Math.max(0, Math.sin(Math.min(1, b / 0.18) * Math.PI)) * 0.07;
       v.object.position.set(a.sx + (a.ex - a.sx) * k, y, a.sz + (a.ez - a.sz) * k);
-      if (b > 0.18) { v.object.position.set(a.ex, a.ey, a.ez); this.drops.delete(v); }
+      if (b > 0.18) { v.object.position.set(a.ex, a.ey, a.ez); v.object.updateMatrix(); v.object.matrixAutoUpdate = false; this.drops.delete(v); }
     }
   }
   private frameDt = 0.016;
