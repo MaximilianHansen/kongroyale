@@ -725,7 +725,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     // without KHR_parallel_shader_compile (Linux / ANGLE-Vulkan, some drivers) every compile is synchronous —
     // then the objects go in small batches between frames (the program cache makes repeats free), so a module's shaders
     // never freeze one frame for 0.5-2.7 s (measured in the warm-up)
-    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile") && objs.length < 25;
+    const parallel = !!r.getContext().getExtension("KHR_parallel_shader_compile") && objs.length < 16;
     const tag = String(kr.streamStage ?? "").replace(/:(compile|draw|first-use|textures)$/, "");
     const phase = (p: string) => { if (tag.startsWith("integrate")) kr.streamStage = `${tag}:${p}`; };
     phase("compile");
@@ -748,19 +748,23 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     const seen = new Set<THREE.Texture>();
     const upload = (m: THREE.Material) => {
       const out: THREE.Texture[] = [];
-      for (const v of Object.values(m as unknown as Record<string, unknown>)) {
-        const t = v as THREE.Texture;
-        if (!t || !t.isTexture || seen.has(t) || (t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) continue;
-        seen.add(t);
-        if (props.get(t).__webglTexture || !t.image) continue;
-        out.push(t);
-      }
+      const add = (v: unknown) => {
+        const t = v as THREE.Texture | undefined;
+        if (t?.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) {
+          seen.add(t);
+          if (!props.get(t).__webglTexture && t.image) out.push(t);
+        }
+      };
+      for (const v of Object.values(m as unknown as Record<string, unknown>)) add(v);
       // (a ShaderMaterial keeps its textures in uniforms)
       const us = (m as THREE.ShaderMaterial).uniforms;
-      if (us) for (const k in us) { const t = us[k]?.value as THREE.Texture | undefined; if (t && t.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) { seen.add(t); if (!props.get(t).__webglTexture && t.image) out.push(t); } }
+      if (us) for (const k in us) add(us[k]?.value);
       return out;
     };
-    for (const [m] of fresh) for (const t of upload(m)) { try { r.initTexture(t); } catch { /* skip */ } if (!urgent) await engine.yield(); }
+    for (const [m] of fresh) for (const t of upload(m)) {
+      try { r.initTexture(t); } catch {}
+      if (!urgent) await engine.yield();
+    }
     // first draw of this module's content (all LOD levels) offscreen: buffers / VAOs / first use, now — not on the frame the
     // player first looks at it (the arrival hitch). Restored before any frame runs.
     if (gone()) return false;
@@ -773,7 +777,7 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
         await nextFrame();
         const chunks: THREE.Object3D[][] = [];
         let cur: THREE.Object3D[] = [], n = 0;
-        const CH = engine.sliceMs <= 8 ? 6 : 10;
+        const CH = engine.sliceMs <= 8 ? 4 : 6;
         // whole subtrees while they are small, their children otherwise (the mesh count bounds one warm draw)
         const meshes = (o: THREE.Object3D) => { let k = 0; o.traverse((x) => { if ((x as THREE.Mesh).isMesh) k++; }); return k; };
         const split = (o: THREE.Object3D) => {
@@ -791,9 +795,8 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     if (gone()) return false;
     openGate?.();
     phase("first-use");
-    for (const pr of (r.info.programs ?? []) as unknown as Array<{ getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
-      try { if (!pr.isReady || pr.isReady()) { pr.getUniforms?.(); pr.getAttributes?.(); } } catch { /* reported by three */ }
-      if (!urgent) await engine.yield();
+    for (const pr of (r.info.programs ?? []) as unknown as Array<{ __w?: number; getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
+      if (!pr.__w && (!pr.isReady || pr.isReady())) { pr.__w = 1; try { pr.getUniforms?.(); pr.getAttributes?.(); } catch {} if (!urgent) await engine.yield(); }
     }
     // (what held a fresh material dissolves in instead of appearing in one frame — engine/cull.ts reveal)
     engine.cull.reveal(objs.slice(roots.length));
