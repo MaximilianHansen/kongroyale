@@ -392,7 +392,12 @@ export class ClientMatch {
     } else if (m.t === "phase") {
       this.phase = m.phase as number; this.phaseTick = m.tick as number; this.phaseTime = 0; Object.assign(this.plane, m.plane as object); if (m.plan) this.plan = m.plan as StormPlan;
       this.planeStart = this.phase === 1 ? this.phaseTick : -1;
-      if (this.phase <= 1) { this.glass.reset(); this.resetVehicles(); for (const w of this.covers.list) if (w.live && !w.perm) { this.covers.remove(w.id); this.sink?.coverEnd?.(w.id, 0); } }   // warm-up / a new match: every pane whole again, a new fleet (the server reset too)
+      if (this.phase <= 1) {
+        this.chests.length -= this.supplyDrops.length;
+        this.supplyDrops.length = 0;
+        this.glass.reset(); this.resetVehicles();
+        for (const w of this.covers.list) if (w.live && !w.perm) { this.covers.remove(w.id); this.sink?.coverEnd?.(w.id, 0); }
+      }   // warm-up / a new match: every pane whole again, a new fleet (the server reset too)
       this.sink?.phase(this.phase);
     }
   }

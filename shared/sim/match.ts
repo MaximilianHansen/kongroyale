@@ -364,6 +364,9 @@ export class Match {
   // ---------------------------------------------------------------- phases
   private enterWarmup() {
     this.teamOutcomeTimes.clear(); this.glass.reset(); this.bombs.length = 0; this.covers.reset();
+    // Supply crates are appended after the island's fixed chest IDs; keep those IDs stable between rounds.
+    this.chests.length -= this.supplyDrops.length;
+    this.supplyDrops.length = 0; this.supplyAt = 45;
     this.spawnTuks(this.range ? [...rangeSpots(this.world), ...heliRange(this.world)] : [...isletSpots(this.world), ...heliIslet(this.world)]);
     this.phase = Phase.Warmup; this.phaseT = 0; this.time = 0; this.warmWall = 0; this.warmHeldS = 0;
     const islet = POIS.find((p) => p.id === "lobby-islet")!;
@@ -762,16 +765,15 @@ export class Match {
     if (w.hp <= 0) { this.covers.remove(id); this.ev.coverEnd(id, 1); } else this.ev.coverHit(id, w.hp);
   }
   private supplyDrops: Chest[] = [];
-  private nextSupplyAt = 45;
-  private supplyCount = 0;
+  private supplyAt!: number;
   private stepSupplyDrops() {
     if (this.phase !== Phase.Play || this.range) return;
     for (let i = 0; i < this.supplyDrops.length; i++) {
       const c = this.supplyDrops[i];
       if (!c.opened && c.targetY !== undefined && c.y > c.targetY) c.y = Math.max(c.targetY, c.y - 12 * DT);
     }
-    if (this.time < this.nextSupplyAt || this.supplyCount >= 3) return;
-    this.nextSupplyAt += 90;
+    if (this.time < this.supplyAt || this.supplyDrops.length >= 3) return;
+    this.supplyAt += 90;
     for (let tries = 0; tries < 8; tries++) {
       const a = this.rng.next() * Math.PI * 2;
       const r = Math.sqrt(this.rng.next()) * this.storm.r * 0.55;
@@ -782,7 +784,6 @@ export class Match {
       const c: Chest = { id: this.chests.length, x, y: gy + 110, z, targetY: gy, yaw: this.rng.next() * Math.PI * 2, rarity: 4, opened: false, poi: -1, supply: true };
       this.chests.push(c);
       this.supplyDrops.push(c);
-      this.supplyCount++;
       this.ev.supplyDrop(c.id, c.x, c.y, c.z, gy, c.yaw);
       break;
     }

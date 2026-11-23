@@ -18,6 +18,8 @@ const tmp = (f) => (process.env.KR_REPORT_DIR ? path.join(process.env.KR_REPORT_
 /** id: the name --only takes; slow: skipped by --fast (each takes 10 s or more) */
 const checks = [
   { id: "types", name: "types", cmd: "npx", args: ["tsc", "--noEmit"] },
+  { id: "supply", name: "supply drops reset between rounds", cmd: "npx", args: ["tsx", "tools/supply-drops.test.mts"] },
+  { id: "supplyviews", name: "supply-drop views clear on round reset and match exit", cmd: "npx", args: ["tsx", "tools/supply-views.test.mts"] },
   { id: "formal", name: "TLA+ models re-verified since the code they describe changed", cmd: "node", args: ["tools/formal/drift.mjs"] },
   { id: "lint", name: "lint", cmd: "npx", args: ["tsx", "tools/lint/check.mts"] },
   { id: "bundles", name: "playtest bundles (hostile input, caps, rate limit)", cmd: "npx", args: ["tsx", "tools/playtest/bundles.test.mts"] },

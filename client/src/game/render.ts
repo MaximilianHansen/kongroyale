@@ -591,56 +591,53 @@ export class GameRender implements EventSink {
     const c = this.cm.chests[id];
     if (c?.box) { this.boxes.open(id); this.play("chest:open", c.x, c.y + 0.3, c.z, 0.55); return; }
     const v = this.chestViews.get(id); if (v) { v.open(); this.kits.lights?.track(v.object); }
-    const sd = this.supplyViews.get(id);
-    if (sd) { sd.flare.visible = false; sd.chute.visible = false; sd.box.scale.set(1, 0.45, 1); sd.box.position.y = 0.25; }
+    this.openSupply(id);
     if (c) { this.spillFrom.x = c.x; this.spillFrom.y = c.y; this.spillFrom.z = c.z; this.spillFrom.at = performance.now(); }
     if (by === this.cm.me) { this.chestsOpened++; this.humMuteUntil = performance.now() + HUM_MUTE_MS; if (this.humLoop >= 0) { this.stopLoop("chest:hum"); this.humLoop = -1; } if (this.mythHum >= 0) { this.stopLoop("mythic:hum"); this.mythHum = -1; } }
     if (c) this.play("chest:open", c.x, c.y + 0.5, c.z, 1);
     if (this.humLoop === id) { this.stopLoop("chest:hum"); this.humLoop = -1; }
     void by;
   }
-  /** end-game regen: the chest / ammo box closed again — the crate, its seam glow + halo come
-   * back (ChestView.close); the hum restarts by itself (the hum scan only skips opened chests) */
-  private supplyViews = new Map<number, { group: THREE.Group; chute: THREE.Group; flare: THREE.Mesh; box: THREE.Mesh }>();
+  // Supply drops belong to one round: their scopes close before the next warm-up, while the match scope stays open.
+  private supplyViews = new Map<number, { group: THREE.Group; chute: THREE.Group; flare: THREE.Mesh; box: THREE.Mesh; scope: Scope }>();
   private supplyHudPool: Array<{ x: number; z: number; landed: boolean }> = Array.from({ length: 4 }, () => ({ x: 0, z: 0, landed: false }));
   supplyDrop(c: { id: number; x: number; y: number; z: number; targetY?: number; yaw: number; opened: boolean }) {
     if (this.supplyViews.has(c.id)) return;
+    const scope = this.matchScope.child(`supply-${c.id}`);
     const group = new THREE.Group();
     group.position.set(c.x, c.y, c.z);
     group.rotation.y = c.yaw;
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0xffd21a, emissive: 0x805500, emissiveIntensity: 0.6, roughness: 0.35, metalness: 0.35 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.9, 0.9), boxMat);
+    const boxMat = scope.material(new THREE.MeshStandardMaterial({ color: 0xffd21a, emissive: 0x805500, emissiveIntensity: 0.6, roughness: 0.35, metalness: 0.35 }));
+    const box = new THREE.Mesh(scope.geometry("geo.world", new THREE.BoxGeometry(1.15, 0.9, 0.9)), boxMat);
     box.position.y = 0.45;
     box.castShadow = true;
     group.add(box);
     const chute = new THREE.Group();
     chute.position.y = 2.6;
-    const canopyMat = new THREE.MeshStandardMaterial({ color: 0xfff8e7, emissive: 0x332800, emissiveIntensity: 0.25, roughness: 0.8, side: THREE.DoubleSide });
-    const canopy = new THREE.Mesh(new THREE.SphereGeometry(1.75, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), canopyMat);
+    const canopyMat = scope.material(new THREE.MeshStandardMaterial({ color: 0xfff8e7, emissive: 0x332800, emissiveIntensity: 0.25, roughness: 0.8, side: THREE.DoubleSide }));
+    const canopy = new THREE.Mesh(scope.geometry("geo.world", new THREE.SphereGeometry(1.75, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.5)), canopyMat);
     chute.add(canopy);
-    const cordMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
-    const cordGeo = new THREE.CylinderGeometry(0.02, 0.02, 2.2, 4);
-    for (const [cx, cz] of [[-0.55, -0.4], [0.55, -0.4], [-0.55, 0.4], [0.55, 0.4]]) {
+    const cordMat = scope.material(new THREE.MeshBasicMaterial({ color: 0x222222 }));
+    const cordGeo = scope.geometry("geo.world", new THREE.CylinderGeometry(0.02, 0.02, 2.2, 4));
+    for (const cz of [-0.4, 0.4]) for (const cx of [-0.55, 0.55]) {
       const cord = new THREE.Mesh(cordGeo, cordMat);
       cord.position.set(cx * 0.65, -1.0, cz * 0.65);
       chute.add(cord);
     }
     group.add(chute);
-    const flareMat = new THREE.MeshBasicMaterial({ color: 0xffd21a, transparent: true, opacity: 0.24, depthWrite: false });
-    const flare = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.55, 95, 8, 1, true), flareMat);
+    const flareMat = scope.material(new THREE.MeshBasicMaterial({ color: 0xffd21a, transparent: true, opacity: 0.24, depthWrite: false }));
+    const flare = new THREE.Mesh(scope.geometry("geo.world", new THREE.CylinderGeometry(0.18, 0.55, 95, 8, 1, true)), flareMat);
     flare.position.y = 47.5;
     group.add(flare);
-    if (c.opened) { flare.visible = false; chute.visible = false; box.scale.set(1, 0.45, 1); box.position.y = 0.25; }
     this.engine.scene.add(group);
-    this.matchScope.defer(() => {
-      group.removeFromParent();
-      box.geometry.dispose(); boxMat.dispose();
-      canopy.geometry.dispose(); canopyMat.dispose();
-      cordGeo.dispose(); cordMat.dispose();
-      flare.geometry.dispose(); flareMat.dispose();
-    });
-    this.supplyViews.set(c.id, { group, chute, flare, box });
+    scope.defer(() => group.removeFromParent());
+    this.supplyViews.set(c.id, { group, chute, flare, box, scope });
+    if (c.opened) this.openSupply(c.id);
     if (!c.opened && this.cm.phase === 2) this.announce("SUPPLY DROP INBOUND", "GOLDEN CRATE PARACHUTING IN", "info");
+  }
+  private openSupply(id: number) {
+    const v = this.supplyViews.get(id);
+    if (v) { v.flare.visible = v.chute.visible = false; v.box.scale.y = 0.45; v.box.position.y = 0.25; }
   }
   private stepSupplyViews(dt: number) {
     const list = this.cm.supplyDrops;
@@ -656,6 +653,7 @@ export class GameRender implements EventSink {
       v.flare.visible = !c.opened;
     }
   }
+  /** End-game regen restores a chest's glow and hum when it closes again. */
   chestReset(id: number) {
     const c = this.cm.chests[id];
     if (c?.box) { this.boxes.close(id); return; }
@@ -876,9 +874,14 @@ export class GameRender implements EventSink {
     this.pendPush(r.victim, dmg, now);
   }
   phase(phase: number) {
-    if (phase === 0 || phase === 1) this.input.slotWanted = 0;
+    if (phase === 0 || phase === 1) {
+      for (const v of this.supplyViews.values()) v.scope.dispose();
+      this.supplyViews.clear();
+      this.hud.supplyDrops = [];
+      this.input.slotWanted = 0; this.victoryAt = -1;
+      if (this.meActor) this.meActor.setVisible(false);
+    }
     if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; }   // (the warm-up's map pin stays: it marks your drop)
-    if (phase === 0 || phase === 1) { this.victoryAt = -1; if (this.meActor) this.meActor.setVisible(false); }
     if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
   }
   inventory() { this.syncViewModel(); }
@@ -2545,10 +2548,10 @@ export class GameRender implements EventSink {
     while (h.damageDirs.length && now - h.damageDirs[0].at > 1600) h.damageDirs.shift();
     this.dmgDirsAim();
     const sdHud = (h.supplyDrops ??= []); sdHud.length = 0;
-    for (let i = 0; i < this.cm.supplyDrops.length && sdHud.length < this.supplyHudPool.length; i++) {
-      const c = this.cm.supplyDrops[i];
+    for (const c of cm.supplyDrops) {
       if (c.opened) continue;
       const slot = this.supplyHudPool[sdHud.length];
+      if (!slot) break;
       slot.x = c.x; slot.z = c.z; slot.landed = c.targetY === undefined || c.y <= c.targetY + 0.5;
       sdHud.push(slot);
     }

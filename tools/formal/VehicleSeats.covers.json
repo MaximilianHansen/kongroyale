@@ -228,7 +228,7 @@
       "shared/sim/match.ts#Match.stepVehicles": "875c476a57279794",
       "shared/sim/match.ts#Match.spawnTuks": "bfc04241a89d8d63",
       "shared/sim/match.ts#Match.kill": "acb855d8aeec42e9",
-      "shared/sim/match.ts#Match.enterWarmup": "7618bee68a8f4a70",
+      "shared/sim/match.ts#Match.enterWarmup": "cc3a9e9735ea6da1",
       "shared/sim/match.ts#Match.enterPlane": "531ea3b536fe627d",
       "shared/sim/match.ts#Match.stepRespawns": "e952cbe4f8040ffe",
       "shared/sim/match.ts#Match.spawnWarmup": "d80d6daaee6bea3a",
