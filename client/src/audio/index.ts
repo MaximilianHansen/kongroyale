@@ -937,7 +937,10 @@ class Engine implements KongAudio {
     let sweepPn: PannerNode | null = null;
     let xtalk: GainNode | null = null;
     if (!local && pos && sp) {
-      const far = d >= (sp.hrtf ?? 60);
+      // rapid combat impacts/whizzes use zero-FFT equalpower panning to prevent WebAudio graph-lock stalls in firefights;
+      // directional gunshots and close footsteps keep HRTF within 28 m
+      const hrtfR = (name.startsWith("impact:") || name === "whizz") ? 0 : Math.min(sp.hrtf ?? 60, 28);
+      const far = d >= hrtfR;
       if (far) {
         // past the HRTF range the equal-power panner has no front/back and hard-pans a lateral
         // source (far ear -160 dB). A source BEHIND you loses its top (the pinna shadow: up to -7 dB above 3.5 kHz), and a
@@ -954,7 +957,7 @@ class Engine implements KongAudio {
         xtalk = this.ctx.createGain(); xtalk.gain.value = XT_GAIN;
         tail.connect(xtalk); nodes.push(xtalk);
       }
-      const pn = this.makePanner(pos, d, sp.hrtf ?? 60);
+      const pn = this.makePanner(pos, d, hrtfR);
       tail.connect(pn); tail = pn; nodes.push(pn);
       if (name === "whizz") sweepPn = pn;
     }

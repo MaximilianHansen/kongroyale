@@ -1097,10 +1097,12 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
   for (const w of WEAPONS) for (const r of RARITIES) { jobs.push(kits.weapons.createLoot(w, r).then((v) => put(v.object, n++))); jobs.push(kits.weapons.createHeldWeapon(w, r).then((o) => put(o, n++))); }
   for (const c of CONSUMABLES) jobs.push(kits.weapons.createLoot(c, "rare").then((v) => put(v.object, n++)));
   jobs.push(kits.weapons.createLoot("ammo", "common").then((v) => put(v.object, n++)));
-  jobs.push(kits.createGlider(engine).then((gl) => put(gl.object, n++)));
   if (!loadsLazily()) await loadHeli().catch((e) => console.error("[heli] model failed", e));
   for (const o of renderPrefabs()) put(o, n++);
   }
+  // Always prewarm one shared glider behind the loading screen: its first call paints 11 procedural CanvasTextures +
+  // Sobel normal maps (~350-500 ms synchronously), which otherwise freezes the Mass Drop if Play is clicked early.
+  jobs.push(kits.createGlider(engine).then((gl) => put(gl.object, n++)));
   // one kong of every variant (team tints / outlines included), posed in a row
   // (perf: with DEFER_PREFABS the session kong pool is made + compiled + drawn after ready — prewarmMatch — instead)
   const kongs = DEFER_PREFABS ? [] : await Promise.all([0, 1, 2, 3, 4, 5].map((variant) => kits.createKong(engine, { variant })));
@@ -1185,7 +1187,9 @@ async function prewarm(engine: Engine, kits: Kits, title: TitleScene) {
   }
   // (after the shadow pass: storm.compile compiles its own scene, which leaves three's render state without the sun's
   // shadow, so a shadow pass after it warmed depth programs without USE_SHADOWMAP that no real frame draws)
-  if (!DEFER_PREFABS) compiled = Promise.all([compiled, kits.storm.compile(engine.renderer)]);
+  // Always compile + 4x4 warm-draw the storm raymarcher in parallel behind the loading screen: otherwise clicking Play
+  // before prewarmMatch finishes causes a ~500 ms synchronous D3D11/ANGLE stall on Storm Phase 1.
+  compiled = Promise.all([compiled, kits.storm.compile(engine.renderer)]);
   for (const o of hidden) o.visible = false;
   gameStage("prewarm:compile-wait", 0.55);
   try { await compiled; } catch { /* the frames below compile */ }

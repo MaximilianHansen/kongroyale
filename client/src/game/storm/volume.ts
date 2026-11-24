@@ -627,7 +627,13 @@ export function createStormVolume(o: { boltCol: THREE.Color; hazeCol: THREE.Colo
       let p: Promise<unknown> = Promise.resolve();
       try { p = renderer.compileAsync(traceScene, orthoCam); } catch (e) { console.warn("[storm] compile", e); }
       renderer.setRenderTarget(prev);
-      return p.catch(() => undefined).finally(() => t.dispose());
+      return p.then(() => {
+        // force ANGLE/D3D11 lazy pipeline link + 64^3 3D texture & ground height upload at 4x4 now, not on Storm Phase 1
+        const p2 = renderer.getRenderTarget(), auto = renderer.autoClear;
+        renderer.setRenderTarget(t); renderer.autoClear = false;
+        try { renderer.render(traceScene, orthoCam); } catch (e) { console.warn("[storm] warm", e); }
+        renderer.setRenderTarget(p2); renderer.autoClear = auto;
+      }).catch(() => undefined).finally(() => t.dispose());
     },
     sdf,
     dispose() { rt?.dispose(); grid.tex.dispose(); groundTex.dispose(); traceMat.dispose(); compMat.dispose(); tri.dispose(); },

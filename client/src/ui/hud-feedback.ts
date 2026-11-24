@@ -58,8 +58,11 @@ export class HudFeedback {
       if (this.wasAlive && alive && (s.hp > this.hp + 0.5 || s.shield > this.sh + 0.5)) { this.healUntil = now + 0.9; this.healKind = s.hp > this.hp + 0.5 ? "hp" : "sh"; }
     }
     this.hp = s.hp; this.sh = s.shield; this.wasAlive = alive;
-    // ---- directional glows (one per new damage direction)
-    for (const d of s.damageDirs) if (!this.seenDirs.has(d.at)) { this.seenDirs.add(d.at); this.lastDir = now; this.edge(d.angle, calm); }
+    // ---- directional glows (throttled to avoid full-screen radial-gradient repaints on every SMG bullet)
+    for (const d of s.damageDirs) if (!this.seenDirs.has(d.at)) {
+      this.seenDirs.add(d.at);
+      if (now - this.lastDir >= 0.12) { this.lastDir = now; this.edge(d.angle, calm); }
+    }
     if (this.seenDirs.size > 32) { const keep = new Set(s.damageDirs.map((d) => d.at)); for (const k of this.seenDirs) if (!keep.has(k)) this.seenDirs.delete(k); }
     // a loss with no shooter to point at (no direction within a moment of it): all edges flash red
     if (this.lossAt >= 0 && now - this.lossAt > 0.12) {

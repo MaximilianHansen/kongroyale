@@ -399,10 +399,10 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       // accumulates, so each prop costs one bake, ever)
       // (after a camera jump — a respawn, a landing, a view camera — check every frame for a moment: props that were
       // LOD-switched or culled where the camera came from get their rings before anyone looks)
-      if (lastCam.distanceToSquared(c) > 40 * 40) jumpFrames = 10;
+      if (lastCam.distanceToSquared(c) > 40 * 40 && c.y < 120) jumpFrames = 10;
       lastCam.copy(c);
       if (jumpFrames > 0) jumpFrames--;
-      if ((jumpFrames === 9 || jumpFrames === 1) || (frame < 120 ? frame % 12 === 4 : frame % 90 === 45)) obstacles.maybeBake();
+      if (c.y < 120 && ((jumpFrames === 9 || jumpFrames === 1) || (frame < 120 ? frame % 12 === 4 : frame % 90 === 45))) obstacles.maybeBake();
       frame++;
     };
 

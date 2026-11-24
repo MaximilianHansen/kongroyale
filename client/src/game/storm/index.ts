@@ -281,19 +281,19 @@ export function createStormVisual(ctx: WorldCtx): StormVisual {
     const cam = camRef; if (!cam) return false;
     rayDir.set(nx, ny, 0.5).unproject(cam).sub(cam.position).normalize();
     const o = cam.position; let t = 4;
-    for (let i = 0; i < 140; i++) {
+    for (let i = 0; i < 80; i++) {
       const x = o.x + rayDir.x * t, y = o.y + rayDir.y * t, z = o.z + rayDir.z * t;
       if (y < -5 || y > wallH + 420 || t > maxT) return false;
       const d = vol.sdf(x, y, z, t < 900 ? 3 : 2);
-      if (d < Math.max(0.6, t * 0.0025)) { hitP.set(x, y, z); hitT = t; return y > Math.max(0, ctx.terrain.height(x, z)) + 6; }
-      t += Math.max(d * 0.8, t * 0.002);
+      if (d < Math.max(0.8, t * 0.003)) { hitP.set(x, y, z); hitT = t; return y > Math.max(0, ctx.terrain.height(x, z)) + 6; }
+      t += Math.max(d * 0.85, t * 0.004, 1.5);
     }
     return false;
   }
   (globalThis as { __stormDbg?: unknown }).__stormDbg = { traceWall: (x: number, y: number, m: number) => traceWall(x, y, m) ? hitT : -1 };
   /** a random visible point of the wall face inside the NDC box (a few tries), or false */
   function pickOnWall(x0: number, x1: number, y0: number, y1: number, maxT: number): boolean {
-    for (let k = 0; k < 10; k++) if (traceWall(x0 + (x1 - x0) * rnd(), y0 + (y1 - y0) * rnd(), maxT) && hitT > 40) return true;
+    for (let k = 0; k < 4; k++) if (traceWall(x0 + (x1 - x0) * rnd(), y0 + (y1 - y0) * rnd(), maxT) && hitT > 40) return true;
     return false;
   }
 
@@ -412,7 +412,7 @@ export function createStormVisual(ctx: WorldCtx): StormVisual {
       if (!snapped) { dispX = c.cx; dispZ = c.cz; dispR = c.r; snapped = true; }
       root.visible = visible && circle.phase > 0;
     },
-    flash(strength = 1) { flashE = Math.max(flashE, Math.min(strength, 1.5)); for (const b of bolts) if (b.idle > 0.05) b.idle = Math.min(b.idle, 0.05 + rnd() * 0.2); },
+    flash(strength = 1) { flashE = Math.max(flashE, Math.min(strength, 1.5)); for (let i = 0; i < bolts.length; i++) { const b = bolts[i]; if (b.idle > 0.05) b.idle = Math.min(b.idle, 0.05 + i * 0.08 + rnd() * 0.05); } },
     setVisible(v: boolean) { visible = v; root.visible = v && circle.phase > 0; if (!v) restoreFog(); },
     compile: (renderer) => vol.compile(renderer),
     update(dt: number, t: number, cam: THREE.PerspectiveCamera): number {
@@ -498,6 +498,9 @@ export function createStormVisual(ctx: WorldCtx): StormVisual {
       let strikeAmt = 0;
       // (shots) the bolts are struck once — after the view camera settles: a fork faced to a stale camera is a rod
       if (ctx.shotMode && shotCam.distanceToSquared(camP) > 0.25) { shotCam.copy(camP); for (const b of bolts) { b.dur = 0.8; b.re = 0; } }
+      // budget CPU raymarching: at most 1 bolt placement per live frame (never 12 at once on storm phase start),
+      // and skip wall raymarches completely when aerial (in the plane, bolts are hidden — only deck glow flickers)
+      let struck = false;
       for (let i = 0; i < bolts.length; i++) {
         const b = bolts[i];
         b.t += ctx.shotMode ? 0 : dt;
@@ -505,8 +508,13 @@ export function createStormVisual(ctx: WorldCtx): StormVisual {
         // a re-strike down the same channel 60-180 ms after the stroke (no new placement)
         if (b.re > 0 && b.dur > 0 && b.t > b.dur + 0.06 + (b.re & 1) * 0.12) { b.re--; b.t = 0.04; flashE = Math.max(flashE, 0.2); }
         if (b.t > b.dur + b.idle || (ctx.shotMode && b.dur === 0.8)) {
-          strike(b, mode, mode === "sky" ? viewAng : focusAng);
-          if (ctx.shotMode) b.t = [0.02, 0.09, 0.03, 0.1][i & 3];   // frozen shots: most bolts caught mid-stroke
+          if (aerial && !ctx.shotMode) {
+            b.t = 0; b.dur = 0.16 + rnd() * 0.1; b.idle = 0.2 + rnd() * 0.8; b.re = 0;
+          } else if (!struck || ctx.shotMode) {
+            struck = true;
+            strike(b, mode, mode === "sky" ? viewAng : focusAng);
+            if (ctx.shotMode) b.t = [0.02, 0.09, 0.03, 0.1][i & 3];   // frozen shots: most bolts caught mid-stroke
+          }
         }
         const env = b.t < b.dur ? envelope(b.t, b.dur) : 0;
         const vis = env > 0.01 && (!skyMode || i < 3) && !aerial;

@@ -155,7 +155,7 @@ gl_FragColor = vec4(fc * f3 + add * T + mix(wtrUwUp, vec3(0.5, 0.9, 0.85), 0.35)
     const cam = this.#ctx.camera;
     const p = cam.position;
     const surf = surfaceAt ? surfaceAt(p.x, p.z) : this.#level;
-    const submerged = p.y < surf - 0.02 && this.#ctx.terrain.height(p.x, p.z) < p.y;
+    const submerged = (this.active ? p.y < surf + 0.04 : p.y < surf - 0.06) && this.#ctx.terrain.height(p.x, p.z) < p.y;
     if (submerged !== this.active) {
       this.active = submerged;
       this.#quad.visible = submerged;

@@ -767,10 +767,10 @@ export class GameRender implements EventSink {
         // predictShot booked the damage; when our bullets in flight take this kong to 0 the rest of the blast passes through
         dmg = this.cm.predDmg;
         total += dmg; if (hitV < 0 || r.zone === 1) { hitV = r.victim; hitZone = r.zone; hitT = r.t; }
-        this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), "flesh");
+        if (i < 3) this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), "flesh");
       } else if (r.worldHit) {
         const s = surfaceAt(this.engine.terrain, r.surf, ex, ez);
-        this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), s);
+        if (i < 3) this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), s);
         if (i < 2) this.play(`impact:${s}`, ex, ey, ez, w.pellets > 1 ? 0.35 : 0.55);
       }
       this.pendPush(r.victim, dmg, now);
@@ -1749,6 +1749,7 @@ export class GameRender implements EventSink {
       const res = this.padScope = this.matchScope.child("pads");
       this.pads = cm.heliSpots(!!this.range).map((sp) => { const m = createHelipad(this.engine.terrain, sp.x, sp.z, sp.yaw); res.geometry("geo.world", m.geometry); res.defer(() => m.removeFromParent()); this.engine.scene.add(m); patchTree(this.engine, m); return m; });
     }
+    let created = 0;
     for (const vr of cm.vehicles) {
       let v = this.tuks.get(vr.id);
       let A = this.tukAudio.get(vr.id);
@@ -1761,7 +1762,11 @@ export class GameRender implements EventSink {
         continue;
       }
       if (v && v.kind !== vr.kind) { v.dispose(); this.tuks.delete(vr.id); v = undefined; }
-      if (!v) { v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.engine.statics.register(v.object); this.tuks.set(vr.id, v); }
+      if (!v) {
+        if (created >= 2) continue;
+        created++;
+        v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.engine.statics.register(v.object); this.tuks.set(vr.id, v);
+      }
       if (!A) { A = { horn: -1e9, on: { I: "", D: "", S: "", F: "", H: "", G: "", O: "", B: "" }, fuseAt: -1, sunkAt: -1, exh: 0, smk: 0, fire: 0, dust: 0, lx: D0, ly: 0, lz: 0, seen: false, lastVf: 0, popAt: 0, radio: -1, radioSt: -1, pilot: false, vy: 0, gunLock: false, gunSt: vr.gunSpin > 0 ? 1 : 0, gunRef: vr.gunSpin }; this.tukAudio.set(vr.id, A); }
       v.object.visible = true;
       if (vr.st === VS.Sunk) { if (A.sunkAt < 0) A.sunkAt = now; } else A.sunkAt = -1;
@@ -2080,12 +2085,13 @@ export class GameRender implements EventSink {
     // a new match seed (PLAY AGAIN, a reconnect into another match) re-dresses every kong for it
     if (cm.seed !== this.dressedSeed) { this.dressedSeed = cm.seed; for (const a of this.actors.values()) a.actor.setOutfit?.(outfitFor(a.id, cm.seed)); this.meActor?.setOutfit?.(outfitFor(me, cm.seed)); }
     const cx = this.engine.camera.position.x, cy = this.engine.camera.position.y, cz = this.engine.camera.position.z;
+    let actorsBuilt = 0, glidersBuilt = 0;
     for (const r of cm.remotes) {
       if (r.id === me) continue;
       const a = this.actors.get(r.id);
       if (r.n === 0) { if (a) { a.actor.setVisible(false); if (a.glider) a.glider.object.visible = false; } continue; }
       const stale = st - r.lastTick > 90; // 1.5 s without data → hide
-      if (!a) { if (!stale && r.st !== PS.Plane) void this.ensureActor(r.id, r.team); continue; }
+      if (!a) { if (!stale && r.st !== PS.Plane && actorsBuilt < 2) { actorsBuilt++; void this.ensureActor(r.id, r.team); } continue; }
       const show = !stale && r.st !== PS.Plane && r.st !== PS.Spectate && !(r.st === PS.Dead && st - r.lastTick > 120);
       a.actor.setVisible(show);
       if (!show) { if (a.glider) a.glider.object.visible = false; continue; }
@@ -2126,9 +2132,9 @@ export class GameRender implements EventSink {
         if (!a.wasGrounded) this.play("land", r.x, r.y, r.z, 0.5);
       }
       a.wasGrounded = r.grounded;
-      // glider
-      if (r.st === PS.Glide) {
-        if (!a.glider && !this.gliderPending.get(r.id)) { this.gliderPending.set(r.id, true); void this.kits.createGlider(this.engine).then((g) => { if (g.object.children.length === 0) g.object.add(placeholderGlider()); g.setLod(true); this.engine.scene.add(g.object); patchTree(this.engine, g.object); a.glider = g; }); }
+      // glider (staggered max 2 creations/frame + 320 m distance cull so 49 simultaneous drops never hitch)
+      if (r.st === PS.Glide && d2 < 320 * 320) {
+        if (!a.glider && !this.gliderPending.get(r.id) && glidersBuilt < 2) { glidersBuilt++; this.gliderPending.set(r.id, true); void this.kits.createGlider(this.engine).then((g) => { if (g.object.children.length === 0) g.object.add(placeholderGlider()); g.setLod(true); this.engine.scene.add(g.object); patchTree(this.engine, g.object); a.glider = g; }); }
         if (a.glider) { a.glider.object.visible = true; a.glider.object.position.set(pose.x, pose.y + 2.3, pose.z); a.glider.object.rotation.set(0, r.yaw, 0); a.glider.setBank(0, r.pitch * 0.3); a.glider.update(dt, t); }
       } else if (a.glider) a.glider.object.visible = false;
     }
@@ -2498,8 +2504,10 @@ export class GameRender implements EventSink {
       V3b.set(d.x, d.y + age * 0.6, d.z).project(cam); if (V3b.z > 1) continue;
       h.damageNumbers.push(dnRow(i, d.at, (V3b.x + 1) / 2, (1 - V3b.y) / 2, Math.round(d.pa + d.ca), d.kind, d.target, d.ca <= 0));
     }
-    const ic = this.ic, snap = cm.snapTick(), eHeld = this.input.interactHeld();
-    if (eHeld || this.coverHeld || p.hp <= 0 || now - ic.t >= 50 || p.st !== ic.s || snap !== ic.n || (p.x - ic.x) ** 2 + (p.y - ic.y) ** 2 + (p.z - ic.z) ** 2 >= 0.0036 || Math.abs(p.yaw - ic.a) + Math.abs(p.pitch - ic.b) >= 0.03) {
+    const ic = this.ic, itemN = cm.items.size, eHeld = this.input.interactHeld();
+    // PERF-02: cache interact queries (vehicles, glass, chests, all world loot, ziplines, stands) for up to 80 ms
+    // instead of invalidating on every 60 Hz snapshot tick; recompute immediately on E, state/item-count change, or >0.25 m move.
+    if (eHeld || this.coverHeld || p.hp <= 0 || now - ic.t >= 80 || p.st !== ic.s || itemN !== ic.n || (p.x - ic.x) ** 2 + (p.y - ic.y) ** 2 + (p.z - ic.z) ** 2 >= 0.0625 || Math.abs(p.yaw - ic.a) + Math.abs(p.pitch - ic.b) >= 0.08) {
       h.interact = null; this.hlKind = 0;
       const lx = -Math.sin(p.yaw) * Math.cos(p.pitch), ly = Math.sin(p.pitch), lz = -Math.cos(p.yaw) * Math.cos(p.pitch);
       const tukAim = p.st === PS.Ground && p.hp > 0 && !p.swim ? vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, true, !p.grounded) : -1;
@@ -2521,7 +2529,7 @@ export class GameRender implements EventSink {
         if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
       }
       if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
-      ic.t = now; ic.x = p.x; ic.y = p.y; ic.z = p.z; ic.a = p.yaw; ic.b = p.pitch; ic.s = p.st; ic.n = snap;
+      ic.t = now; ic.x = p.x; ic.y = p.y; ic.z = p.z; ic.a = p.yaw; ic.b = p.pitch; ic.s = p.st; ic.n = itemN;
     }
     if (eHeld && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear);
     this.lastE = eHeld;
