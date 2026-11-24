@@ -522,7 +522,7 @@ class Placer {
         const before = this.used.length, nf = this.fronts.length;
         if (this.place(g, s, a)) {
           if (this.acceptChest(before)) return true;
-          this.used.splice(before, 1); this.fronts.length = nf; this.occN = 0; this.occMask = null;
+          this.used.splice(before, 1); this.fronts.length = nf; this.#occN = 0; this.#occMask = null;
         }
       }
     }
@@ -670,13 +670,13 @@ class Placer {
   }
 
   // ---------------------------------------------------------------- reachability
-  private wallMask: Uint8Array | null = null;
-  private occMask: Uint8Array | null = null;
-  private tmpMask: Uint8Array | null = null;
-  private occN = 0;
+  #wallMask: Uint8Array | null = null;
+  #occMask: Uint8Array | null = null;
+  #tmpMask: Uint8Array | null = null;
+  #occN = 0;
   blocked(): Uint8Array {
     const { w, d } = this.room, W = this.gridW, D = this.gridD, cw = w / W, cd = d / D, R2 = CLEAR_R * CLEAR_R;
-    if (!this.wallMask) {
+    if (!this.#wallMask) {
       const m = new Uint8Array(W * D);
       for (let j = 0; j < D; j++) for (let i = 0; i < W; i++) {
         const x = -w / 2 + (i + 0.5) * cw, z = -d / 2 + (j + 0.5) * cd;
@@ -689,10 +689,10 @@ class Placer {
         if (!wall) for (const r of this.solids) { const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1); if (dx * dx + dz * dz < R2) { wall = true; break; } }
         if (wall) m[j * W + i] = 1;
       }
-      this.wallMask = m;
+      this.#wallMask = m;
     }
     const n = this.used.length;
-    if (!n) return this.wallMask;
+    if (!n) return this.#wallMask;
     const stamp = (g: Uint8Array, items: InteriorItem[]) => {
       for (const it of items) {
         if (!it.col || it.y + it.h <= 0.5 || it.y > 1.85) continue;
@@ -706,10 +706,10 @@ class Placer {
         }
       }
     };
-    if (!this.occMask) { this.occMask = this.wallMask.slice(); this.tmpMask = new Uint8Array(W * D); }
+    if (!this.#occMask) { this.#occMask = this.#wallMask.slice(); this.#tmpMask = new Uint8Array(W * D); }
     const pre = n - 1;
-    while (this.occN < pre) stamp(this.occMask, this.used[this.occN++].items);
-    const g = this.tmpMask!; g.set(this.occMask); stamp(g, this.used[pre].items);
+    while (this.#occN < pre) stamp(this.#occMask, this.used[this.#occN++].items);
+    const g = this.#tmpMask!; g.set(this.#occMask); stamp(g, this.used[pre].items);
     return g;
   }
   cellOf(x: number, z: number): number {

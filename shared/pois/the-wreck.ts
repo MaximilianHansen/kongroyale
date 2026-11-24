@@ -97,7 +97,7 @@ export function halfBreadth(s: HullSection, x: number, y: number): number {
   if (x < x0 - 1e-4) return 0;
   const u = Math.max(0, Math.min(1, y / s.depth));
   const B = s.beam / 2;
-  const bilge = u < 0.18 ? Math.sqrt(Math.max(0, 1 - ((0.18 - u) / 0.18) * ((0.18 - u) / 0.18))) : 1;
+  const bilge = u < 0.18 ? Math.sqrt(Math.max(0, 1 - dmath.pow((0.18 - u) / 0.18, 2))) : 1;
   if (s.id === "bow") {
     const t = Math.min(1, (x - x0) / 27);
     const plan = 1 - dmath.pow(1 - t, 2.2);
@@ -110,7 +110,7 @@ export function halfBreadth(s: HullSection, x: number, y: number): number {
   // full beam over 14 m
   const t = Math.min(1, (x - x0) / 14);
   const w0 = u >= STERN_KNUCKLE ? 0.6 + 0.32 * (u - STERN_KNUCKLE) / (1 - STERN_KNUCKLE) : 0.6 * dmath.pow(u / STERN_KNUCKLE, 0.8);
-  const plan = w0 + (1 - w0) * (1 - (1 - t) * (1 - t));
+  const plan = w0 + (1 - w0) * (1 - dmath.pow(1 - t, 2));
   return Math.max(0, B * plan * bilge);
 }
 /** deck height (local y) at local x — the bow half's forecastle rises toward the stem */
@@ -300,7 +300,7 @@ export const ROCKS: Array<{ x: number; z: number; r: number; moss: number; y?: n
     }
   });
   // beach boulders + pebbles
-  for (let i = 0; i < 16; i++) { const ax = 18 + r() * 60, az = -40 + r() * 75, rv = r(); at(ax, az, 0.3 + rv * rv * 1.0, 0.2 + r() * 0.4); }
+  for (let i = 0; i < 16; i++) at(18 + r() * 60, -40 + r() * 75, 0.3 + dmath.pow(r(), 2) * 1.0, 0.2 + r() * 0.4);
   return out;
 })();
 

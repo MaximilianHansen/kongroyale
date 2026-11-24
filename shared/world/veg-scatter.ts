@@ -1404,7 +1404,7 @@ function runRule(t: Terrain, rule: Rule, clearings: Clearing[], gaps: GapGrid, n
     } else if (nearBlocked(t, x, z, pm)) return false;
     if (rule.padMargin !== undefined && nearPad(x, z, rule.padMargin)) return false;
     if (rule.vistaFree && inVista(x, z)) return false;
-    if (!rule.detail && (inLens(x, z, rule.kind) || (env.keep && env.keep.some((k) => (x - k.x) * (x - k.x) + (z - k.z) * (z - k.z) < k.r * k.r)))) return false;
+    if (!rule.detail && (inLens(x, z, rule.kind) || (env.keep && env.keep.some((k) => dmath.pow(x - k.x, 2) + dmath.pow(z - k.z, 2) < k.r * k.r)))) return false;
     if (!rule.detail && env.cones && COLLIDABLE.has(rule.kind) && env.cones.some((c) => {
       const dx = x - c.x, dz = z - c.z, d = dmath.hypot(dx, dz);
       if (d <= c.d0 || d >= c.d1) return false;
@@ -1494,7 +1494,7 @@ function runRule(t: Terrain, rule: Rule, clearings: Clearing[], gaps: GapGrid, n
         if ((rule.biome[t.biomeAt(mx, mz)] ?? 0) <= 0) continue;
         const my = t.height(mx, mz);
         if (!ok(mx, mz, my)) continue;
-        if (placed.some(([px, pz]) => (px - mx) * (px - mx) + (pz - mz) * (pz - mz) < g.gap * g.gap)) continue;
+        if (placed.some(([px, pz]) => dmath.pow(px - mx, 2) + dmath.pow(pz - mz, 2) < g.gap * g.gap)) continue;
         if (gaps.tooClose(mx, mz, g.gap)) continue;
       }
       const my = t.height(mx, mz);

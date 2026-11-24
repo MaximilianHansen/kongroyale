@@ -862,7 +862,7 @@ function blocked(x: number, z: number, hx: number, hz: number): boolean {
       const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.88;
       const u = dmath.cos(a) * d * p.rx, v = dmath.sin(a) * d * p.rz;
       const x = p.x + u * c - v * sn, z = p.z + u * sn + v * c;
-      if (!onApron(x, z, 1.5) || blocked(x, z, 2, 2) || placed.some(([px, pz]) => (px - x) * (px - x) + (pz - z) * (pz - z) < 16)) continue;
+      if (!onApron(x, z, 1.5) || blocked(x, z, 2, 2) || placed.some(([px, pz]) => dmath.pow(px - x, 2) + dmath.pow(pz - z, 2) < 16)) continue;
       if (CONTAINERS.some((q) => Math.abs(q.x - x) < 7 && Math.abs(q.z - z) < 7)) continue;
       placed.push([x, z]); k++;
       // 2 of every 5 trees are planted — the yard's land side
@@ -1009,13 +1009,13 @@ function coverPass(extra: Array<[number, number, number, number]>) {
   for (const [x, z] of solid) put(x, z);
   const near = (x: number, z: number, d: number) => {
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [px, pz] of grid.get(`${cx + i}:${cz + j}`) ?? []) if ((px - x) * (px - x) + (pz - z) * (pz - z) < d * d) return true;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [px, pz] of grid.get(`${cx + i}:${cz + j}`) ?? []) if (dmath.pow(px - x, 2) + dmath.pow(pz - z, 2) < d * d) return true;
     return false;
   };
   const quay = (x: number, z: number) => x > 858 && z > 262;
   // masts + light towers are not cover, but nothing may be staged on top of their foundations
   const masts = PROPS.filter((p) => p.kind === "lamp" || p.kind === "light-tower").map((p) => [p.x, p.z] as [number, number]);
-  const onMast = (x: number, z: number, d: number) => masts.some(([mx, mz]) => (mx - x) * (mx - x) + (mz - z) * (mz - z) < d * d);
+  const onMast = (x: number, z: number, d: number) => masts.some(([mx, mz]) => dmath.pow(mx - x, 2) + dmath.pow(mz - z, 2) < d * d);
   const R = 7.5;
   for (let z = 44; z < 470; z += 4) for (let x = 530; x < 896; x += 4) {
     if (!onApron(x, z, 3.5) || near(x, z, R) || blocked(x, z, 1.6, 1.6) && !(quay(x, z) && x < 892)) continue;

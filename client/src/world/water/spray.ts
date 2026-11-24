@@ -67,61 +67,17 @@ export class Spray {
       wtrTime: shared.wtrTime, wtrPeriod: shared.wtrPeriod, wtrSkyIrr: shared.wtrSkyIrr, wtrContact: shared.wtrContact,
       uSunCol: { value: new THREE.Color(3, 3, 3) }, uSunDir: shared.wtrSunDirW, uSpray: { value: 1.0 },
     };
+    // Surge phase + per-point jitter (~60% of cycle) launches bursts up the object face and back out on the wind,
+    // fading to zero by 340 m; fragment draws a misty core + droplet fringe.
     const mat = new THREE.ShaderMaterial({
       name: "water-spray", uniforms: this.uniforms, transparent: true, depthWrite: false, depthTest: true,
-      vertexShader: /* glsl */ `
-attribute vec4 aSp; attribute vec3 aDir;
-uniform float wtrTime, wtrPeriod, uSpray;
-varying vec2 vUv; varying float vA;
-float coastPhase(vec2 xz) { return sin(xz.x * 0.013 + xz.y * 0.009) * 0.35 + sin(xz.x * 0.0051 - xz.y * 0.0077) * 0.55 + sin(xz.y * 0.021 + 1.3) * 0.12; }
-void main() {
-  vec2 xz = aSp.xy;
-  float camD = length(cameraPosition.xz - xz);
-  // the surge's phase at this spot (shader.ts SURGE / rock fringe): the burst starts as the surge peaks
-  // (+ a per-point jitter over ~60 % of the cycle — neighbouring points shared one phase, so a whole cliff
-  //  foot burst at once for ~15 % of the time and a still frame usually caught none)
-  float jit = fract(sin(dot(floor(xz * 0.5), vec2(12.9898, 78.233))) * 43758.5453) * 0.6;
-  float psi = fract(wtrTime / (wtrPeriod * 1.2) + coastPhase(xz) * 1.7 + dot(xz, vec2(-0.004, 0.011)) + jit);
-  float strong = 0.55 + 0.45 * fract(sin(dot(floor(wtrTime / (wtrPeriod * 1.2) + coastPhase(xz) * 1.7 + dot(xz, vec2(-0.004, 0.011)) + jit) + xz, vec2(12.9898, 78.233))) * 43758.5453);
-  float tau = (psi - 0.1 - aSp.z * 0.05) * wtrPeriod * 1.2;     // seconds since this puff left
-  float life = 1.0 + 0.7 * aSp.w;
-  float on = step(0.0, tau) * step(tau, life) * uSpray * (1.0 - smoothstep(260.0, 340.0, camD));
-  float v0 = (4.0 + 5.0 * aDir.z) * strong;
-  vec2 out2 = vec2(aDir.x, aDir.y);
-  vec2 side = vec2(-out2.y, out2.x) * (aSp.w - 0.5) * 3.0;
-  // a burst climbs the object's face (back toward it) and falls back out on the wind
-  vec3 p = vec3(xz.x, 0.0, xz.y) + vec3(-out2.x, 0.0, -out2.y) * (1.2 + 1.8 * aSp.z)
-         + vec3(side.x, 0.0, side.y) * 0.4 + vec3(out2.x, 0.0, out2.y) * tau * (0.6 + 0.8 * aSp.w)
-         + vec3(0.0, v0 * tau - 4.0 * tau * tau, 0.0);
-  p.y = max(p.y, 0.05);
-  float k = clamp(tau / life, 0.0, 1.0);
-  // (bigger + taller — at eye level 50-70 m from a cliff foot 0.5-2 m puffs were a few px)
-  float size = mix(0.8, 3.4, sqrt(k)) * (0.7 + 0.5 * aDir.z) * strong * on;
-  vA = on * (1.0 - k) * (1.0 - k) * smoothstep(0.0, 0.08, k) * 0.85;
-  vUv = uv;
-  vec4 mv = viewMatrix * vec4(p, 1.0);
-  mv.xy += position.xy * size;
-  gl_Position = projectionMatrix * mv;
-  if (on < 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // (culled)
-}`,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uSunCol, uSunDir, wtrSkyIrr;
-varying vec2 vUv; varying float vA;
-float h(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
-float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
-void main() {
-  vec2 c = vUv - 0.5;
-  float r = length(c) * 2.0;
-  float n = vn(vUv * 6.0 + vA * 3.0) * 0.6 + vn(vUv * 13.0) * 0.4;
-  // a misty core + a fringe of droplets (spray, never smoke)
-  float mist = smoothstep(1.0, 0.2, r + (n - 0.5) * 0.7);
-  float drops = step(0.78, vn(vUv * 38.0 + vA * 7.0)) * smoothstep(1.05, 0.5, r);
-  float a = max(mist * 0.75, drops) * vA;
-  if (a < 0.004) discard;
-  vec3 lit = vec3(1.0, 1.02, 1.05) * (uSunCol * max(uSunDir.y, 0.1) * 0.318 * 1.2 + wtrSkyIrr);
-  gl_FragColor = vec4(lit, a);
-}`,
+      vertexShader: /* glsl */ `attribute vec4 aSp;attribute vec3 aDir;uniform float wtrTime,wtrPeriod,uSpray;varying vec2 vUv;varying float vA;
+float coastPhase(vec2 xz){return sin(xz.x*0.013+xz.y*0.009)*0.35+sin(xz.x*0.0051-xz.y*0.0077)*0.55+sin(xz.y*0.021+1.3)*0.12;}
+void main(){vec2 xz=aSp.xy;float camD=length(cameraPosition.xz-xz);float jit=fract(sin(dot(floor(xz*0.5),vec2(12.9898,78.233)))*43758.5453)*0.6;float ph=wtrTime/(wtrPeriod*1.2)+coastPhase(xz)*1.7+dot(xz,vec2(-0.004,0.011))+jit;float psi=fract(ph);float strong=0.55+0.45*fract(sin(dot(floor(ph)+xz,vec2(12.9898,78.233)))*43758.5453);float tau=(psi-0.1-aSp.z*0.05)*wtrPeriod*1.2;float life=1.0+0.7*aSp.w;float on=step(0.0,tau)*step(tau,life)*uSpray*(1.0-smoothstep(260.0,340.0,camD));float v0=(4.0+5.0*aDir.z)*strong;vec2 out2=aDir.xy;vec2 side=vec2(-out2.y,out2.x)*(aSp.w-0.5)*3.0;vec3 p=vec3(xz.x,0.0,xz.y)+vec3(-out2.x,0.0,-out2.y)*(1.2+1.8*aSp.z)+vec3(side.x,0.0,side.y)*0.4+vec3(out2.x,0.0,out2.y)*tau*(0.6+0.8*aSp.w)+vec3(0.0,v0*tau-4.0*tau*tau,0.0);p.y=max(p.y,0.05);float k=clamp(tau/life,0.0,1.0);float size=mix(0.8,3.4,sqrt(k))*(0.7+0.5*aDir.z)*strong*on;vA=on*(1.0-k)*(1.0-k)*smoothstep(0.0,0.08,k)*0.85;vUv=uv;vec4 mv=viewMatrix*vec4(p,1.0);mv.xy+=position.xy*size;gl_Position=on<0.5?vec4(2.0,2.0,2.0,1.0):projectionMatrix*mv;}`,
+      fragmentShader: /* glsl */ `uniform vec3 uSunCol,uSunDir,wtrSkyIrr;varying vec2 vUv;varying float vA;
+float h(vec2 p){return fract(sin(dot(p,vec2(41.3,289.1)))*43758.5453);}
+float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}
+void main(){float r=length(vUv-0.5)*2.0;float n=vn(vUv*6.0+vA*3.0)*0.6+vn(vUv*13.0)*0.4;float mist=smoothstep(1.0,0.2,r+(n-0.5)*0.7);float drops=step(0.78,vn(vUv*38.0+vA*7.0))*smoothstep(1.05,0.5,r);float a=max(mist*0.75,drops)*vA;if(a<0.004)discard;vec3 lit=vec3(1.0,1.02,1.05)*(uSunCol*max(uSunDir.y,0.1)*0.318*1.2+wtrSkyIrr);gl_FragColor=vec4(lit,a);}`,
     });
     const spMat = scope.material(mat);
 

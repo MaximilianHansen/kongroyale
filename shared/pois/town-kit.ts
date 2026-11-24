@@ -151,6 +151,15 @@ export function mulberry(seed: number) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+export function decodeB64(s: string): Uint8Array {
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", out = new Uint8Array(Math.floor(s.length * 3 / 4));
+  let o = 0;
+  for (let i = 0; i + 3 < s.length; i += 4) {
+    const n = (A.indexOf(s[i]) << 18) | (A.indexOf(s[i + 1]) << 12) | ((s[i + 2] === "=" ? 0 : A.indexOf(s[i + 2])) << 6) | (s[i + 3] === "=" ? 0 : A.indexOf(s[i + 3]));
+    out[o++] = (n >> 16) & 255; if (s[i + 2] !== "=") out[o++] = (n >> 8) & 255; if (s[i + 3] !== "=") out[o++] = n & 255;
+  }
+  return out.subarray(0, o);
+}
 export const hashXZ = (x: number, z: number) => ((Math.round(x * 7) * 73856093) ^ (Math.round(z * 7) * 19349663)) >>> 0;
 
 /** local → world */

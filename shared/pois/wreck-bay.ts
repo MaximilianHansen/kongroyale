@@ -1057,11 +1057,10 @@ function rockSolid(s: SolidSpec): RockSolid {
   const rings = [{ y: s.y0, pts: ring(s.y0) }, { y: s.yg, pts: ring(s.yg) }];
   let last = rings[1];
   const dist = (a: P2[], b: P2[]) => Math.max(...a.map((q, i) => dmath.hypot(q[0] - b[i][0], q[1] - b[i][1])));
-  let cand = s.yg + 0.02 < s.top - 1e-6 ? ring(s.yg + 0.02) : last.pts;
+  let cand: P2[] | null = null;
   for (let y = s.yg + 0.02; y < s.top - 1e-6; y += 0.02) {
-    const nxt = ring(Math.min(s.top, y + 0.02));
-    const crossW = y < yw && y + 0.02 >= yw;
-    if (crossW || dist(nxt, last.pts) > s.maxStep || y + 0.02 - last.y > s.band) { last = { y, pts: cand }; rings.push(last); }
+    const c = cand ?? ring(y), nxt = ring(Math.min(s.top, y + 0.02));
+    if ((y < yw && y + 0.02 >= yw) || dist(nxt, last.pts) > s.maxStep || y + 0.02 - last.y > s.band) { last = { y, pts: c }; rings.push(last); }
     cand = nxt;
   }
   rings.push({ y: s.top, pts: ring(s.top) });

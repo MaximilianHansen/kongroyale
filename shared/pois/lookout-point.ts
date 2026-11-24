@@ -9,7 +9,7 @@ import type { Box } from "../world/colliders";
 import baked from "./lookout-baked.json";
 import { vegTrunkColliders, VARIANTS } from "../world/veg-scatter"; // only CALLED lazily (import cycle — see coast-kit lazyBoxes)
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
-import { F, addKitLoot, bx, doorLeaves, floraColliders, kitRoom, lazyBoxes, place, ringWall, rng, settleFlora, spiral, stairs, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece } from "./coast-kit";
+import { F, addKitLoot, bx, doorLeaves, floraColliders, kitRoom, lazyBoxes, place, railCol as baseRailCol, ringWall, rng, settleFlora, spiral, stairs, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece } from "./coast-kit";
 import * as dmath from "../sim/dmath";
 
 export const PAD = { x: -590, z: 470, y: 46 };
@@ -382,10 +382,7 @@ export function treads(f: Run): { n: number; run: number; rise: number; list: Ar
 }
 /** pitched railing collider between two zone-local points (bottom follows y0 → y1). NB the sim treats a pitched box
  *  as its vertical bounding box (shared/sim/world.ts) — fine for a thin noShoot rail at a band edge. */
-function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.05): Piece {
-  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
-  return { k: "crail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "metal" };
-}
+function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.05): Piece { return baseRailCol(x0, z0, y0, x1, z1, y1, h, "crail"); }
 function cliff(): Piece[] {
   const out: Piece[] = [];
   for (const c of COLUMNS) {

@@ -406,7 +406,7 @@ export const clearings: Array<{ x: number; z: number; r: number } | { x: number;
 /** point-in-clearing test for the char-05 set's clearings (the lobby's own dressing honours them too) */
 export function inTpClearing(x: number, z: number) {
   for (const c of TP_CLEAR) {
-    if ("r" in c) { if ((x - c.x) * (x - c.x) + (z - c.z) * (z - c.z) < c.r * c.r) return true; continue; }
+    if ("r" in c) { if (dmath.pow(x - c.x, 2) + dmath.pow(z - c.z, 2) < c.r * c.r) return true; continue; }
     const cy = dmath.cos(c.yaw ?? 0), sy = dmath.sin(c.yaw ?? 0), lx = (x - c.x) * cy + (z - c.z) * sy, lz = -(x - c.x) * sy + (z - c.z) * cy;
     if (Math.abs(lx) < c.hx && Math.abs(lz) < c.hz) return true;
   }

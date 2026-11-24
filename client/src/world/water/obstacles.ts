@@ -131,78 +131,18 @@ export class ObstacleBake {
     const VS_QUAD = "varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}";
     const mkQuadMat = (uniforms: Record<string, THREE.IUniform>, fragmentShader: string) =>
       scope.material(new THREE.ShaderMaterial({ uniforms, vertexShader: VS_QUAD, fragmentShader, depthTest: false, depthWrite: false }));
+    // PROXIMITY = separable Euclidean distance transform within blurR+1 texels (~4.7 m); only solidly covered texels
+    // count so partial coverage does not inflate small rock rings. Registered foam shapes (uMask) only nudge proximity
+    // (<= 0.45) near real waterline geometry so misregistered shapes stay invisible instead of drawing phantom pads.
     this.#blurMat = mkQuadMat(
       { uTex: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uMask: { value: null }, uWide: { value: null }, uPrev: { value: null }, uUseMask: { value: 0 }, uHasPrev: { value: 0 }, uPass: { value: 0 } },
-      /* glsl */ `
-        uniform sampler2D uTex; uniform sampler2D uMask; uniform sampler2D uWide; uniform sampler2D uPrev; uniform float uUseMask; uniform float uHasPrev; uniform float uPass; uniform vec2 uDir; varying vec2 vUv;
-        // PROXIMITY = a separable EUCLIDEAN distance transform within ${blurR + 1} texels (≈ 4.7 m): pass X stores the distance to
-        // the nearest covered texel along the row, pass Y combines the rows (min over j of dx² + j²). The ring then
-        // follows the object's silhouette with round ends (a separable max filter draws rounded SQUARES around
-        // rocks and sea stacks). Partial coverage (anti-aliased edges) shifts the distance by up to half a texel.
-        const float RR = ${(blurR + 1).toFixed(1)};
-        void main(){
-          if (uPass > 2.5) { gl_FragColor = texture2D(uPrev, vUv); return; }
-          if (uPass < 0.5) {
-            float best = RR;
-            for (int i = -${blurR}; i <= ${blurR}; i++) {
-              float c = texture2D(uTex, vUv + uDir * float(i)).r;
-              // (only solidly covered texels count: faint partial coverage inflated every small rock's ring by a texel)
-              if (c > ${coverCut.toFixed(2)}) best = min(best, max(abs(float(i)) + 0.5 - c, 0.0));
-            }
-            gl_FragColor = vec4(vec3(best / RR), 1.0);
-            return;
-          }
-          vec2 prev = (uHasPrev > 0.5 || uPass > 1.5) ? texture2D(uPrev, vUv).rg : vec2(0.0);
-          float s = prev.r, wide = prev.g;
-          if (uPass < 1.5) {
-            float b2 = RR * RR;
-            for (int j = -${blurR}; j <= ${blurR}; j++) {
-              float dx = texture2D(uTex, vUv + uDir * float(j)).r * RR;
-              b2 = min(b2, dx * dx + float(j * j));
-            }
-            s = 1.0 - min(sqrt(b2), RR) / RR;
-            wide = texture2D(uWide, vUv).r;
-            if (uHasPrev > 0.5) { s = max(s, prev.r); wide = max(wide, prev.g); }
-          }
-          // the registered foam shapes (WaterApi.registerFoam*) live in the same texture: max() on the final pass.
-          // mask uv = (x, z) mapped like the obstacle view (screen-up = north = -z)
-          // registered shapes only count NEAR real waterline geometry (the bake): a shape registered in the wrong frame
-          // (open sea, nothing there) stays invisible instead of drawing a phantom white box / line
-          // (a registered shape only nudges the proximity — ≤ 0.45, the outer lapping wisps. At full strength the
-          // overlapping circles other areas register around container ends / along hulls / at piles filled whole discs
-          // with foam: "fried eggs" and flat white pads. The bake of the real waterline geometry draws the
-          // contact line and the wash)
-          if (uUseMask > 0.5) s = max(s, texture2D(uMask, vec2(vUv.x, 1.0 - vUv.y)).r * 0.45 * smoothstep(0.004, 0.05, s));
-          gl_FragColor = vec4(s, wide, 0.0, 1.0);
-        }`);
+      /* glsl */ `uniform sampler2D uTex,uMask,uWide,uPrev;uniform float uUseMask,uHasPrev,uPass;uniform vec2 uDir;varying vec2 vUv;const float RR=${(blurR + 1).toFixed(1)};void main(){if(uPass>2.5){gl_FragColor=texture2D(uPrev,vUv);return;}if(uPass<0.5){float best=RR;for(int i=-${blurR};i<=${blurR};i++){float c=texture2D(uTex,vUv+uDir*float(i)).r;if(c>${coverCut.toFixed(2)})best=min(best,max(abs(float(i))+0.5-c,0.0));}gl_FragColor=vec4(vec3(best/RR),1.0);return;}vec2 prev=(uHasPrev>0.5||uPass>1.5)?texture2D(uPrev,vUv).rg:vec2(0.0);float s=prev.r,wide=prev.g;if(uPass<1.5){float b2=RR*RR;for(int j=-${blurR};j<=${blurR};j++){float dx=texture2D(uTex,vUv+uDir*float(j)).r*RR;b2=min(b2,dx*dx+float(j*j));}s=1.0-min(sqrt(b2),RR)/RR;wide=texture2D(uWide,vUv).r;if(uHasPrev>0.5){s=max(s,prev.r);wide=max(wide,prev.g);}}if(uUseMask>0.5)s=max(s,texture2D(uMask,vec2(vUv.x,1.0-vUv.y)).r*0.45*smoothstep(0.004,0.05,s));gl_FragColor=vec4(s,wide,0.0,1.0);}`);
     // PIERCE pass (full bake resolution): coverage = above-slab footprint × (below-slab geometry within ±1 texel — the
     // shear puts a wall's above / below parts on opposite sides of it)
-    this.#pierceMat = mkQuadMat({ uTex: { value: null }, uTexel: { value: 1 / size } }, /* glsl */ `
-        uniform sampler2D uTex; uniform float uTexel; varying vec2 vUv;
-        void main(){
-          float a = texture2D(uTex, vUv).r, b = 0.0;
-          for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) b = max(b, texture2D(uTex, vUv + vec2(float(i), float(j)) * uTexel).g);
-          gl_FragColor = vec4(vec3(a * smoothstep(0.1, 0.4, b)), 1.0);
-        }`);
-    // WIDE proximity: (1) the pierce coverage averaged over 4×4 texels (2.34 m cells) — only objects ≳ 1.5 m across
-    // count, so small rocks and posts never print 16 m foam discs from the air — (2) a separable EDT of ±RW cells
-    this.#wideDown = mkQuadMat({ uTex: { value: null }, uTexel: { value: 1 / size }, uMode: { value: 0 } }, /* glsl */ `
-        uniform sampler2D uTex; uniform float uTexel; varying vec2 vUv;
-        uniform float uMode;
-        void main(){
-          if (uMode > 0.5) {
-            // SIZE filter (2.34 m cells): a covered cell counts only with ≥ 3 covered cells around it — hull sides, quay
-            // walls, sea stacks and big rocks span several; a post, a pile or a small rock (one cell) never gets churn
-            float c = texture2D(uTex, vUv).r, n = 0.0;
-            for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) n += step(0.5, texture2D(uTex, vUv + vec2(float(i), float(j)) * uTexel).r);
-            gl_FragColor = vec4(vec3(c * step(3.5, n)), 1.0);
-            return;
-          }
-          // the pierce coverage at 2.34 m: max over the 4×4 fine texels (thin sheared walls are ~0.4 m wide)
-          float a = 0.0;
-          for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) a = max(a, texture2D(uTex, vUv + (vec2(float(i), float(j)) - 1.5) * uTexel).r);
-          gl_FragColor = vec4(vec3(step(0.3, a)), 1.0);
-        }`);
+    this.#pierceMat = mkQuadMat({ uTex: { value: null }, uTexel: { value: 1 / size } }, /* glsl */ `uniform sampler2D uTex;uniform float uTexel;varying vec2 vUv;void main(){float a=texture2D(uTex,vUv).r,b=0.0;for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++)b=max(b,texture2D(uTex,vUv+vec2(float(i),float(j))*uTexel).g);gl_FragColor=vec4(vec3(a*smoothstep(0.1,0.4,b)),1.0);}`);
+    // WIDE proximity: (1) pierce coverage over 4×4 fine texels (2.34 m cells), (2) size filter requiring >= 3 covered
+    // neighbors so hull sides / quay walls / sea stacks get wide churn while single-cell posts / piles do not.
+    this.#wideDown = mkQuadMat({ uTex: { value: null }, uTexel: { value: 1 / size }, uMode: { value: 0 } }, /* glsl */ `uniform sampler2D uTex;uniform float uTexel,uMode;varying vec2 vUv;void main(){if(uMode>0.5){float c=texture2D(uTex,vUv).r,n=0.0;for(int j=-1;j<=1;j++)for(int i=-1;i<=1;i++)n+=step(0.5,texture2D(uTex,vUv+vec2(float(i),float(j))*uTexel).r);gl_FragColor=vec4(vec3(c*step(3.5,n)),1.0);return;}float a=0.0;for(int j=0;j<4;j++)for(int i=0;i<4;i++)a=max(a,texture2D(uTex,vUv+(vec2(float(i),float(j))-1.5)*uTexel).r);gl_FragColor=vec4(vec3(step(0.3,a)),1.0);}`);
     this.#wideEdt = mkQuadMat({ uTex: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uPass: { value: 0 } }, /* glsl */ `
         uniform sampler2D uTex; uniform vec2 uDir; uniform float uPass; varying vec2 vUv;
         const float RR = ${(RW + 1).toFixed(1)};
