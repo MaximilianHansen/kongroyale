@@ -10,7 +10,7 @@ import { POIS } from "../world/map";
 import { vegTrunkColliders, VARIANTS } from "../world/veg-scatter"; // only CALLED lazily (import cycle — see coast-kit lazyBoxes)
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
 import { panes, settleLoot } from "./pane-kit";
-import { F, addKitLoot, bx, doorLeaves, floraColliders, kitRoom, lazyBoxes, place, rng, settleFlora, stairs, sub, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece, type V3 } from "./coast-kit";
+import { F, addKitLoot, bx, doorLeaves, floraColliders, kitRoom, lazyBoxes, place, railCol, rng, settleFlora, stairs, sub, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece, type V3 } from "./coast-kit";
 import * as dmath from "../sim/dmath";
 
 export const PAD = { x: -470, z: -40, y: 14 };
@@ -81,10 +81,6 @@ export const TWR_WINDOWS: Array<{ wall: "back" | "right" | "left"; u: number; y0
 export const SPOT = { x: -17, z: -18.5, half: 2.2, y: 10.2, stairW: 1.3, stairZ: -17.7, stairN: 30 };
 
 /** pitched railing collider following a line (frame-local) — bottom follows y0→y1, height h */
-function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.0): Piece {
-  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
-  return { k: "rail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "metal" };
-}
 
 const nr = (p: Piece): Piece => ({ ...p, k: "rail:new" }); // rails the client draws from the piece itself
 function tower(): Piece[] {

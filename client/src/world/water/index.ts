@@ -49,6 +49,59 @@ function causticZone(T: Terrain): (x: number, z: number) => boolean {
 }
 const SNAP = 2; // metres — the clipmap origin follows the camera in steps of the L1 cell so L0 stays lattice-aligned
 
+const _gbVP = new THREE.Matrix4();
+const _gbC = new Float64Array(24);
+const _gbOut = { visible: true, waterTopV: 1, ssrTopV: 1, minDist: 0 };
+
+function waterGrabBounds(cam: THREE.PerspectiveCamera, level: number, amp: number, checkSSR: boolean) {
+  _gbVP.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+  const vp = _gbVP.elements, mw = cam.matrixWorld.elements, pe = cam.projectionMatrix.elements;
+  const cx = mw[12], cy = mw[13], cz = mw[14], kx = 1 / (pe[0] || 1), ky = 1 / (pe[5] || 1);
+  const tn = Math.max(cam.near, 0.05), tf = Math.min(cam.far, 12000), y0 = level - amp, y1 = level + amp;
+  for (let i = 0; i < 8; i++) {
+    const t = i & 4 ? tf : tn, sx = i & 1 ? 1 : -1, sy = i & 2 ? 1 : -1, b = i * 3;
+    _gbC[b] = cx + (sx * kx * mw[0] + sy * ky * mw[4] - mw[8]) * t;
+    _gbC[b + 1] = cy + (sx * kx * mw[1] + sy * ky * mw[5] - mw[9]) * t;
+    _gbC[b + 2] = cz + (sx * kx * mw[2] + sy * ky * mw[6] - mw[10]) * t;
+  }
+  let hits = 0, maxV = 0, minDistSq = Infinity, ssrTopV = 0;
+  const pv = (x: number, y: number, z: number) => {
+    const w = vp[3] * x + vp[7] * y + vp[11] * z + vp[15];
+    return w <= tn * 0.5 ? -1 : ((vp[1] * x + vp[5] * y + vp[9] * z + vp[13]) / w) * 0.5 + 0.5;
+  };
+  const nw = vp[3] * cx + vp[7] * level + vp[11] * cz + vp[15];
+  if (nw > tn * 0.5 && Math.abs(vp[0] * cx + vp[4] * level + vp[8] * cz + vp[12]) <= nw && Math.abs(vp[1] * cx + vp[5] * level + vp[9] * cz + vp[13]) <= nw) minDistSq = (cy - level) ** 2;
+  const add = (px: number, py: number, pz: number) => {
+    hits++;
+    const v = pv(px, py, pz);
+    if (v > maxV) maxV = v > 1 ? 1 : v;
+    const dx = px - cx, dz = pz - cz, d2 = dx * dx + (py - cy) ** 2 + dz * dz;
+    if (d2 < minDistSq) minDistSq = d2;
+    if (checkSSR && cy < 110 && d2 < 320 * 320) {
+      const sy = cy - level + 18, rl = Math.hypot(dx, sy, dz) || 1, tr = Math.min(240, (120 - level) / Math.max(sy / rl, 0.08));
+      ssrTopV = Math.max(ssrTopV, Math.min(1, pv(px + dx / rl * tr, level + sy / rl * tr, pz + dz / rl * tr) + 0.06));
+    }
+  };
+  for (let i = 0; i < 8; i++) {
+    const ia = i * 3, ay = _gbC[ia + 1];
+    if (ay >= y0 && ay <= y1) add(_gbC[ia], ay, _gbC[ia + 2]);
+    for (let b = 1; b < 8; b <<= 1) {
+      if (i & b) continue;
+      const jb = (i | b) * 3, by = _gbC[jb + 1];
+      if (ay === by) continue;
+      for (let m = 0; m < 2; m++) {
+        const yt = m ? y1 : y0;
+        if ((ay - yt) * (by - yt) <= 0) {
+          const s = (yt - ay) / (by - ay);
+          add(_gbC[ia] + (_gbC[jb] - _gbC[ia]) * s, yt, _gbC[ia + 2] + (_gbC[jb + 2] - _gbC[ia + 2]) * s);
+        }
+      }
+    }
+  }
+  const wt = hits ? Math.min(1, maxV + 0.04) : 0;
+  _gbOut.visible = wt > 0; _gbOut.waterTopV = wt; _gbOut.ssrTopV = Math.min(1, Math.max(wt, ssrTopV)); _gbOut.minDist = Math.sqrt(minDistSq);
+}
+
 const mod: WorldModule & { views: Record<string, CamSpec> } = {
   id: "water",
   views: {
@@ -69,7 +122,7 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
     "water-cove-bay": { pos: [182, 4.7, 526], target: [268, 1.0, 604], fov: 62, t: 12, note: "coconut cove bay: turquoise→cyan→deep, pier piles + bungalow foam, surf lines" },
     "water-sun-glitter": { pos: [460, 2.2, -573], target: [404, -6, -656], fov: 62, t: 12, note: "facing the sun from the beach: the glitter path" },
   },
-  async build(ctx) {
+  async build(ctx, scope) {
     // CPU bakes (fields, textures, the beach view camera) run in a WORKER while the rest of the world builds: the
     // module allocates its textures empty, draws with them, and holds readiness until the worker filled them
     const t0 = performance.now();
@@ -87,9 +140,11 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       await new Promise((r) => setTimeout(r, 0));
       tStep = tSlice = performance.now();
     };
-    const bake = startBake(ctx.terrain, ctx.quality === "low" ? 256 : 512);
+    const qi = { low: 0, medium: 1, high: 2, ultra: 3 }[ctx.quality];
+    const bake = startBake(ctx.terrain, qi ? 512 : 256, scope);
     const fields = bake.fields;
     const tex = bake.tex;
+    tex.array.anisotropy = flag("waniso") || [2, 4, 4, 8][qi];
     const releaseBake = ctx.hold("water:bake");
     await brk("bake-start");                            // (no build task > 50 ms — a real task break between the heavy steps)
     // the beach view camera (only ?view=biome-01-beach): the cached solve for this terrain, else the worker's solve.
@@ -103,13 +158,14 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       }).catch((e) => console.warn("[water] beach view solve failed", e));
     }
     (mod as unknown as { _beachP: Promise<void> })._beachP = beachP;
-    const mask = new FoamMask(ctx.terrain.half);
-    const obSize = ctx.quality === "low" ? 2048 : 4096;
-    const obstacles = new ObstacleBake(ctx.renderer, ctx.scene, ctx.terrain.half, obSize, obSize);
-    const tile = new WaveTile(256, ctx.quality === "low" ? 256 : 512, ctx.quality === "low" ? 128 : 200);
-    // update rates in REAL time (not per frame): at 240 fps the ripple tile renders every ~6th frame and the caustics
-    // every ~8th, at 60 fps about every other frame — the cost per second stays flat while the frame rate climbs
-    const TILE_DT = 1 / 24, CAUS_DT = ctx.quality === "low" ? Infinity : ctx.quality === "medium" ? 1 / 20 : 1 / 30;
+    const mask = new FoamMask(ctx.terrain.half, scope);
+    const obSize = qi ? 4096 : 2048;
+    const obstacles = new ObstacleBake(ctx.renderer, ctx.scene, ctx.terrain.half, obSize, qi === 1 ? 2048 : obSize, scope);
+    const tile = new WaveTile(256, [1, 256, 512, 512][qi], [0, 96, 128, 160][qi], scope);
+    tile.tile.texture.anisotropy = flag("waniso") || [2, 4, 8, 8][qi];
+    // update rates in REAL time (not per frame): scaled gently across presets so Low saves RT updates & Ultra maximizes smoothness
+    const TILE_DT = [1 / 16, 1 / 20, 1 / 24, 1 / 30][qi];
+    const CAUS_DT = [Infinity, 1 / 20, 1 / 30, 1 / 30][qi];
     await brk("step");
     const causZone = causticZone(ctx.terrain);
     await brk("step");
@@ -120,65 +176,62 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
     const { material, materialMid, materialFar, foam: foamMat, foamFar, mul, prepass, uniforms } = makeWaterMaterial(tex, fields, obstacles.texture, obstacles.scale, tile, ctx.quality, atmos ? { glsl: atmos.glsl, uniforms: atmos.uniforms } : undefined, dual);
     // the sky irradiance of the (atmos) environment for an up normal: measured once per environment, a uniform
     await brk("step");
-    const skyIrr = new SkyIrradianceProbe();
+    const skyIrr = new SkyIrradianceProbe(scope);
     const measureSky = () => skyIrr.update(ctx.renderer, ctx.scene)?.then(() => { (uniforms.wtrSkyIrr.value as THREE.Color).copy(skyIrr.value); }, (e) => console.warn("[water] sky probe failed, retrying", e));
     const releaseSky = ctx.hold("water:sky");
     void Promise.resolve(measureSky()).finally(releaseSky);
     await brk("step");
-    // the foam stack inside the main pass: ONE blended colour pass for the whole surface (dual-source), measured cheaper
-    // than its own early-discard pass (A/B: eye level −0.15 ms, aerial −0.08). ?wfoampass = the separate pass
-    const foamMain = dual && !flag("wfoampass");
+    // Near/mid separates FOAM_STACK into foamMesh (lower VGPR pressure); far keeps merged WTR_FOAMMAIN unless ?wfoampass
+    const foamFarMain = dual && !flag("wfoampass");
     const usePre = flag("wprepass");
-    if (foamMain) for (const m of [material, materialMid, materialFar]) { m.defines = m.defines || {}; m.defines.WTR_FOAMMAIN = 1; }
+    if (foamFarMain) { materialFar.defines = materialFar.defines || {}; materialFar.defines.WTR_FOAMMAIN = 1; }
     // NO polygon offset on the colour passes unless the depth pre-pass is on (?wprepass: they must pass LEQUAL on the
     // pixels it won). The offset is in depth-buffer UNITS — with near 0.1 m / far 12 km that is ~0.5 mm at 10 m but ~3 m
     // per unit at the 2.3 km aerial: the −6 units pulled the sea ~19 m toward the camera there, so it was drawn (and fully
     // shaded, then discarded as "dry" film) over every POI pad, meadow and lowland, and it veiled the lower hull of the
     // container ship / the wreck / the sea stacks (the ship's pale ghost rectangle, the wreck's olive halo, the
     // outlined bubble dots). The shore needs no offset: the film is lifted ≥ 2 cm + the LOD error above the sand
-    if (!usePre) for (const m of [material, materialMid, materialFar, foamMat, foamFar, mul]) { m.polygonOffset = false; m.polygonOffsetFactor = 0; m.polygonOffsetUnits = 0; }
-    const cells = flag("wcells") || (ctx.quality === "low" ? 48 : 64);
+    const surfMats = [material, materialMid, materialFar, foamMat, foamFar];
+    for (const m of [...surfMats, mul, prepass]) {
+      scope.material(m);
+      if (!usePre && m !== prepass) { m.polygonOffset = false; m.polygonOffsetFactor = 0; m.polygonOffsetUnits = 0; }
+    }
+    const cells = flag("wcells") || [48, 56, 64, 64][qi];
     const levels = flag("wlevels") || 8;
-    const geo = buildClipmap({ cells, baseCell: flag("wbase") || 1.0, levels, horizon: 60000 }); // 1 m cells near the camera → 128 m, span 16 km
+    const geo = scope.geometry("geo.world", buildClipmap({ cells, baseCell: flag("wbase") || 1.0, levels, horizon: 60000 })); // 1 m cells near the camera → 128 m, span 16 km
     // three draws of the one geometry, before every other transparent (renderOrder < 0; atmos clouds sort at 5)
-    const passMesh = (mat: THREE.Material, name: string, order: number) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.name = name; m.castShadow = false; m.receiveShadow = false; m.frustumCulled = false; m.renderOrder = order;
+    const passMesh = (mat: THREE.Material, name: string, order: number, g: THREE.BufferGeometry = geo, vis = true) => {
+      const m = new THREE.Mesh(g, mat);
+      m.name = name; m.castShadow = false; m.receiveShadow = order >= -1; m.frustumCulled = false; m.renderOrder = order; m.visible = vis;
       m.userData.castShadow = false; m.userData.noFoam = true;
       ctx.scene.add(m);
       return m;
     };
     await brk("step");
-    const preMesh = passMesh(prepass, "water-depth", -3);
-    // the depth pre-pass only where the swell can hide part of itself: beyond ~64 m (clipmap levels ≥ 2). Nearer, no
-    // crest can occlude a trough behind it at any camera height a player has — no depth-only raster over the near sea
-    {
+    const ls = (geo.userData.levelStart as number[] | undefined) ?? [0];
+    const sliceGeo = (start: number, count: number) => {
       const g2 = new THREE.BufferGeometry();
       for (const k of Object.keys(geo.attributes)) g2.setAttribute(k, geo.attributes[k]);
-      g2.setIndex(geo.index);
-      const ls = (geo.userData.levelStart as number[] | undefined) ?? [0];
-      g2.setDrawRange(ls[Math.min(2, ls.length - 1)] ?? 0, Infinity);
+      g2.setIndex(geo.index); g2.setDrawRange(start, count);
       g2.boundingSphere = geo.boundingSphere; g2.boundingBox = geo.boundingBox;
-      preMesh.geometry = g2;
-    }
+      return g2;
+    };
+    const preMesh = passMesh(prepass, "water-depth", -3, sliceGeo(ls[Math.min(2, ls.length - 1)] ?? 0, Infinity));
+    const foamGeo = sliceGeo(0, ls.length > 7 ? ls[7] : (geo.index?.count ?? Infinity));
     const mulMesh = passMesh(mul, "water-mul", -2);
     const mesh = passMesh(material, "water", -1);
-    mesh.receiveShadow = true;
-    const foamMesh = passMesh(foamMat, "water-foam", -0.5);
-    foamMesh.receiveShadow = true;
+    const foamMesh = passMesh(foamMat, "water-foam", -0.5, foamGeo);
     // the far programs (camera high above the sea): separate meshes, so the boot prewarm compiles them with the rest
-    const meshFar = passMesh(materialFar, "water-far", -1);
+    const meshFar = passMesh(materialFar, "water-far", -1, geo, false);
     // the mid program (camera 40-120 m up: gliding, the POI view cameras) — the near one leaves the air-only foam out
-    const meshMid = passMesh(materialMid, "water-mid", -1);
-    meshMid.receiveShadow = true; meshMid.visible = false;
-    const foamMeshFar = passMesh(foamFar, "water-foam-far", -0.5);
-    meshFar.receiveShadow = foamMeshFar.receiveShadow = true;
-    meshFar.visible = foamMeshFar.visible = false;
+    const meshMid = passMesh(materialMid, "water-mid", -1, geo, false);
+    const foamMeshFar = passMesh(foamFar, "water-foam-far", -0.5, geo, false);
     // the no-post tier renders straight to the (tone-mapped, sRGB) canvas: the multiply pass encodes its factor
-    mulMesh.onBeforeRender = (renderer) => {
-      const canvas = renderer.getRenderTarget() === null;
-      if (canvas !== !!mul.defines.WTR_CANVAS) { if (canvas) mul.defines.WTR_CANVAS = 1; else delete mul.defines.WTR_CANVAS; mul.needsUpdate = true; }
+    const syncCanvas = (r: THREE.WebGLRenderer, mat: THREE.Material) => {
+      const canvas = r.getRenderTarget() === null;
+      if (canvas !== !!mat.defines?.WTR_CANVAS) { mat.defines = mat.defines || {}; if (canvas) mat.defines.WTR_CANVAS = 1; else delete mat.defines.WTR_CANVAS; mat.needsUpdate = true; }
     };
+    mulMesh.onBeforeRender = (r) => syncCanvas(r, mul);
     // DEEP-WATER OCCLUDER: a camera-centred disc under the surface, drawn first in the opaque pass: 7 m deep at the
     // camera, sloping 6 mm per metre of distance (22 m at 2.5 km) so it stays clear of any seafloor the water still
     // shows through the depth buffer's precision. Everything below it is invisible through the water (absorption), so
@@ -192,20 +245,22 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       const id = (r: number, k: number) => (r === 0 ? 0 : 1 + (r - 1) * seg + (k % seg));
       for (let k = 0; k < seg; k++) idx.push(0, id(1, k + 1), id(1, k));
       for (let r = 1; r < radii.length - 1; r++) for (let k = 0; k < seg; k++) idx.push(id(r, k), id(r, k + 1), id(r + 1, k + 1), id(r, k), id(r + 1, k + 1), id(r + 1, k));
-      const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+      const g = scope.geometry("geo.world", new THREE.BufferGeometry()); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
       return g;
     })();
     const occUni = { uOccDepth: { value: occCfg.depth }, uOccSlope: { value: occCfg.slope } };
-    const occ = new THREE.Mesh(occGeo, new THREE.ShaderMaterial({
+    const occMat = scope.material(new THREE.ShaderMaterial({
       uniforms: occUni,
       vertexShader: /* glsl */ `uniform float uOccDepth, uOccSlope;
         void main(){ vec3 p = position; p.y = -(uOccDepth + uOccSlope * length(p.xz)); gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
       fragmentShader: /* glsl */ `void main(){ gl_FragColor = vec4(0.0, 0.02, 0.05, 1.0); }`,
       depthWrite: true, depthTest: true, side: THREE.DoubleSide,
     }));
+    const occ = new THREE.Mesh(occGeo, occMat);
     occ.name = "water-occluder"; occ.renderOrder = -1000; occ.frustumCulled = false; occ.castShadow = false; occ.receiveShadow = false;
     occ.userData.noFoam = true; occ.userData.castShadow = false;
     ctx.scene.add(occ);
+    scope.defer(() => { preMesh.geometry.dispose(); foamGeo.dispose(); });
     const setDefine = (k: string, on: boolean, mat: THREE.Material = material) => {
       mat.defines = mat.defines || {};
       if (on === !!mat.defines[k]) return;
@@ -213,38 +268,36 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       mat.needsUpdate = true;
     };
     // scene-depth copy: only for the underwater volume pass (the surface itself needs no framebuffer copy)
-    const grab = new SceneGrab();
     const sceneOn = !flag("wnoscene");
+    const syncGrabUniforms = () => {
+      if (!sceneOn) return;
+      const dt = grab.depth, ct = grab.texture, active = !grab.skip, pc = ctx.camera as THREE.PerspectiveCamera;
+      uniforms.wtrSceneDepth.value = dt; uniforms.wtrSceneCol.value = ct;
+      (uniforms.wtrGrab.value as THREE.Vector4).set(1 / grab.size.x, 1 / grab.size.y, active && dt ? 1 : 0, active && ct && !grab.fromCanvas && grab.colour ? 1 : 0);
+      uniforms.wtrGrabMaxV.value = active ? grab.maxV : 0;
+      (uniforms.wtrCamNF.value as THREE.Vector2).set(pc.near, pc.far);
+    };
+    const grab = new SceneGrab(scope, syncGrabUniforms);
     grab.colour = sceneOn;
-    grab.attach(mesh, (cam) => cam === ctx.camera);
-    grab.attach(meshFar, (cam) => cam === ctx.camera);
-    grab.attach(meshMid, (cam) => cam === ctx.camera);
-    // (dual-source) the no-post tier renders straight to the tone-mapped sRGB canvas: the multiply output is encoded
-    if (dual) for (const m of [mesh, meshMid, meshFar]) {
-      const prev = m.onBeforeRender, mat = m.material as THREE.Material;
-      m.onBeforeRender = function (this: THREE.Mesh, ...a: Parameters<THREE.Mesh["onBeforeRender"]>) {
-        const canvas = a[0].getRenderTarget() === null;
-        if (canvas !== !!mat.defines?.WTR_CANVAS) { mat.defines = mat.defines || {}; if (canvas) mat.defines.WTR_CANVAS = 1; else delete mat.defines.WTR_CANVAS; mat.needsUpdate = true; }
-        prev.apply(this, a);
-      };
-    }
-    // the projection as drawn (TAA jitter included) for the screen-space reflection march
+    grab.scale = qi < 2 ? 0.5 : 1;
+    syncGrabUniforms();
     for (const m of [mesh, meshMid, meshFar]) {
-      const prev = m.onBeforeRender;
-      m.onBeforeRender = function (this: THREE.Mesh, ...a: Parameters<THREE.Mesh["onBeforeRender"]>) {
-        if ((a[2] as THREE.PerspectiveCamera).isPerspectiveCamera) (uniforms.wtrProj.value as THREE.Matrix4).copy((a[2] as THREE.Camera).projectionMatrix);
-        prev.apply(this, a);
-      };
+      const mat = m.material as THREE.Material;
+      grab.attach(m, (cam) => cam === ctx.camera, (r, cam) => {
+        if (dual) syncCanvas(r, mat);
+        // the projection as drawn (TAA jitter included) for the screen-space reflection march
+        if ((cam as THREE.PerspectiveCamera).isPerspectiveCamera) (uniforms.wtrProj.value as THREE.Matrix4).copy(cam.projectionMatrix);
+      });
     }
-    const ripples = new InteractiveRipples();
+    const ripples = new InteractiveRipples(scope);
     uniforms.wtrSim.value = ripples.texture;
     const demoRipples = flag("wripple");
     const sunDir = new THREE.Vector3(0.3, 0.85, -0.4).normalize();
     await brk("step");
-    const under = new Underwater(ctx, LEVEL, { depth: () => grab.depth, caustics: tile.caustics.texture, net: tex.array, sunDir });
+    const under = new Underwater(ctx, LEVEL, { depth: () => grab.depth, caustics: tile.caustics.texture, net: tex.array, sunDir, dual }, scope);
     console.info(`[water] build (main thread) ${Math.round(performance.now() - t0)} ms (bakes in the worker), ${tile.waves.length} ripple waves, mesh ${geo.attributes.position.count} verts / ${geo.index!.count / 3} tris, ${dual ? "dual-source (2 colour passes)" : "multiply pass (3 colour passes)"}`);
 
-    let frame = 0, lastSeen = 0, tileAcc = 1, causAcc = 1, farNow = false, midNow = false, jumpFrames = 0, occUseful = true;
+    let frame = 0, lastSeen = 0, tileAcc = 1, causAcc = 1, wasUnder = false, farNow = false, midNow = false, jumpFrames = 0, occUseful = true;
     const occDir = new THREE.Vector3();
     const lastCam = new THREE.Vector3(1e9, 0, 0);
     let disabled = false, wasOff = false; // profiling: an A/B harness switches the whole module off (__krWater.setOff)
@@ -256,21 +309,40 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       update(_dt, t);
       prof.updMs = prof.updMs * 0.9 + (performance.now() - tu0) * 0.1;
     });
+    const meshes = [preMesh, mulMesh, mesh, meshMid, foamMesh, meshFar, foamMeshFar];
     const update = (_dt: number, t: number) => {
-      if (disabled) { for (const m of [preMesh, mulMesh, mesh, meshMid, foamMesh, meshFar, foamMeshFar, occ]) m.visible = false; wasOff = true; return; }
+      if (disabled) { for (const m of meshes) m.visible = false; occ.visible = false; wasOff = true; return; }
       if (wasOff) wasOff = false;                  // (the visibility of every pass is set below, every frame)
       uniforms.wtrTime.value = t;
       // debug views (wtrDebug > 0) compile their code in only on demand: the debug values held live across
       // the whole shader cost registers on every water pixel
-      { const dbg = (uniforms.wtrDebug.value as number) > 0.5; if (dbg !== !!material.defines?.WTR_DEBUG) for (const m of [material, materialMid, materialFar, foamMat, foamFar]) setDefine("WTR_DEBUG", dbg, m); }
+      { const dbg = (uniforms.wtrDebug.value as number) > 0.5; if (dbg !== !!material.defines?.WTR_DEBUG) for (const m of surfMats) setDefine("WTR_DEBUG", dbg, m); }
       const c = ctx.camera.position;
-      for (const m of [preMesh, mulMesh, mesh, meshMid, foamMesh, meshFar, foamMeshFar]) m.position.set(Math.round(c.x / SNAP) * SNAP, LEVEL, Math.round(c.z / SNAP) * SNAP);
+      for (const m of meshes) m.position.set(Math.round(c.x / SNAP) * SNAP, LEVEL, Math.round(c.z / SNAP) * SNAP);
       grab.poll(ctx.renderer);
+      const sd = ctx.shared.get("sunDir") as THREE.Vector3 | undefined;
+      if (sd) sunDir.copy(sd).normalize();
+      (uniforms.wtrSunDirW.value as THREE.Vector3).copy(sunDir);
+      under.update(t, (x, z) => api.surfaceAt(x, z, t));
       if (frame % 30 === 0) void measureSky();            // (re-measures only when atmos swapped its environment)
       if (grab.visible) lastSeen = frame;
       // nothing of the water survived the depth test for a few frames (jungle, interiors): sleep
       const awake = frame - lastSeen < 12 || under.active;
-      grab.rows = 1;
+      // high above the sea (the aerial, the drop): the cheaper far programs — no near-only terms (short swell, fine
+      // ripples, caustics, sparkles, ripple streaks, interactive ripples); hysteresis so a glider never flip-flops
+      farNow = c.y > (farNow ? 90 : 120) && !under.active;
+      midNow = !farNow && c.y > (midNow ? 10 : 12) && !under.active;
+      if (under.active) {
+        grab.rows = 1; grab.colour = false; grab.skip = !awake;
+      } else if (!sceneOn || farNow) {
+        grab.rows = 0; grab.colour = false; grab.skip = true;
+      } else {
+        waterGrabBounds(ctx.camera as THREE.PerspectiveCamera, LEVEL, 1.2, (uniforms.wtrSSR.value as number) > 0);
+        const keep = _gbOut.visible && _gbOut.minDist <= 600;
+        grab.colour = keep && _gbOut.minDist < 320;
+        grab.rows = keep ? (grab.colour ? Math.max(_gbOut.waterTopV, _gbOut.ssrTopV) : _gbOut.waterTopV) : 0;
+        grab.skip = !awake || !keep;
+      }
       // (it only pays where deep seabed is in view: from low cameras over the shallows — a beach, wading — it just
       // costs a full-screen depth write under terrain that is nearer anyway. Measured +0.1-0.17 ms at the eye-level beach)
       if (frame % 10 === 0) {
@@ -283,9 +355,6 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       occ.visible = occCfg.on && awake && !under.active && c.y > LEVEL + 0.6 && !prof.noOcc && occUseful;
       occ.position.set(c.x, LEVEL, c.z);
       occUni.uOccDepth.value = occCfg.depth; occUni.uOccSlope.value = occCfg.slope;
-      const sd = ctx.shared.get("sunDir") as THREE.Vector3 | undefined;
-      if (sd) sunDir.copy(sd).normalize();
-      (uniforms.wtrSunDirW.value as THREE.Vector3).copy(sunDir);
       // ripple tile ≤ 40 Hz. The surface draws its caustic net procedurally (warped by this tile); the refracted-grid
       // caustics texture is only for the seabed seen from BELOW (underwater.ts), ≤ 30 Hz, only with shallow water near
       if (awake) {
@@ -295,7 +364,9 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
         const causOk = under.active && causZone(c.x, c.z);
         if (causOk && causAcc >= CAUS_DT) { causAcc = Math.min(causAcc - CAUS_DT, CAUS_DT); tile.renderCaustics(ctx.renderer, sunDir); }
       }
-      if (demoRipples && frame % 9 === 0) { // ?wripple: random splashes around the camera
+      if (!under.active && wasUnder) { tile.releaseCausticsScratch(); causAcc = 1; }
+      wasUnder = under.active;
+      if (demoRipples && frame % 9 === 0 && !under.active) { // ?wripple: random splashes around the camera
         const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 14;
         ripples.disturb(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r, 0.25 + Math.random() * 0.5, 0.05 + Math.random() * 0.12, 0.6);
       }
@@ -304,21 +375,6 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       (uniforms.wtrSimST.value as THREE.Vector3).set(ripples.origin.x, ripples.origin.y, 1 / ripples.size);
       uniforms.wtrSimOn.value = ripples.active < 600 ? 1 : 0;
       if (mask.flush()) obstacles.recomposite();
-      under.update(t, (x, z) => api.surfaceAt(x, z, t));
-      // the colour + depth copy feeds the surface too: contact collars at every object, clear submerged parts,
-      // screen-space reflections — one blit right before the water draws (~0.03 ms, measured on an RTX 4080-class GPU)
-      grab.skip = !awake || (!sceneOn && !under.active);
-      if (sceneOn) {
-        const dt = grab.depth, ct = grab.texture;
-        uniforms.wtrSceneDepth.value = dt; uniforms.wtrSceneCol.value = ct;
-        (uniforms.wtrGrab.value as THREE.Vector4).set(1 / grab.size.x, 1 / grab.size.y, dt ? 1 : 0, ct && !grab.fromCanvas ? 1 : 0);
-        const pc = ctx.camera as THREE.PerspectiveCamera;
-        (uniforms.wtrCamNF.value as THREE.Vector2).set(pc.near, pc.far);
-      }
-      // high above the sea (the aerial, the drop): the cheaper far programs — no near-only terms (short swell, fine
-      // ripples, caustics, sparkles, ripple streaks, interactive ripples); hysteresis so a glider never flip-flops
-      farNow = c.y > (farNow ? 90 : 120) && !under.active;
-      midNow = !farNow && c.y > (midNow ? 10 : 12) && !under.active;
       // below the surface: the main pass alone, opaque, seen from below (Snell's window); the blended passes sleep
       const side = under.active ? THREE.BackSide : THREE.FrontSide;
       if (material.side !== side) {
@@ -328,8 +384,8 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       }
       // the depth pre-pass only matters where the swell can hide itself (grazing views from near the surface)
       mulMesh.visible = !dual && !under.active && !prof.noMul;
-      foamMesh.visible = !foamMain && !under.active && !prof.noFoam && !farNow;
-      foamMeshFar.visible = !foamMain && !under.active && !prof.noFoam && farNow;
+      foamMesh.visible = !under.active && !prof.noFoam && !farNow;
+      foamMeshFar.visible = !foamFarMain && !under.active && !prof.noFoam && farNow;
       // (perf: no depth pre-pass by default — the near main pass writes depth itself. Its levels draw near → far, so a
       // swell crest that hides the trough behind it is drawn first and the trough fails the depth test: the same one
       // blend per pixel, without a second raster of the far sea. ?wprepass turns the pre-pass on)
@@ -343,10 +399,10 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       // accumulates, so each prop costs one bake, ever)
       // (after a camera jump — a respawn, a landing, a view camera — check every frame for a moment: props that were
       // LOD-switched or culled where the camera came from get their rings before anyone looks)
-      if (lastCam.distanceToSquared(c) > 40 * 40) jumpFrames = 12;
+      if (lastCam.distanceToSquared(c) > 40 * 40 && c.y < 120) jumpFrames = 10;
       lastCam.copy(c);
       if (jumpFrames > 0) jumpFrames--;
-      if (jumpFrames > 0 || (frame < 240 ? frame % 8 === 4 : frame % 60 === 30)) obstacles.maybeBake();
+      if (c.y < 120 && ((jumpFrames === 9 || jumpFrames === 1) || (frame < 120 ? frame % 12 === 4 : frame % 90 === 45))) obstacles.maybeBake();
       frame++;
     };
 
@@ -375,6 +431,7 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       uniforms, material, mesh,
     };
     ctx.shared.set("water", api);
+    ctx.shared.set("waterGrab", grab);
     // FLOTSAM: BANANA CO. crates riding the swell — in the beach shallows ahead-right of the beach camera (the target
     // art's floating crate), spilled cargo in the wreck lagoon, two in the cove bay
     let flotsam: Flotsam | null = null;
@@ -393,11 +450,11 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
         .filter((b) => anchors.some((a) => Math.hypot(a.x - b.x, a.z - b.z) < a.r + b.r + 10));
       const spots = flotsamSpots(ctx.terrain, anchors, blockers);
       if (spots.length) {
-        flotsam = new Flotsam(spots, tex.array);
+        flotsam = new Flotsam(spots, tex.array, scope);
         flotsam.update(12, (x, z) => api.surfaceAt(x, z, 12));
         ctx.scene.add(flotsam.mesh);
         if (flotsam.foam) ctx.scene.add(flotsam.foam);
-        ctx.onUpdate((dt, t) => flotsam!.update(t, (x, z) => api.surfaceAt(x, z, t), dt || 1 / 60));
+        ctx.onUpdate((dt, t) => flotsam!.update(t, (x, z) => api.surfaceAt(x, z, t), dt || 1 / 60, ctx.camera, under.active));
       }
       console.info(`[water] flotsam: ${spots.length} crates`);
     } catch (e) { console.warn("[water] flotsam skipped", e); } });
@@ -434,13 +491,14 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
           }
           // (deterministic order → the same thinning every load: sort by a spatial hash)
           pts.sort((a, b) => (Math.sin(a.x * 12.9898 + a.z * 78.233) % 1) - (Math.sin(b.x * 12.9898 + b.z * 78.233) % 1));
-          const keep = thinPoints(pts, 7, 2400);
-          if (spray) { ctx.scene.remove(spray.mesh); spray.mesh.geometry.dispose(); (spray.mesh.material as THREE.Material).dispose(); }
-          spray = new Spray(keep, uniforms);
+          const keep = thinPoints(pts, 7, [1200, 1800, 2400, 2400][qi]);
+          if (spray) { ctx.scene.remove(spray.group); spray.dispose(); }
+          spray = new Spray(keep, uniforms, scope);
           // (compile the spray program off the frame — KHR_parallel_shader_compile — before it is drawn)
-          try { await ctx.renderer.compileAsync(spray.mesh, ctx.camera, ctx.scene); } catch { /* compiles on first draw */ }
-          ctx.scene.add(spray.mesh);
-          console.info(`[water] spray: ${keep.length} burst points (${pts.length} candidates)`);
+          if (spray.group.children[0]) {
+            try { await ctx.renderer.compileAsync(spray.group.children[0], ctx.camera, ctx.scene); } catch { /* compiles on first draw */ }
+          }
+          ctx.scene.add(spray.group);
         } catch (e) { console.warn("[water] spray skipped", e); }
       };
       if (!fields.ready) await bake.done;
@@ -449,8 +507,7 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
     ctx.onUpdate(() => {
       if (!spray) return;
       const sun = ctx.shared.get("sun") as THREE.DirectionalLight | undefined;
-      if (sun) (spray.uniforms.uSunCol.value as THREE.Color).copy(sun.color).multiplyScalar(sun.intensity);
-      spray.mesh.visible = !disabled && !under.active;
+      spray.update(ctx.camera.position, !disabled && !under.active, sun);
     });
     // ?wfoamtest — paints demo foam shapes so other areas can see what registerFoam* looks like
     if (flag("wfoamtest")) {
@@ -458,7 +515,7 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
       api.registerFoamCapsule(40, -700, 40, -740, 1.2, 0.9);
       api.registerFoamRect(20, -760, 12, 4, 0.5, 1.5, 1);
     }
-    (window as unknown as { __krWater?: WaterApi & { tile?: WaveTile } }).__krWater = Object.assign(api, { tile, grab, obstacles, occ, occCfg, ripples, under, preMesh, mulMesh, foamMesh, foamMat, meshFar, meshMid, foamMeshFar, materialFar, materialMid, foamFar, prof, dual, get flotsam() { return flotsam; }, setOff: (off: boolean) => { disabled = off; } }); // console tuning + profiling
+    (window as unknown as { __krWater?: WaterApi & { tile?: WaveTile } }).__krWater = Object.assign(api, { tile, grab, obstacles, occ, occCfg, ripples, under, preMesh, mulMesh, foamMesh, foamMat, meshFar, meshMid, foamMeshFar, materialFar, materialMid, foamFar, prof, dual, get flotsam() { return flotsam; }, get spray() { return spray; }, setOff: (off: boolean) => { disabled = off; } }); // console tuning + profiling
     (mod as unknown as { _obstacles: ObstacleBake })._obstacles = obstacles;
     await brk("end");
   },
@@ -478,7 +535,7 @@ const mod: WorldModule & { views: Record<string, CamSpec> } = {
     if (ob) await idle();
     if (ob && ob.bakes === 0) await ob.warm(async () => { await ctx.afterPaint(); await idle(); });
     T.warm = tt() - t; t = tt();
-    ob?.maybeBake(true);
+    ob?.maybeBake(true, true);
     T.bake = tt() - t;
     // (the bake, its readback and the spray build are separate tasks — a frame renders between them)
     await new Promise((r) => setTimeout(r, 0));

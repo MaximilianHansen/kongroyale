@@ -13,6 +13,36 @@
 // and the caustics all sleep (the draw itself stays, cheap when fully occluded, to keep the query alive).
 import * as THREE from "three";
 import { contextEpoch } from "../../engine/res/restore";
+import type { Scope } from "../../engine/res/scope";
+
+const FMT_CACHE = new WeakMap<object, number>();
+
+function allocTex(gl: WebGL2RenderingContext, scope: Scope, w: number, h: number, fmt: number, filter: number, name: string, prev?: THREE.ExternalTexture | null): [WebGLTexture, THREE.ExternalTexture] {
+  const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null;
+  const tex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, fmt, w, h);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  if (name === "water-scene-depth") gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+  gl.bindTexture(gl.TEXTURE_2D, prevTex);
+  const ext = prev ?? scope.texture("tex.world", new THREE.ExternalTexture(tex));
+  if (!prev) ext.name = name; else ext.sourceTexture = tex;
+  return [tex, ext];
+}
+
+function mkFbo(gl: WebGL2RenderingContext, col: WebGLTexture | null, dep: WebGLTexture | null, fmt = 0) {
+  const fbo = gl.createFramebuffer()!;
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbo);
+  if (col) gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, col, 0);
+  if (dep) gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, fmt === gl.DEPTH24_STENCIL8 || fmt === gl.DEPTH32F_STENCIL8 ? gl.DEPTH_STENCIL_ATTACHMENT : gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, dep, 0);
+  gl.drawBuffers([col ? gl.COLOR_ATTACHMENT0 : gl.NONE]);
+  if (gl.checkFramebufferStatus(gl.DRAW_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE) return fbo;
+  gl.deleteFramebuffer(fbo);
+  return null;
+}
 
 export class SceneGrab {
   /** colour copy (linear HDR, or sRGB from the canvas) */
@@ -21,7 +51,10 @@ export class SceneGrab {
   depth: THREE.ExternalTexture | null = null;
   /** true when the colour grab came from the canvas (already tone mapped + sRGB) rather than a linear render target */
   fromCanvas = false;
+  /** drawing buffer dimensions (for normalizing gl_FragCoord.xy) */
   readonly size = new THREE.Vector2(1, 1);
+  /** resolution scale for scene copies (0.25..1) */
+  scale = 1;
   /** share of the target height (from the bottom) to copy, 0..1 */
   rows = 1;
   /** v (0..1) of the last copied row */
@@ -34,217 +67,238 @@ export class SceneGrab {
   dbgNoColour = false; dbgNoDepth = false; dbgNoQuery = false; dbgTwice = false; dbgRows1 = false; dbgSkip = false;
   /** occlusion query: did any water pixel pass the depth test (conservative — true until proven otherwise) */
   visible = true;
-  private onChange: ((fromCanvas: boolean, hasDepth: boolean) => void) | null = null;
-  private cTex: WebGLTexture | null = null;
-  private cW = 0; private cH = 0; private cFmt = 0;
-  private dTex: WebGLTexture | null = null;
-  private dFbo: WebGLFramebuffer | null = null;
-  private dW = 0; private dH = 0; private dFmt = 0;
-  private depthBroken = false;
-  private fmtCache = new WeakMap<object, number>();
-  private hadDepth = false;
+  #onAfterCopy: (() => void) | null = null;
+  readonly #scope: Scope;
+  #glRef: WebGL2RenderingContext | null = null;
+  readonly #drawSize = new THREE.Vector2();
+  #cTex: WebGLTexture | null = null;
+  #cFbo: WebGLFramebuffer | null = null;
+  #cW = 0; #cH = 0; #cFmt = 0;
+  #dTex: WebGLTexture | null = null;
+  #dFbo: WebGLFramebuffer | null = null;
+  #dW = 0; #dH = 0; #dFmt = 0;
+  #depthBroken = false;
   // colour + depth in ONE blit (ANGLE/Metal pays a render-pass break per copy op: two ops cost ~6× one)
-  private combine = true;
-  private cdFbo: WebGLFramebuffer | null = null;
-  private cdKey = "";
-  private q: WebGLQuery | null = null;
-  private qActive = false;
-  private qPending = false;
-  private epoch = contextEpoch();
+  #combine = true;
+  #cdFbo: WebGLFramebuffer | null = null;
+  #q: WebGLQuery | null = null;
+  #qActive = false;
+  #qPending = false;
+  #epoch = contextEpoch();
+  #lcF = -1; #lcR = 0; #lcC = false;
+  #rqF = -1; #rqR = 0; #rqC = false;
+  #checked = false;
 
-  constructor(onChange?: (fromCanvas: boolean, hasDepth: boolean) => void) { this.onChange = onChange ?? null; }
+  constructor(parentScope: Scope, onAfterCopy?: () => void) {
+    this.#onAfterCopy = onAfterCopy ?? null;
+    this.#scope = parentScope.child("grab");
+    this.#scope.defer(() => this.dispose());
+  }
+
+  /** request a full/custom copy for the upcoming frame (for shared secondary consumers such as The Murk) */
+  request(frame: number, rows: number, colour: boolean) {
+    if (this.#rqF !== frame) { this.#rqF = frame; this.#rqR = 0; this.#rqC = false; }
+    if (rows > this.#rqR) this.#rqR = rows;
+    if (colour) this.#rqC = true;
+  }
+
+  /** ensure a copy with at least `rows` and `colour` exists for the current frame */
+  ensureCopied(renderer: THREE.WebGLRenderer, rows = 1, colour = true) {
+    const f = renderer.info.render.frame;
+    if (this.#lcF === f && this.#lcR >= rows - 1e-3 && (!colour || this.#lcC)) return;
+    this.#revive();
+    this.copy(renderer, Math.max(this.#lcF === f ? this.#lcR : this.rows, rows), (this.#lcF === f && this.#lcC) || colour);
+    this.#onAfterCopy?.();
+    this.#rqF = -1;
+  }
 
   /** install on the water mesh: copies the framebuffer just before the mesh renders (main pass only) + the query */
-  attach(mesh: THREE.Mesh, isMain: (camera: THREE.Camera) => boolean) {
+  attach(mesh: THREE.Mesh, isMain: (camera: THREE.Camera) => boolean, beforeCopy?: (r: THREE.WebGLRenderer, cam: THREE.Camera) => void) {
     mesh.onBeforeRender = (renderer, _scene, camera) => {
       if (!isMain(camera)) return;
-      this.revive();
-      if (!this.skip && !this.dbgSkip) { this.copy(renderer); if (this.dbgTwice) this.copy(renderer); }
-      this.beginQuery(renderer);
+      beforeCopy?.(renderer, camera);
+      this.#revive();
+      const frame = renderer.info.render.frame;
+      const hasExt = this.#rqF >= 0 && frame - this.#rqF <= 2;
+      if ((!this.skip || hasExt) && !this.dbgSkip) {
+        if (hasExt) this.copy(renderer, Math.max(this.skip ? 0 : this.rows, this.#rqR), (!this.skip && this.colour) || this.#rqC);
+        else this.copy(renderer);
+        if (this.dbgTwice) this.copy(renderer);
+      }
+      if (hasExt) this.#rqF = -1;
+      this.#onAfterCopy?.();
+      this.#beginQuery(renderer);
     };
     mesh.onAfterRender = (renderer, _scene, camera) => {
-      if (!isMain(camera)) return;
-      this.endQuery(renderer);
+      if (isMain(camera)) this.#endQuery(renderer);
     };
   }
 
   /** read a finished query (call once per frame before deciding what to update) */
   poll(renderer: THREE.WebGLRenderer) {
-    this.revive();
-    if (!this.qPending || !this.q) return;
+    this.#revive();
+    if (!this.#qPending || !this.#q) return;
     const gl = renderer.getContext() as WebGL2RenderingContext;
-    if (!gl.getQueryParameter(this.q, gl.QUERY_RESULT_AVAILABLE)) return;
-    this.visible = !!gl.getQueryParameter(this.q, gl.QUERY_RESULT);
-    this.qPending = false;
+    if (!gl.getQueryParameter(this.#q, gl.QUERY_RESULT_AVAILABLE)) return;
+    this.visible = !!gl.getQueryParameter(this.#q, gl.QUERY_RESULT);
+    this.#qPending = false;
   }
 
-  private revive() {
-    if (this.epoch === contextEpoch()) return;
-    this.epoch = contextEpoch();
-    this.cTex = this.dTex = null; this.dFbo = this.cdFbo = null; this.cdKey = "";
-    this.q = null; this.qActive = this.qPending = false; this.visible = true;
-    this.texture = this.depth = null;
+  #revive() {
+    if (this.#epoch === contextEpoch()) return;
+    this.#epoch = contextEpoch();
+    this.visible = true;
+    this.dispose();
+  }
+
+  /** release all GL textures, framebuffers and occlusion query owned by this grab */
+  dispose(renderer?: THREE.WebGLRenderer) {
+    const gl = (renderer?.getContext() as WebGL2RenderingContext | undefined) ?? this.#glRef;
+    if (gl && !gl.isContextLost()) {
+      if (this.#cTex) gl.deleteTexture(this.#cTex);
+      if (this.#dTex) gl.deleteTexture(this.#dTex);
+      if (this.#cFbo) gl.deleteFramebuffer(this.#cFbo);
+      if (this.#dFbo) gl.deleteFramebuffer(this.#dFbo);
+      if (this.#cdFbo) gl.deleteFramebuffer(this.#cdFbo);
+      if (this.#q) gl.deleteQuery(this.#q);
+    }
+    this.texture?.dispose(); this.depth?.dispose();
+    this.#glRef = this.#cTex = this.#dTex = this.#cFbo = this.#dFbo = this.#cdFbo = this.#q = this.texture = this.depth = null;
+    this.#qActive = this.#qPending = this.#lcC = false;
+    this.#lcF = this.#rqF = -1; this.#lcR = 0;
   }
 
   /** issue the occlusion query only every Nth frame (a query per frame cost ~0.2-0.6 ms on ANGLE/Metal) */
   queryEvery = 8;
-  private qTick = 0;
-  private beginQuery(renderer: THREE.WebGLRenderer) {
-    if (this.qPending || this.qActive || this.dbgNoQuery) return;
-    if (++this.qTick % this.queryEvery !== 0) return;
+  #qTick = 0;
+  #beginQuery(renderer: THREE.WebGLRenderer) {
+    if (this.#qPending || this.#qActive || this.dbgNoQuery) return;
+    if (++this.#qTick % this.queryEvery !== 0) return;
     const gl = renderer.getContext() as WebGL2RenderingContext;
     if (!(gl instanceof WebGL2RenderingContext)) return;
-    if (!this.q) this.q = gl.createQuery();
-    if (!this.q) return;
-    gl.beginQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE, this.q);
-    this.qActive = true;
+    if (!this.#q) this.#q = gl.createQuery();
+    if (!this.#q) return;
+    gl.beginQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE, this.#q);
+    this.#qActive = true;
   }
-  private endQuery(renderer: THREE.WebGLRenderer) {
-    if (!this.qActive) return;
+  #endQuery(renderer: THREE.WebGLRenderer) {
+    if (!this.#qActive) return;
     const gl = renderer.getContext() as WebGL2RenderingContext;
     gl.endQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE);
-    this.qActive = false; this.qPending = true;
+    this.#qActive = false; this.#qPending = true;
   }
 
-  copy(renderer: THREE.WebGLRenderer) {
+  copy(renderer: THREE.WebGLRenderer, reqRows = this.rows, reqColour = this.colour) {
     const gl = renderer.getContext() as WebGL2RenderingContext;
+    this.#glRef = gl;
     const rt = renderer.getRenderTarget();
     let w: number, h: number, fromCanvas: boolean, fmt: number;
     if (rt) {
       w = rt.width; h = rt.height; fromCanvas = false;
       const t = rt.texture.type;
       fmt = t === THREE.HalfFloatType ? gl.RGBA16F : t === THREE.FloatType ? gl.RGBA32F : gl.RGBA8;
-    } else { const s = renderer.getDrawingBufferSize(new THREE.Vector2()); w = s.x; h = s.y; fromCanvas = true; fmt = gl.RGBA8; }
-    const rows = this.dbgRows1 ? 1 : Math.max(1, Math.min(h, Math.ceil(this.rows * h)));
-    const changed = this.fromCanvas !== fromCanvas;
-    if (this.colour && (!this.cTex || this.cW !== w || this.cH !== h || this.cFmt !== fmt)) this.allocColour(gl, w, h, fmt);
+    } else { const s = renderer.getDrawingBufferSize(this.#drawSize); w = s.x; h = s.y; fromCanvas = true; fmt = gl.RGBA8; }
+    const rows = this.dbgRows1 ? 1 : Math.max(1, Math.min(h, Math.ceil(reqRows * h)));
+    const s = Math.min(1, Math.max(0.25, this.scale));
+    const sw = Math.max(1, Math.round(w * s)), sh = Math.max(1, Math.round(h * s));
+    const sRows = Math.max(1, Math.min(sh, Math.ceil((rows * sh) / h)));
+    if (reqColour && (!this.#cTex || this.#cW !== sw || this.#cH !== sh || this.#cFmt !== fmt)) {
+      if (this.#cTex) gl.deleteTexture(this.#cTex);
+      if (this.#cFbo) { gl.deleteFramebuffer(this.#cFbo); this.#cFbo = null; }
+      if (this.#cdFbo) { gl.deleteFramebuffer(this.#cdFbo); this.#cdFbo = null; }
+      [this.#cTex, this.texture] = allocTex(gl, this.#scope, sw, sh, fmt, fmt === gl.RGBA32F ? gl.NEAREST : gl.LINEAR, "water-scene-grab", this.texture);
+      this.#cW = sw; this.#cH = sh; this.#cFmt = fmt;
+    }
     this.fromCanvas = fromCanvas;
     this.size.set(w, h);
-    this.maxV = Math.max(0, (rows - 1.5) / h);
-    const wantColour = this.colour && !!this.cTex && !this.dbgNoColour;
+    const wantColour = reqColour && !!this.#cTex && !this.dbgNoColour;
+    this.#lcF = renderer.info.render.frame;
+    this.#lcR = rows >= h ? 1 : rows / h;
+    this.#lcC = wantColour;
+    this.maxV = rows >= h ? 1 : Math.max(0, (sRows - 1.5) / sh);
+    const srcFbo: WebGLFramebuffer | null = !fromCanvas && rt ? (renderer.properties.get(rt) as { __webglFramebuffer?: WebGLFramebuffer }).__webglFramebuffer ?? null : null;
     let colourDone = false;
-    let hasDepth = this.hadDepth;
-    if (!this.dbgNoDepth) {
-      const r = this.copyDepth(renderer, rt, w, h, rows, wantColour && !fromCanvas && this.combine);
-      hasDepth = r.ok; colourDone = r.colour;
+    if (!this.dbgNoDepth || wantColour) {
+      const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+      const prevDraw = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+      try {
+        if (!this.dbgNoDepth) colourDone = this.#copyDepth(gl, rt, srcFbo, w, rows, sw, sh, sRows, wantColour && !fromCanvas && this.#combine);
+        if (wantColour && !colourDone) {
+          if (srcFbo || sw !== w) {
+            gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFbo);
+            if (!this.#cFbo) this.#cFbo = mkFbo(gl, this.#cTex, null);
+            if (this.#cFbo) {
+              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.#cFbo);
+              gl.blitFramebuffer(0, 0, w, rows, 0, 0, sw, sRows, gl.COLOR_BUFFER_BIT, fmt === gl.RGBA32F || (sw === w && sh === h) ? gl.NEAREST : gl.LINEAR);
+              colourDone = true;
+            }
+          }
+          if (!colourDone && sw === w && sh === h) {
+            const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null;
+            gl.bindTexture(gl.TEXTURE_2D, this.#cTex);
+            gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, rows);
+            gl.bindTexture(gl.TEXTURE_2D, prevTex);
+          }
+        }
+      } finally {
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDraw);
+      }
     }
-    if (wantColour && !colourDone) {
-      // copy rows [0, rows) of the bound framebuffer (GL origin = bottom row)
-      const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null;
-      gl.bindTexture(gl.TEXTURE_2D, this.cTex);
-      gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, rows);
-      gl.bindTexture(gl.TEXTURE_2D, prevTex);
-    }
-    if (changed || hasDepth !== this.hadDepth) { this.hadDepth = hasDepth; this.onChange?.(fromCanvas, hasDepth); }
   }
 
-  private allocColour(gl: WebGL2RenderingContext, w: number, h: number, fmt: number) {
-    if (this.cTex) gl.deleteTexture(this.cTex);
-    const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null;
-    const tex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, fmt, w, h);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, fmt === gl.RGBA32F ? gl.NEAREST : gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, fmt === gl.RGBA32F ? gl.NEAREST : gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindTexture(gl.TEXTURE_2D, prevTex);
-    this.cTex = tex; this.cW = w; this.cH = h; this.cFmt = fmt;
-    if (!this.texture) { this.texture = new THREE.ExternalTexture(tex); this.texture.name = "water-scene-grab"; }
-    else this.texture.sourceTexture = tex;
-  }
-
-  private copyDepth(renderer: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget | null, w: number, h: number, rows: number, withColour: boolean): { ok: boolean; colour: boolean } {
-    const no = { ok: false, colour: false };
-    if (this.depthBroken) return no;
-    const gl = renderer.getContext() as WebGL2RenderingContext;
-    if (!(gl instanceof WebGL2RenderingContext)) { this.depthBroken = true; return no; }
-    const srcFbo: WebGLFramebuffer | null = rt ? (renderer.properties.get(rt) as { __webglFramebuffer?: WebGLFramebuffer }).__webglFramebuffer ?? null : null;
-    if (rt && !srcFbo) return no;
-    const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-    const prevDraw = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+  #copyDepth(gl: WebGL2RenderingContext, rt: THREE.WebGLRenderTarget | null, srcFbo: WebGLFramebuffer | null, w: number, rows: number, dw: number, dh: number, dRows: number, withColour: boolean): boolean {
+    if (this.#depthBroken || (rt && !srcFbo)) return false;
+    if (!(gl instanceof WebGL2RenderingContext)) { this.#depthBroken = true; return false; }
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFbo);
-    // what depth format does the source have? (blit needs an identical one) — cached per source framebuffer
     const key: object = srcFbo ?? this;
-    let fmt = this.fmtCache.get(key) ?? 0;
+    let fmt = FMT_CACHE.get(key) ?? 0;
     if (!fmt) try {
-      const att = srcFbo ? gl.DEPTH_ATTACHMENT : gl.DEPTH;
-      const type = gl.getFramebufferAttachmentParameter(gl.READ_FRAMEBUFFER, att, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
-      if (srcFbo && type === gl.NONE) {
-        const ds = gl.getFramebufferAttachmentParameter(gl.READ_FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
-        if (ds === gl.NONE) throw new Error("no depth");
+      const a0 = srcFbo ? gl.DEPTH_ATTACHMENT : gl.DEPTH;
+      const ap = (att: number, k: number) => gl.getFramebufferAttachmentParameter(gl.READ_FRAMEBUFFER, att, k) as number;
+      if (srcFbo && ap(a0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE) === gl.NONE) {
+        if (ap(gl.DEPTH_STENCIL_ATTACHMENT, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE) === gl.NONE) throw 0;
         fmt = gl.DEPTH24_STENCIL8;
       } else {
-        const bits = gl.getFramebufferAttachmentParameter(gl.READ_FRAMEBUFFER, att, gl.FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE) as number;
-        const comp = gl.getFramebufferAttachmentParameter(gl.READ_FRAMEBUFFER, att, gl.FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE) as number;
-        const stencil = gl.getFramebufferAttachmentParameter(gl.READ_FRAMEBUFFER, att, gl.FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE) as number;
-        fmt = comp === gl.FLOAT ? (stencil > 0 ? gl.DEPTH32F_STENCIL8 : gl.DEPTH_COMPONENT32F) : bits >= 24 ? (stencil > 0 ? gl.DEPTH24_STENCIL8 : gl.DEPTH_COMPONENT24) : gl.DEPTH_COMPONENT16;
+        const bits = ap(a0, gl.FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE), comp = ap(a0, gl.FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE), st = ap(a0, gl.FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE);
+        fmt = comp === gl.FLOAT ? (st > 0 ? gl.DEPTH32F_STENCIL8 : gl.DEPTH_COMPONENT32F) : bits >= 24 ? (st > 0 ? gl.DEPTH24_STENCIL8 : gl.DEPTH_COMPONENT24) : gl.DEPTH_COMPONENT16;
       }
-      this.fmtCache.set(key, fmt);
+      FMT_CACHE.set(key, fmt);
     } catch {
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
-      this.depthBroken = true;
-      return no;
+      this.#depthBroken = true;
+      return false;
     }
-    if (!this.dTex || this.dW !== w || this.dH !== h || this.dFmt !== fmt) this.allocDepth(gl, w, h, fmt);
-    if (!this.dFbo) { gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead); return no; }
+    if (!this.#dTex || this.#dW !== dw || this.#dH !== dh || this.#dFmt !== fmt) this.#allocDepth(gl, dw, dh, fmt);
+    if (!this.#dFbo) return false;
     let colour = false;
-    if (withColour && this.cTex && this.cW === w && this.cH === h) {
-      const key = `${w}x${h}:${this.cFmt}:${fmt}`;
-      if (!this.cdFbo || this.cdKey !== key) {
-        if (this.cdFbo) gl.deleteFramebuffer(this.cdFbo);
-        const fbo = gl.createFramebuffer()!;
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbo);
-        gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.cTex, 0);
-        const att = fmt === gl.DEPTH24_STENCIL8 || fmt === gl.DEPTH32F_STENCIL8 ? gl.DEPTH_STENCIL_ATTACHMENT : gl.DEPTH_ATTACHMENT;
-        gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, att, gl.TEXTURE_2D, this.dTex, 0);
-        gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
-        if (gl.checkFramebufferStatus(gl.DRAW_FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { gl.deleteFramebuffer(fbo); this.combine = false; this.cdFbo = null; }
-        else { this.cdFbo = fbo; this.cdKey = key; }
+    if (withColour && this.#cTex && this.#cW === dw && this.#cH === dh) {
+      if (!this.#cdFbo) {
+        this.#cdFbo = mkFbo(gl, this.#cTex, this.#dTex, fmt);
+        if (!this.#cdFbo) this.#combine = false;
       }
-      if (this.cdFbo) {
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.cdFbo);
-        const first = !this.checked;
+      if (this.#cdFbo) {
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.#cdFbo);
+        const first = !this.#checked;
         if (first) gl.getError();
-        gl.blitFramebuffer(0, 0, w, rows, 0, 0, w, rows, gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+        gl.blitFramebuffer(0, 0, w, rows, 0, 0, dw, dRows, gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT, gl.NEAREST);
         colour = true;
-        if (first) { this.checked = true; if (gl.getError() !== gl.NO_ERROR) { this.combine = false; colour = false; } }
+        if (first) { this.#checked = true; if (gl.getError() !== gl.NO_ERROR) { this.#combine = false; colour = false; } }
       }
     }
     if (!colour) {
-      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.dFbo);
-      gl.blitFramebuffer(0, 0, w, rows, 0, 0, w, rows, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.#dFbo);
+      gl.blitFramebuffer(0, 0, w, rows, 0, 0, dw, dRows, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
     }
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDraw);
-    return { ok: true, colour };
+    return colour;
   }
-  private checked = false;
 
-  private allocDepth(gl: WebGL2RenderingContext, w: number, h: number, fmt: number) {
-    if (this.dTex) gl.deleteTexture(this.dTex);
-    if (this.dFbo) gl.deleteFramebuffer(this.dFbo);
-    const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture | null;
-    const tex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, fmt, w, h);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.NONE);
-    gl.bindTexture(gl.TEXTURE_2D, prevTex);
-    const fbo = gl.createFramebuffer()!;
-    const prevDraw = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbo);
-    const att = fmt === gl.DEPTH24_STENCIL8 || fmt === gl.DEPTH32F_STENCIL8 ? gl.DEPTH_STENCIL_ATTACHMENT : gl.DEPTH_ATTACHMENT;
-    gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, att, gl.TEXTURE_2D, tex, 0);
-    gl.drawBuffers([gl.NONE]);
-    const ok = gl.checkFramebufferStatus(gl.DRAW_FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDraw);
-    if (!ok) { gl.deleteTexture(tex); gl.deleteFramebuffer(fbo); this.depthBroken = true; this.dTex = null; this.dFbo = null; return; }
-    this.dTex = tex; this.dFbo = fbo; this.dW = w; this.dH = h; this.dFmt = fmt;
-    if (!this.depth) { this.depth = new THREE.ExternalTexture(tex); this.depth.name = "water-scene-depth"; }
-    else this.depth.sourceTexture = tex;
+  #allocDepth(gl: WebGL2RenderingContext, w: number, h: number, fmt: number) {
+    if (this.#dTex) gl.deleteTexture(this.#dTex);
+    if (this.#dFbo) gl.deleteFramebuffer(this.#dFbo);
+    if (this.#cdFbo) { gl.deleteFramebuffer(this.#cdFbo); this.#cdFbo = null; }
+    const [tex, ext] = allocTex(gl, this.#scope, w, h, fmt, gl.NEAREST, "water-scene-depth", this.depth);
+    const fbo = mkFbo(gl, null, tex, fmt);
+    if (!fbo) { gl.deleteTexture(tex); this.#depthBroken = true; this.#dTex = null; this.#dFbo = null; return; }
+    this.#dTex = tex; this.#dFbo = fbo; this.#dW = w; this.#dH = h; this.#dFmt = fmt; this.depth = ext;
   }
 }

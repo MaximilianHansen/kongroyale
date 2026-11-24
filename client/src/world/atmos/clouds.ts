@@ -577,56 +577,37 @@ export class Clouds {
    */
   paintShadow() {
     const t0 = performance.now();
-    const S = SHADOW_RES, scale = S / WRAP, half = WRAP / 2;
-    const s = this.state.sunDir;
-    const m = new THREE.Matrix4(), v = new THREE.Vector3(), pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
-    const Y = new THREE.Vector3(0, 1, 0);
-    const off = document.createElement("canvas"); off.width = off.height = S;
-    const o = off.getContext("2d", { willReadFrequently: true })!;
-    o.fillStyle = "#fff"; o.fillRect(0, 0, S, S);
-    o.globalCompositeOperation = "darken";
-    // the sun's ground azimuth in tile space (x = +X, y = +Z) and the elongation of a sphere's shadow along it
-    const azA = Math.atan2(s.z, s.x), el = Math.min(2.5, 1 / Math.max(0.3, s.y));
+    const S = SHADOW_RES, scale = S / WRAP, half = WRAP / 2, s = this.state.sunDir;
+    const out = this.shadowTex.image.data as Uint8Array;
+    out.fill(255);
+    const azA = Math.atan2(s.z, s.x), ca = Math.cos(azA), sa = Math.sin(azA);
+    const el = Math.min(2.5, 1 / Math.max(0.3, s.y)), invEl = 1 / el, sx = s.x / s.y, sz = s.z / s.y;
+    const mod = (v: number, m: number) => ((v % m) + m) % m;
     for (const inst of this.insts) {
-      // only the low fair-weather puffs cast (the aerial target art shows a few small clouds casting shadows). The composed
-      // heroes sit 2–9 km out for the ground views; their 1–2 km shadows darkened half the island in the aerial and
-      // would sweep over the POIs during a match
       if (inst.spec.tag !== "aerial") continue;
-      pos.set(inst.spec.x, inst.spec.y, inst.spec.z);
-      q.setFromAxisAngle(Y, inst.spec.rot);
-      sc.setScalar(inst.spec.w);
-      m.compose(pos, q, sc);
-      const sp = inst.vol.proto.spheres, w = inst.spec.w;
+      const { x: ix, y: iy, z: iz, rot, w } = inst.spec, cr = Math.cos(rot), sr = Math.sin(rot), sp = inst.vol.proto.spheres;
       for (let i = 0; i < inst.vol.proto.count; i++) {
         const r = sp[i * 5 + 3] * w;
-        if (r < w * 0.02) continue; // beads are below the tile's resolution (florets paint — the scalloped outline)
-        v.set(sp[i * 5], sp[i * 5 + 1], sp[i * 5 + 2]).applyMatrix4(m);
-        const gx = v.x - (s.x / s.y) * v.y, gz = v.z - (s.z / s.y) * v.y;
-        // wrap into the tile (periodic)
-        const wx = ((gx + half) % WRAP + WRAP) % WRAP, wz = ((gz + half) % WRAP + WRAP) % WRAP;
-        const rr = Math.max(1.5, r * 1.04 * scale); // the sphere's footprint + a thin penumbra
-        for (const ox of [0, -S, S]) for (const oz of [0, -S, S]) {
-          const cx = wx * scale + ox, cy = wz * scale + oz;
-          if (cx < -rr * el || cy < -rr * el || cx > S + rr * el || cy > S + rr * el) continue;
-          // a sphere's shadow on the ground is an ELLIPSE stretched
-          // along the sun's azimuth by 1 / sin(elevation), with a tight penumbra (~6 %) — the union keeps the puff's outline
-          o.save();
-          o.translate(cx, cy); o.rotate(azA); o.scale(el, 1);
-          const g = o.createRadialGradient(0, 0, 0, 0, 0, rr);
-          g.addColorStop(0, "rgb(0,0,0)"); g.addColorStop(0.93, "rgb(0,0,0)"); g.addColorStop(1, "rgb(255,255,255)");
-          o.fillStyle = g; o.beginPath(); o.arc(0, 0, rr, 0, Math.PI * 2); o.fill();
-          o.restore();
+        if (r < w * 0.02) continue;
+        const lx = sp[i * 5] * w, ly = sp[i * 5 + 1] * w, lz = sp[i * 5 + 2] * w;
+        const bx = mod(ix + lx * cr + lz * sr - sx * (iy + ly) + half, WRAP) * scale;
+        const by = mod(iz - lx * sr + lz * cr - sz * (iy + ly) + half, WRAP) * scale;
+        const rr = Math.max(1.5, r * 1.04 * scale), rOut = rr + 0.6, rIn = Math.max(0, rr * 0.93 - 0.6);
+        const invSpan = 255 / Math.max(1e-3, rOut - rIn), rIn2 = rIn * rIn, rOut2 = rOut * rOut;
+        const rx = Math.hypot(rOut * el * ca, rOut * sa), ry = Math.hypot(rOut * el * sa, rOut * ca);
+        for (let py = Math.floor(by - ry), y1 = Math.ceil(by + ry); py <= y1; py++) {
+          const dy = py + 0.5 - by, row = mod(py, S) * S, uB = dy * sa, vB = dy * ca;
+          for (let px = Math.floor(bx - rx), x1 = Math.ceil(bx + rx); px <= x1; px++) {
+            const dx = px + 0.5 - bx, u = (dx * ca + uB) * invEl, v = -dx * sa + vB, d2 = u * u + v * v;
+            if (d2 >= rOut2) continue;
+            const idx = row + mod(px, S);
+            if (d2 <= rIn2) { out[idx] = 0; continue; }
+            const val = ((Math.sqrt(d2) - rIn) * invSpan + 0.5) | 0;
+            if (val < out[idx]) out[idx] = val;
+          }
         }
       }
     }
-    // soft edges (~20 m), then keep one channel
-    const b = document.createElement("canvas"); b.width = b.height = S;
-    const bx = b.getContext("2d", { willReadFrequently: true })!;
-    bx.fillStyle = "#fff"; bx.fillRect(0, 0, S, S);
-    bx.filter = "blur(0.6px)"; bx.drawImage(off, 0, 0); bx.filter = "none";
-    const px = bx.getImageData(0, 0, S, S).data;
-    const out = this.shadowTex.image.data as Uint8Array;
-    for (let i = 0, n = S * S; i < n; i++) out[i] = px[i * 4];
     this.shadowTex.needsUpdate = true;
     this.paintedSun.copy(s);
     const w = globalThis as unknown as { __kr?: { atmosCloudShadowMs?: number } };

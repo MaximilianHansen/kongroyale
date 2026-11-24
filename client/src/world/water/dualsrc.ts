@@ -42,7 +42,7 @@ export function installDualSource(renderer: THREE.WebGLRenderer): boolean {
   gl.deleteProgram(prog); gl.deleteShader(vs); gl.deleteShader(fs);
   if (!ok) return false;
 
-  const SRC1 = ext.SRC1_COLOR_WEBGL, SAT = gl.SRC_ALPHA_SATURATE;
+  const SRC1 = ext.SRC1_COLOR_WEBGL, SAT = gl.SRC_ALPHA_SATURATE, BLEND = gl.BLEND;
   const shaderSource = gl.shaderSource.bind(gl);
   gl.shaderSource = (sh: WebGLShader, src: string) => {
     // (fragment shaders only: three's pc_fragColor output line is the marker of one)
@@ -52,9 +52,16 @@ export function installDualSource(renderer: THREE.WebGLRenderer): boolean {
     }
     shaderSource(sh, src);
   };
-  const blendFuncSeparate = gl.blendFuncSeparate.bind(gl), blendFunc = gl.blendFunc.bind(gl);
-  gl.blendFuncSeparate = (sr: number, dr: number, sa: number, da: number) => blendFuncSeparate(sr, dr === SAT ? SRC1 : dr, sa, da);
-  gl.blendFunc = (s: number, d: number) => blendFunc(s, d === SAT ? SRC1 : d);
+  const bfs = gl.blendFuncSeparate.bind(gl), bf = gl.blendFunc.bind(gl), en = gl.enable.bind(gl), dis = gl.disable.bind(gl);
+  let src1 = false, sSr = 1, sSa = 1, sDa = 1;
+  gl.blendFuncSeparate = (sr: number, dr: number, sa: number, da: number) => {
+    src1 = dr === SAT; sSr = sr; sSa = sa; sDa = da === SAT ? SRC1 : da;
+    bfs(sr, src1 ? SRC1 : dr, sa, da);
+  };
+  gl.blendFunc = (s: number, d: number) => { src1 = d === SAT; sSr = s; sSa = s; sDa = src1 ? SRC1 : d; bf(s, src1 ? SRC1 : d); };
+  // ANGLE rejects subsequent non-blended FBO draws with GL_INVALID_OPERATION if BLEND_DST_RGB stays SRC1_COLOR_WEBGL.
+  gl.disable = (c: number) => { dis(c); if (c === BLEND && src1) bfs(1, 0, 1, 0); };
+  gl.enable = (c: number) => { if (c === BLEND && src1) bfs(sSr, SRC1, sSa, sDa); en(c); };
   gl.__wtrDualSrc = true;
   return true;
 }

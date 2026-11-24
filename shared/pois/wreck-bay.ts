@@ -1043,11 +1043,13 @@ function rockSolid(s: SolidSpec): RockSolid {
   const dk = s.plan.map(() => 0.6 + 0.8 * rnd());
   const c0 = centroid2(s.plan), Rv = s.plan.map((q) => dmath.hypot(q[0] - c0[0], q[1] - c0[1]));
   const la = rnd() * Math.PI * 2, lean = s.lean ?? 0, tw = (s.twist ?? 0) * (rnd() < 0.5 ? -1 : 1), dome = s.dome ?? 0;
+  const cla = dmath.cos(la) * lean, sla = dmath.sin(la) * lean;
   const yw = s.top - s.ch, H = Math.max(0.1, s.top - s.yg);
   const ring = (y: number): P2[] => {
     const h = Math.max(0, Math.min(1, (y - s.yg) / H));
-    const sh = shrink2(s.plan, s.plan.map((_, i) => tp[i] * Math.max(0, Math.min(y, yw) - s.yg) + dome * Rv[i] * dk[i] * dmath.pow(h, 2.4) + (y > yw ? (ci[i] * (y - yw)) / s.ch : 0)));
-    const ang = tw * h, ca = dmath.cos(ang), sa = dmath.sin(ang), ox = dmath.cos(la) * lean * dmath.pow(h, 1.5), oz = dmath.sin(la) * lean * dmath.pow(h, 1.5);
+    const dh = dome ? dome * dmath.pow(h, 2.4) : 0, lh = lean ? dmath.pow(h, 1.5) : 0;
+    const sh = shrink2(s.plan, s.plan.map((_, i) => tp[i] * Math.max(0, Math.min(y, yw) - s.yg) + dh * Rv[i] * dk[i] + (y > yw ? (ci[i] * (y - yw)) / s.ch : 0)));
+    const ang = tw * h, ca = dmath.cos(ang), sa = dmath.sin(ang), ox = cla * lh, oz = sla * lh;
     return convexify(sh.map(([x, z]) => { const dx = x - c0[0], dz = z - c0[1]; return [c0[0] + dx * ca - dz * sa + ox, c0[1] + dx * sa + dz * ca + oz] as P2; }));
   };
   // adaptive rings: a ring where the shape has moved maxStep (the drawn facet between two rings is their lerp; the
@@ -1055,10 +1057,11 @@ function rockSolid(s: SolidSpec): RockSolid {
   const rings = [{ y: s.y0, pts: ring(s.y0) }, { y: s.yg, pts: ring(s.yg) }];
   let last = rings[1];
   const dist = (a: P2[], b: P2[]) => Math.max(...a.map((q, i) => dmath.hypot(q[0] - b[i][0], q[1] - b[i][1])));
+  let cand: P2[] | null = null;
   for (let y = s.yg + 0.02; y < s.top - 1e-6; y += 0.02) {
-    const cand = ring(y), nxt = ring(Math.min(s.top, y + 0.02));
-    const crossW = y < yw && y + 0.02 >= yw;
-    if (crossW || dist(nxt, last.pts) > s.maxStep || y + 0.02 - last.y > s.band) { last = { y, pts: cand }; rings.push(last); }
+    const c = cand ?? ring(y), nxt = ring(Math.min(s.top, y + 0.02));
+    if ((y < yw && y + 0.02 >= yw) || dist(nxt, last.pts) > s.maxStep || y + 0.02 - last.y > s.band) { last = { y, pts: c }; rings.push(last); }
+    cand = nxt;
   }
   rings.push({ y: s.top, pts: ring(s.top) });
   const boxes: Box[] = [];

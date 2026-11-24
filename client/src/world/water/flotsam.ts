@@ -3,16 +3,24 @@
 // rides the swell through WaterApi.surfaceAt (heave), tilts with the local slope of the surface (pitch / roll, damped),
 // drifts a little on a slow orbit and yaws; its waterline ring comes from the proximity bake like any prop crossing the
 // surface. Decorative only (no collider): a floating crate in knee-deep water.
-// One InstancedMesh (one draw), ~12 instances, matrices updated each frame (≈ 0.01 ms CPU).
+// Frustum- & distance-culled + compacted per frame so off-screen / distant crates skip surfaceAt & matrix work.
 import * as THREE from "three";
 import type { Terrain } from "../../../../shared/world/terrain";
+import type { Scope } from "../../engine/res/scope";
 
 const W = 1.0, H = 0.92, D = 0.96;  // crate size (m): the target art's crate is a chunky ~1 m box (near-cube: never a coffin)
 const DRAFT = 0.3;                   // how deep it sits (m below the surface at its centre height 0): ~⅔ rides above it
+const MAX_CRATE_DIST_SQ = 340 * 340;
+const MAX_FOAM_DIST_SQ = 260 * 260;
+const MAX_UW_FOAM_DIST_SQ = 45 * 45;
 const UP = new THREE.Vector3(0, 1, 0);
+const _flFrustum = new THREE.Frustum();
+const _flProj = new THREE.Matrix4();
+const _flSph = new THREE.Sphere(undefined, 4);
+const _flZero = new THREE.Matrix4().makeScale(0, 0, 0);
 
 /** the crate texture atlas (canvas): [0, 0.5) side planks + logo, [0.5, 0.75) top planks, [0.75, 1] frame battens */
-function crateTexture(): THREE.CanvasTexture {
+function crateTexture(scope: Scope): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = 1024; c.height = 512;
   const g = c.getContext("2d")!;
@@ -81,7 +89,7 @@ function crateTexture(): THREE.CanvasTexture {
   g.fillStyle = "rgba(200,170,130,0.22)"; g.fillRect(768, 0, 256, 10); g.fillRect(768, 502, 256, 10);
   // iron bolts along the battens (the target art's crate has metal fittings at the corners)
   for (let y = 40; y < 512; y += 118) for (const x of [800, 992]) { g.fillStyle = "#2c2a28"; g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.fill(); g.fillStyle = "rgba(255,255,255,0.28)"; g.beginPath(); g.arc(x - 2, y - 2, 3, 0, Math.PI * 2); g.fill(); }
-  const t = new THREE.CanvasTexture(c);
+  const t = scope.texture("tex.world", new THREE.CanvasTexture(c));
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter;
   return t;
@@ -221,23 +229,26 @@ uniform highp sampler2DArray fcTex;`)
 export class Flotsam {
   readonly mesh: THREE.InstancedMesh;
   readonly foam: THREE.InstancedMesh | null = null;
-  private fq = new THREE.Quaternion();
-  private m = new THREE.Matrix4();
-  private q = new THREE.Quaternion();
-  private qy = new THREE.Quaternion();
-  private n = new THREE.Vector3();
-  private p = new THREE.Vector3();
-  private s = new THREE.Vector3(1, 1, 1);
-  private tilt: Array<{ pitch: number; roll: number }>;
-  private flTime = { value: 0 };
+  readonly #scope: Scope;
+  readonly #prevVis: Uint8Array;
+  #fq = new THREE.Quaternion();
+  #m = new THREE.Matrix4();
+  #q = new THREE.Quaternion();
+  #qy = new THREE.Quaternion();
+  #n = new THREE.Vector3();
+  #p = new THREE.Vector3();
+  #s = new THREE.Vector3(1, 1, 1);
+  #tilt: Array<{ pitch: number; roll: number }>;
+  #flTime = { value: 0 };
 
-  constructor(readonly spots: FlotsamSpot[], foamTex?: THREE.Texture) {
-    const mat = new THREE.MeshStandardMaterial({ map: crateTexture(), roughness: 0.82, metalness: 0 });
+  constructor(readonly spots: FlotsamSpot[], foamTex: THREE.Texture | undefined, parentScope: Scope) {
+    this.#scope = parentScope.child("flotsam");
+    const mat = this.#scope.material(new THREE.MeshStandardMaterial({ map: crateTexture(this.#scope), roughness: 0.82, metalness: 0 }));
     mat.name = "water-flotsam-crate";
     // the SUBMERGED part (below its waterline, local y < DRAFT − H/2): the wood fades into the water's teal with depth and
     // loses its contrast — otherwise the submerged half reads as a uniform cyan glass block with hard edges
     const wl = (DRAFT - H / 2).toFixed(3);
-    const flTime = this.flTime;
+    const flTime = this.#flTime;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.flTime = flTime;
       sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying float vFlY;\nvarying vec3 vFlP;\nvarying vec3 vFlN;\nvarying float vFlId;")
@@ -278,19 +289,21 @@ float flVN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     };
     mat.customProgramCacheKey = () => "flotsam-crate-v6";
     (mat as unknown as { flTime: typeof flTime }).flTime = flTime;
-    this.mesh = new THREE.InstancedMesh(crateGeometry(), mat, Math.max(1, spots.length));
+    const crateGeo = this.#scope.geometry("geo.world", crateGeometry());
+    this.mesh = new THREE.InstancedMesh(crateGeo, mat, Math.max(1, spots.length));
+    this.#prevVis = new Uint8Array(spots.length);
     this.mesh.name = "flotsam-crates";                   // (not "water-…": the waterline bake skips the water's own meshes)
     this.mesh.count = spots.length;
     // (no shadow onto the seabed a metre down: through the water it printed a crisp dark box beside the crate)
     this.mesh.castShadow = false; this.mesh.receiveShadow = true; this.mesh.userData.castShadow = false;
     this.mesh.userData.farShadow = false;              // (it moves: keep it out of the static far shadow map)
-    this.mesh.frustumCulled = false;                   // (instances spread over the island; 1 draw, a few hundred tris)
-    this.tilt = spots.map(() => ({ pitch: 0, roll: 0 }));
+    this.mesh.frustumCulled = false;                   // (per-instance frustum/distance culled in update())
+    this.#tilt = spots.map(() => ({ pitch: 0, roll: 0 }));
     if (foamTex) {
-      const g = new THREE.PlaneGeometry(W + 4.4, D + 4.4);
+      const g = this.#scope.geometry("geo.world", new THREE.PlaneGeometry(W + 4.4, D + 4.4));
       g.rotateX(-Math.PI / 2);                             // flat on the water (local xy → world xz via the instance)
       // (after rotateX the plane lies in local xz: the shader reads its footprint coordinates from position.xz)
-      this.foam = new THREE.InstancedMesh(g, foamCollarMaterial(foamTex), Math.max(1, spots.length));
+      this.foam = new THREE.InstancedMesh(g, this.#scope.material(foamCollarMaterial(foamTex)), Math.max(1, spots.length));
       this.foam.name = "flotsam-foam"; this.foam.count = spots.length;
       this.foam.castShadow = false; this.foam.receiveShadow = true; this.foam.frustumCulled = false; this.foam.renderOrder = 1;
       this.foam.userData.castShadow = false; this.foam.userData.noFoam = true; this.foam.userData.farShadow = false;
@@ -298,37 +311,62 @@ float flVN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
     this.update(12, (_x, _z) => 0);
   }
 
-  /** ride the swell: heave from surfaceAt, pitch/roll from its slope (damped — a heavy crate), a slow drift + yaw */
-  update(t: number, surfaceAt: (x: number, z: number) => number, dt = 1 / 60) {
-    const k = 1 - Math.exp(-dt * 2.2);
-    this.spots.forEach((sp, i) => {
-      const ph = i * 1.917;
-      const x = sp.x + Math.sin(t * 0.045 + ph) * 0.35, z = sp.z + Math.cos(t * 0.038 + ph * 1.3) * 0.35;
-      const e = 0.55, h = surfaceAt(x, z);
-      const hx = surfaceAt(x + e, z) - surfaceAt(x - e, z), hz = surfaceAt(x, z + e) - surfaceAt(x, z - e);
-      // the crate's up axis follows the (damped) surface normal; its yaw turns about that axis
-      const tl = this.tilt[i];
-      tl.pitch += (-hz / (2 * e) * 0.85 + Math.sin(t * 0.9 + ph) * 0.03 - tl.pitch) * k;    // (normal z component)
-      tl.roll += (-hx / (2 * e) * 0.85 + Math.sin(t * 0.7 + ph * 2.1) * 0.03 - tl.roll) * k;  // (normal x component)
-      this.n.set(tl.roll, 1, tl.pitch).normalize();
-      this.q.setFromUnitVectors(UP, this.n);
-      this.qy.setFromAxisAngle(UP, sp.yaw + Math.sin(t * 0.05 + ph) * 0.2);
-      this.q.multiply(this.qy);
-      this.p.set(x, h + H / 2 - DRAFT + Math.sin(t * 1.3 + ph) * 0.015, z);
-      this.m.compose(this.p, this.q, this.s);
-      this.mesh.setMatrixAt(i, this.m);
-      if (this.foam) {
-        this.fq.copy(this.qy);                             // (the collar: yaw only, flat at the waterline)
-        this.p.set(x, h + 0.03, z);
-        this.m.compose(this.p, this.fq, this.s);
-        this.foam.setMatrixAt(i, this.m);
+  /** ride the swell for visible crates only: frustum + distance cull off-screen/distant crates before surfaceAt */
+  update(t: number, surfaceAt: (x: number, z: number) => number, dt = 1 / 60, camera?: THREE.Camera, underActive = false) {
+    const expK = 1 - Math.exp(-dt * 2.2);
+    let hasCam = false, cx = 0, cy = 0, cz = 0;
+    if (camera) {
+      _flProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      _flFrustum.setFromProjectionMatrix(_flProj);
+      cx = camera.position.x; cy = camera.position.y; cz = camera.position.z;
+      hasCam = true;
+    }
+    const maxFoamSq = underActive ? MAX_UW_FOAM_DIST_SQ : MAX_FOAM_DIST_SQ;
+    let visCrate = 0, visFoam = 0, dirty = false, foamDirty = false;
+    for (let i = 0; i < this.spots.length; i++) {
+      const sp = this.spots[i], prev = this.#prevVis[i];
+      let d2 = 0, vis = true;
+      if (hasCam) {
+        d2 = (sp.x - cx) ** 2 + cy * cy + (sp.z - cz) ** 2;
+        _flSph.center.set(sp.x, 0, sp.z);
+        vis = d2 <= MAX_CRATE_DIST_SQ && _flFrustum.intersectsSphere(_flSph);
       }
-    });
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.flTime.value = t;
+      if (!vis) {
+        if (prev) {
+          this.#prevVis[i] = 0;
+          this.mesh.setMatrixAt(i, _flZero); dirty = true;
+          if (this.foam) { this.foam.setMatrixAt(i, _flZero); foamDirty = true; }
+        }
+        continue;
+      }
+      const k = prev ? expK : 1;
+      this.#prevVis[i] = 1; visCrate++;
+      const ph = i * 1.917, x = sp.x + Math.sin(t * 0.045 + ph) * 0.35, z = sp.z + Math.cos(t * 0.038 + ph * 1.3) * 0.35;
+      const e = 0.55, h = surfaceAt(x, z), hx = surfaceAt(x + e, z) - surfaceAt(x - e, z), hz = surfaceAt(x, z + e) - surfaceAt(x, z - e);
+      const tl = this.#tilt[i];
+      tl.pitch += (-hz / (2 * e) * 0.85 + Math.sin(t * 0.9 + ph) * 0.03 - tl.pitch) * k;
+      tl.roll += (-hx / (2 * e) * 0.85 + Math.sin(t * 0.7 + ph * 2.1) * 0.03 - tl.roll) * k;
+      this.#n.set(tl.roll, 1, tl.pitch).normalize();
+      this.#q.setFromUnitVectors(UP, this.#n); this.#qy.setFromAxisAngle(UP, sp.yaw + Math.sin(t * 0.05 + ph) * 0.2); this.#q.multiply(this.#qy);
+      this.#p.set(x, h + H / 2 - DRAFT + Math.sin(t * 1.3 + ph) * 0.015, z); this.#s.set(1, 1, 1);
+      this.#m.compose(this.#p, this.#q, this.#s); this.mesh.setMatrixAt(i, this.#m); dirty = true;
+      if (this.foam) {
+        if (!hasCam || d2 <= maxFoamSq) {
+          this.#fq.copy(this.#qy); this.#p.set(x, h + 0.03, z); this.#m.compose(this.#p, this.#fq, this.#s);
+          this.foam.setMatrixAt(i, this.#m); foamDirty = true; visFoam++;
+        } else {
+          if (prev === 1) { this.foam.setMatrixAt(i, _flZero); foamDirty = true; }
+          this.#prevVis[i] = 2;
+        }
+      }
+    }
+    this.mesh.visible = visCrate > 0;
+    if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
+    if (visCrate > 0) this.#flTime.value = t;
     if (this.foam) {
-      this.foam.instanceMatrix.needsUpdate = true;
-      (this.foam.material as unknown as { fcUniforms: { fcTime: { value: number } } }).fcUniforms.fcTime.value = t;
+      this.foam.visible = visFoam > 0;
+      if (foamDirty) this.foam.instanceMatrix.needsUpdate = true;
+      if (visFoam > 0) (this.foam.material as unknown as { fcUniforms: { fcTime: { value: number } } }).fcUniforms.fcTime.value = t;
     }
   }
 }

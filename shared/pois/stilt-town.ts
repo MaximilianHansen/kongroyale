@@ -184,17 +184,20 @@ function genLayout(): StiltLayout {
       const dk = hutDeck.get(h); if (dk) { dk.x += dx; dk.z += dz; }
       const e = extended.find((q) => q.dk === dk); if (e) { e.plain.x += dx; e.plain.z += dz; }
     };
-    const rad = (h: TownBuilding) => Math.max(...footprint(h).map(([x, z]) => dmath.hypot(x - CX, z - CZ)));
     const sq = netSquare;
     // each hut its own elbow room (10.6–17 m): an even 10.6 m everywhere read as a honeycomb from the air
     const rr = mulberry(9033), room = huts.map(() => 10.6 + rr() * rr() * 8);
     for (let it = 0; it < 400; it++) {
       let worst = 0;
       for (let i = 0; i < huts.length; i++) for (let j = i + 1; j < huts.length; j++) {
-        const A = huts[i], B = huts[j], g = polyGap(footprint(A), footprint(B)), need = Math.max(10.6, (room[i] + room[j]) / 2) - g;
+        const A = huts[i], B = huts[j], req = Math.max(10.6, (room[i] + room[j]) / 2);
+        let dx = B.x - A.x, dz = B.z - A.z;
+        const lim = req + (A.w + A.d + B.w + B.d) * 0.5;
+        if (dx * dx + dz * dz >= lim * lim) continue;
+        const g = polyGap(footprint(A), footprint(B)), need = req - g;
         if (need <= 0) continue;
         worst = Math.max(worst, need);
-        let dx = B.x - A.x, dz = B.z - A.z; const l = dmath.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        const l = dmath.hypot(dx, dz) || 1; dx /= l; dz /= l;
         const fa = fixed.has(A), fb = fixed.has(B), k = Math.min(0.6, need) * 0.5;
         if (fa && fb) continue;
         if (fa) move(B, dx * k * 2, dz * k * 2); else if (fb) move(A, -dx * k * 2, -dz * k * 2); else { move(A, -dx * k, -dz * k); move(B, dx * k, dz * k); }
@@ -202,7 +205,7 @@ function genLayout(): StiltLayout {
       for (const h of huts) {
         if (fixed.has(h)) continue;
         // the radius cap: pull toward the POI centre
-        const r = rad(h); if (r > 66) { const dx = CX - h.x, dz = CZ - h.z, l = dmath.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, r - 66), dz / l * Math.min(0.6, r - 66)); }
+        const r = Math.max(...footprint(h).map(([x, z]) => dmath.hypot(x - CX, z - CZ))); if (r > 66) { const dx = CX - h.x, dz = CZ - h.z, l = dmath.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, r - 66), dz / l * Math.min(0.6, r - 66)); }
         // the spine corridor: ≥ 7 m from the walkway's centreline
         for (const [a, b] of spine) { const [d, px, pz] = segD(h.x, h.z, a, b), m = 7 + Math.max(h.w, h.d) / 2; if (d < m) { const dx = h.x - px, dz = h.z - pz, l = dmath.hypot(dx, dz) || 1; move(h, dx / l * Math.min(0.6, m - d), dz / l * Math.min(0.6, m - d)); } }
         // Net Square

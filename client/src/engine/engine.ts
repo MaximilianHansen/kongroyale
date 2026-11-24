@@ -640,8 +640,8 @@ export class Engine implements WorldCtx {
       // after start, then every 20 s again (a window moved to another monitor); see refresh.ts
       if (prevRaf) this.sampleRefresh(frameT - prevRaf);
       prevRaf = frameT;
-      if (this.suspended || this.contextLost) { this.last = now; this.rafEnd = performance.now(); requestAnimationFrame(loop); return; }
       requestAnimationFrame(loop);
+      if (this.suspended || this.contextLost || document.hidden) { this.last = now; this.rafEnd = performance.now(); return; }
       // frame limiter (display settings): draw only when the cap's interval has elapsed (a 0.6 ms slack absorbs vsync
       // jitter; the cadence advances by whole intervals so 144 on a 240 Hz screen alternates 1-2 vsyncs evenly)
       if (this.capMs > 0) {

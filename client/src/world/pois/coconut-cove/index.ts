@@ -432,6 +432,7 @@ const mod: WorldModule = {
     // east terrace planters
     for (let i = 0; i < 5; i++) { const a = EAST_TERRACE.a0 + 0.1 + i * (EAST_TERRACE.a1 - EAST_TERRACE.a0 - 0.2) / 4; addPlanter(Nr(EAST_TERRACE.cx - 10, EAST_TERRACE.cz + 18), M(EAST_TERRACE.cx + Math.cos(a) * 25.2, EAST_TERRACE.y, EAST_TERRACE.cz + Math.sin(a) * 25.2), rng, 0.5); }
     veg.flush();
+    await ctx.yield();
 
     // ---- far proxy: hotel (per-bay boxes along the serpentine), annex, huts, pier as flat slabs
     {
@@ -468,7 +469,9 @@ const mod: WorldModule = {
 
     endFruit();
     fruit.build(ctx, group);
+    await ctx.yield();
     const n = await lod.buildAsync(ctx, group);
+    await ctx.yield();
     townInteriors(ctx, group, INTERIOR_ROOMS, { name: "cove", cell: 24 });
     for (const e of extra) { e.userData.farShadow = false; group.add(e); }
     void hotelFootprint;

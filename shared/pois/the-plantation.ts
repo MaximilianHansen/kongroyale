@@ -8,7 +8,7 @@ import type { Box } from "../world/colliders";
 import { vegTrunkColliders, VARIANTS } from "../world/veg-scatter"; // only CALLED lazily (import cycle — see coast-kit lazyBoxes)
 import { interiorColliders, interiorLoot, type InteriorRoom } from "./interior-kit";
 import { panes, settleLoot } from "./pane-kit";
-import { F, addKitLoot, bx, doorLeaves, floraColliders, inFrameRect, kitRoom, lazyBoxes, place, rng, settleFlora, stairs, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece, type V3 } from "./coast-kit";
+import { F, addKitLoot, bx, doorLeaves, floraColliders, inFrameRect, kitRoom, lazyBoxes, place, railCol as baseRailCol, rng, settleFlora, stairs, toBoxes, toWorld, wall, type Clearing, type Flora, type Frame, type LootSpots, type Piece, type V3 } from "./coast-kit";
 import * as dmath from "../sim/dmath";
 
 export const PAD = { x: -230, z: 240, y: 10, r: 150 };
@@ -72,10 +72,7 @@ export const barnRise = () => (BARN.main.x1 - BARN.main.x0) / 2 * dmath.tan(BARN
 export const leanY = (x: number) => BARN.lean.lo + (BARN.lean.hi - BARN.lean.lo) * (x - BARN.lean.x0) / (BARN.main.x0 - BARN.lean.x0);
 
 /** pitched railing collider following a line (frame-local) — bottom follows y0→y1, height h */
-function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.0): Piece {
-  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
-  return { k: "rail", c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf: "wood" };
-}
+function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.0): Piece { return baseRailCol(x0, z0, y0, x1, z1, y1, h, "rail", "wood"); }
 const nr = (p: Piece): Piece => ({ ...p, k: "rail:new" }); // rails the client draws from the piece itself
 /** gable roof slabs over x0..x1 (ridge along X at z=0), overhang o */
 function gableRoof(k: string, x0: number, x1: number, hz: number, eave: number, pitch: number, o: number, th = 0.3, trimSide = 0): Piece[] {

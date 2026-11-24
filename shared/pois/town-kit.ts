@@ -151,6 +151,15 @@ export function mulberry(seed: number) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+export function decodeB64(s: string): Uint8Array {
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", out = new Uint8Array(Math.floor(s.length * 3 / 4));
+  let o = 0;
+  for (let i = 0; i + 3 < s.length; i += 4) {
+    const n = (A.indexOf(s[i]) << 18) | (A.indexOf(s[i + 1]) << 12) | ((s[i + 2] === "=" ? 0 : A.indexOf(s[i + 2])) << 6) | (s[i + 3] === "=" ? 0 : A.indexOf(s[i + 3]));
+    out[o++] = (n >> 16) & 255; if (s[i + 2] !== "=") out[o++] = (n >> 8) & 255; if (s[i + 3] !== "=") out[o++] = n & 255;
+  }
+  return out.subarray(0, o);
+}
 export const hashXZ = (x: number, z: number) => ((Math.round(x * 7) * 73856093) ^ (Math.round(z * 7) * 19349663)) >>> 0;
 
 /** local → world */
@@ -1125,7 +1134,7 @@ export function polyAt(pts: Vec2[], arc: number[], s: number): { p: Vec2; d: Vec
   const a = pts[i - 1], b = pts[i], L = arc[i] - arc[i - 1] || 1e-6, t = Math.max(0, Math.min(1, (s - arc[i - 1]) / L));
   return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], d: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] };
 }
-const segDist2 = (x: number, z: number, a: Vec2, b: Vec2) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9; const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return dmath.hypot(x - a[0] - t * dx, z - a[1] - t * dz); };
+const segDist2 = (x: number, z: number, a: Vec2, b: Vec2) => { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2)); return dmath.hypot(x - a[0] - t * dx, z - a[1] - t * dz); };
 /** footprint corners of a building (world) */
 export function footprint(b: { x: number; z: number; yaw: number; w: number; d: number }, m = 0): Vec2[] {
   const c = dmath.cos(b.yaw), s = dmath.sin(b.yaw);

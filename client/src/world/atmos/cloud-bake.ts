@@ -127,24 +127,32 @@ export function bakeCloudVolume(renderer: THREE.WebGLRenderer, proto: CloudProto
 export function makeDetailNoise(size = 64, cells = 12, seed = 9): THREE.Data3DTexture {
   let a = seed >>> 0;
   const rnd = () => { a = (a * 1664525 + 1013904223) >>> 0; return a / 4294967296; };
-  const pts = new Float32Array(cells * cells * cells * 3);
-  for (let i = 0; i < cells ** 3; i++) { pts[i * 3] = 0.15 + 0.7 * rnd(); pts[i * 3 + 1] = 0.15 + 0.7 * rnd(); pts[i * 3 + 2] = 0.15 + 0.7 * rnd(); }
-  const data = new Uint8Array(size ** 3);
-  const cs = size / cells;
-  const R = 0.95; // dome radius in cells
-  for (let z = 0; z < size; z++) for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    const fx = (x + 0.5) / cs, fy = (y + 0.5) / cs, fz = (z + 0.5) / cs;
-    const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
-    let best = 0;
-    for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const cx = ix + dx, cy = iy + dy, cz = iz + dz;
-      const w = (v: number) => ((v % cells) + cells) % cells;
-      const k = (w(cz) * cells * cells + w(cy) * cells + w(cx)) * 3;
-      const px = cx + pts[k], py = cy + pts[k + 1], pz = cz + pts[k + 2];
-      const d2 = ((fx - px) ** 2 + (fy - py) ** 2 + (fz - pz) ** 2) / (R * R);
-      if (d2 < 1) best = Math.max(best, Math.sqrt(1 - d2)); // spherical cap
+  const c2 = cells * cells, c3 = c2 * cells, pts = new Float32Array(c3 * 3);
+  for (let i = 0; i < c3; i++) { pts[i * 3] = 0.15 + 0.7 * rnd(); pts[i * 3 + 1] = 0.15 + 0.7 * rnd(); pts[i * 3 + 2] = 0.15 + 0.7 * rnd(); }
+  const data = new Uint8Array(size * size * size), invCs = cells / size, R2 = 0.95 * 0.95, invR2 = 1 / R2;
+  const w = (v: number) => (v < 0 ? cells - 1 : v === cells ? 0 : v);
+  for (let z = 0; z < size; z++) {
+    const fz = (z + 0.5) * invCs, iz = fz | 0;
+    for (let y = 0; y < size; y++) {
+      const fy = (y + 0.5) * invCs, iy = fy | 0, yz = (z * size + y) * size;
+      for (let x = 0; x < size; x++) {
+        const fx = (x + 0.5) * invCs, ix = fx | 0;
+        let minD2 = R2;
+        for (let dz = -1; dz <= 1; dz++) {
+          const wz = w(iz + dz) * c2;
+          for (let dy = -1; dy <= 1; dy++) {
+            const wyz = wz + w(iy + dy) * cells;
+            for (let dx = -1; dx <= 1; dx++) {
+              const k = (wyz + w(ix + dx)) * 3;
+              const a0 = fx - (ix + dx + pts[k]), a1 = fy - (iy + dy + pts[k + 1]), a2 = fz - (iz + dz + pts[k + 2]);
+              const d2 = a0 * a0 + a1 * a1 + a2 * a2;
+              if (d2 < minD2) minD2 = d2;
+            }
+          }
+        }
+        data[yz + x] = minD2 < R2 ? Math.round(Math.sqrt(1 - minD2 * invR2) * 255) : 0;
+      }
     }
-    data[(z * size + y) * size + x] = Math.round(best * 255);
   }
   const t = new THREE.Data3DTexture(data, size, size, size);
   t.format = THREE.RedFormat; t.type = THREE.UnsignedByteType;

@@ -278,6 +278,7 @@ export class GameRender implements EventSink {
   private standViews: THREE.Object3D[] = []; private standScope: Scope | null = null;
   /** the stand in reach (its index) — E opens its buy menu (index.ts owns the menu) */
   standNear = -1; private lastE = false; private bountyTeam = -1;
+  private ic = { t: -1, x: 0, y: 0, z: 0, a: 0, b: 0, s: -1, n: -1 };
   onShop: ((stand: number) => void) | null = null;
   private cashGainAt = 0; private cashGainAmt = 0;
   cashGain(amount: number) { this.cashGainAt = performance.now(); this.cashGainAmt = amount; }
@@ -289,7 +290,7 @@ export class GameRender implements EventSink {
     const geos = new Set<THREE.BufferGeometry>();
     proto.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) geos.add(m.geometry); });
     for (const g of geos) res.geometry("geo.world", g);
-    const views = this.standViews = this.cm.stands.map((s) => { const o = proto.clone(true); o.position.set(s.x, s.y, s.z); o.rotation.y = s.yaw; o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = !m.userData.noCast; m.receiveShadow = true; } }); this.engine.scene.add(o); patchTree(this.engine, o); return o; });
+    const views = this.standViews = this.cm.stands.map((s) => { const o = proto.clone(true); o.position.set(s.x, s.y, s.z); o.rotation.y = s.yaw; o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = !m.userData.noCast; m.receiveShadow = true; } }); this.engine.scene.add(o); patchTree(this.engine, o); this.engine.statics.register(o); return o; });
     res.defer(() => { for (const o of views) o.removeFromParent(); });
   }
   /** the buy menu's view of the offers for this kong right now (the server re-checks every rule) */
@@ -766,10 +767,10 @@ export class GameRender implements EventSink {
         // predictShot booked the damage; when our bullets in flight take this kong to 0 the rest of the blast passes through
         dmg = this.cm.predDmg;
         total += dmg; if (hitV < 0 || r.zone === 1) { hitV = r.victim; hitZone = r.zone; hitT = r.t; }
-        this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), "flesh");
+        if (i < 3) this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), "flesh");
       } else if (r.worldHit) {
         const s = surfaceAt(this.engine.terrain, r.surf, ex, ez);
-        this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), s);
+        if (i < 3) this.kits.fx.impact(V3b, V3c.set(-SDIR[0], -SDIR[1], -SDIR[2]), s);
         if (i < 2) this.play(`impact:${s}`, ex, ey, ez, w.pellets > 1 ? 0.35 : 0.55);
       }
       this.pendPush(r.victim, dmg, now);
@@ -1748,6 +1749,7 @@ export class GameRender implements EventSink {
       const res = this.padScope = this.matchScope.child("pads");
       this.pads = cm.heliSpots(!!this.range).map((sp) => { const m = createHelipad(this.engine.terrain, sp.x, sp.z, sp.yaw); res.geometry("geo.world", m.geometry); res.defer(() => m.removeFromParent()); this.engine.scene.add(m); patchTree(this.engine, m); return m; });
     }
+    let created = 0;
     for (const vr of cm.vehicles) {
       let v = this.tuks.get(vr.id);
       let A = this.tukAudio.get(vr.id);
@@ -1760,7 +1762,11 @@ export class GameRender implements EventSink {
         continue;
       }
       if (v && v.kind !== vr.kind) { v.dispose(); this.tuks.delete(vr.id); v = undefined; }
-      if (!v) { v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.tuks.set(vr.id, v); }
+      if (!v) {
+        if (created >= 2) continue;
+        created++;
+        v = heli ? createHeli((o) => patchTree(this.engine, o)) : createTukTuk(); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.engine.statics.register(v.object); this.tuks.set(vr.id, v);
+      }
       if (!A) { A = { horn: -1e9, on: { I: "", D: "", S: "", F: "", H: "", G: "", O: "", B: "" }, fuseAt: -1, sunkAt: -1, exh: 0, smk: 0, fire: 0, dust: 0, lx: D0, ly: 0, lz: 0, seen: false, lastVf: 0, popAt: 0, radio: -1, radioSt: -1, pilot: false, vy: 0, gunLock: false, gunSt: vr.gunSpin > 0 ? 1 : 0, gunRef: vr.gunSpin }; this.tukAudio.set(vr.id, A); }
       v.object.visible = true;
       if (vr.st === VS.Sunk) { if (A.sunkAt < 0) A.sunkAt = now; } else A.sunkAt = -1;
@@ -2079,12 +2085,13 @@ export class GameRender implements EventSink {
     // a new match seed (PLAY AGAIN, a reconnect into another match) re-dresses every kong for it
     if (cm.seed !== this.dressedSeed) { this.dressedSeed = cm.seed; for (const a of this.actors.values()) a.actor.setOutfit?.(outfitFor(a.id, cm.seed)); this.meActor?.setOutfit?.(outfitFor(me, cm.seed)); }
     const cx = this.engine.camera.position.x, cy = this.engine.camera.position.y, cz = this.engine.camera.position.z;
+    let actorsBuilt = 0, glidersBuilt = 0;
     for (const r of cm.remotes) {
       if (r.id === me) continue;
       const a = this.actors.get(r.id);
       if (r.n === 0) { if (a) { a.actor.setVisible(false); if (a.glider) a.glider.object.visible = false; } continue; }
       const stale = st - r.lastTick > 90; // 1.5 s without data → hide
-      if (!a) { if (!stale && r.st !== PS.Plane) void this.ensureActor(r.id, r.team); continue; }
+      if (!a) { if (!stale && r.st !== PS.Plane && actorsBuilt < 2) { actorsBuilt++; void this.ensureActor(r.id, r.team); } continue; }
       const show = !stale && r.st !== PS.Plane && r.st !== PS.Spectate && !(r.st === PS.Dead && st - r.lastTick > 120);
       a.actor.setVisible(show);
       if (!show) { if (a.glider) a.glider.object.visible = false; continue; }
@@ -2125,9 +2132,9 @@ export class GameRender implements EventSink {
         if (!a.wasGrounded) this.play("land", r.x, r.y, r.z, 0.5);
       }
       a.wasGrounded = r.grounded;
-      // glider
-      if (r.st === PS.Glide) {
-        if (!a.glider && !this.gliderPending.get(r.id)) { this.gliderPending.set(r.id, true); void this.kits.createGlider(this.engine).then((g) => { if (g.object.children.length === 0) g.object.add(placeholderGlider()); g.setLod(true); this.engine.scene.add(g.object); patchTree(this.engine, g.object); a.glider = g; }); }
+      // glider (staggered max 2 creations/frame + 320 m distance cull so 49 simultaneous drops never hitch)
+      if (r.st === PS.Glide && d2 < 320 * 320) {
+        if (!a.glider && !this.gliderPending.get(r.id) && glidersBuilt < 2) { glidersBuilt++; this.gliderPending.set(r.id, true); void this.kits.createGlider(this.engine).then((g) => { if (g.object.children.length === 0) g.object.add(placeholderGlider()); g.setLod(true); this.engine.scene.add(g.object); patchTree(this.engine, g.object); a.glider = g; }); }
         if (a.glider) { a.glider.object.visible = true; a.glider.object.position.set(pose.x, pose.y + 2.3, pose.z); a.glider.object.rotation.set(0, r.yaw, 0); a.glider.setBank(0, r.pitch * 0.3); a.glider.update(dt, t); }
       } else if (a.glider) a.glider.object.visible = false;
     }
@@ -2288,7 +2295,7 @@ export class GameRender implements EventSink {
     for (const [o, t0] of this.grow) {
       const t = t0 + dt, u = Math.min(1, t / GROW_S), k = u * u * (3 - 2 * u);
       o.scale.setScalar(Math.max(0.001, k));
-      if (u >= 1) this.grow.delete(o); else this.grow.set(o, t);
+      if (u >= 1) { this.grow.delete(o); o.updateMatrix(); o.matrixAutoUpdate = false; } else this.grow.set(o, t);
     }
   }
   /** a view just built: grow it in when it is within the distance it would be drawn at (else it already fades in with distance) */
@@ -2321,7 +2328,7 @@ export class GameRender implements EventSink {
         if (this.disposed || it.taken || !this.cm.items.has(it.id)) { v.dispose(); return; }
         v.object.position.set(it.x, it.y, it.z); this.engine.scene.add(v.object); patchTree(this.engine, v.object); this.lootViews.set(it.id, v);
         if (it.bornAt > 0 && this.cm.time - it.bornAt < 1.2) this.startDrop(v, it);
-        else this.growIn(v.object, LOOT_DRAW_R);
+        else { this.growIn(v.object, LOOT_DRAW_R); if (!this.grow.has(v.object)) { v.object.updateMatrix(); v.object.matrixAutoUpdate = false; } }
       });
     }
   }
@@ -2348,7 +2355,7 @@ export class GameRender implements EventSink {
       // touchdown: one small bounce (0.18 s)
       const b = a.t - a.d; if (b > 0) y = a.ey + Math.max(0, Math.sin(Math.min(1, b / 0.18) * Math.PI)) * 0.07;
       v.object.position.set(a.sx + (a.ex - a.sx) * k, y, a.sz + (a.ez - a.sz) * k);
-      if (b > 0.18) { v.object.position.set(a.ex, a.ey, a.ez); this.drops.delete(v); }
+      if (b > 0.18) { v.object.position.set(a.ex, a.ey, a.ez); v.object.updateMatrix(); v.object.matrixAutoUpdate = false; this.drops.delete(v); }
     }
   }
   private frameDt = 0.016;
@@ -2497,33 +2504,35 @@ export class GameRender implements EventSink {
       V3b.set(d.x, d.y + age * 0.6, d.z).project(cam); if (V3b.z > 1) continue;
       h.damageNumbers.push(dnRow(i, d.at, (V3b.x + 1) / 2, (1 - V3b.y) / 2, Math.round(d.pa + d.ca), d.kind, d.target, d.ca <= 0));
     }
-    // interact prompt
-    h.interact = null; this.hlKind = 0;
-    // (tuk-tuks: aboard, E is the way out; on foot the one under the crosshair comes first — Match.simulate's order)
-    const lx = -Math.sin(p.yaw) * Math.cos(p.pitch), ly = Math.sin(p.pitch), lz = -Math.cos(p.yaw) * Math.cos(p.pitch);
-    const tukAim = p.st === PS.Ground && p.hp > 0 && !p.swim ? vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, true, !p.grounded) : -1;
-    // (glass: a whole pane under the crosshair in arm's reach — E punches it out, exactly the server's rule in Match.simulate)
-    const pane = tukAim < 0 && p.st === PS.Ground && p.hp > 0 ? glassAim(cm.glass, p.x, simEyeY(p), p.z, lx, ly, lz) : -1;
-    if (p.st === PS.Ride && p.hp > 0) { /* aboard: the tuk-tuk's own panel carries the controls (below); E climbs out */ }
-    else if (tukAim >= 0) { h.interact = this.tukPrompt(tukAim); this.hlKind = HL.Tuk; this.hlId = tukAim; }
-    else if (pane >= 0) { h.interact = INTERACT_GLASS; this.hlKind = HL.Glass; this.hlId = pane; }
-    else if (p.st === PS.Ground && p.hp > 0) {
-      const c = cm.nearestChest(3.2, true); if (c) { h.interact = c.box ? INTERACT_BOX : c.rarity >= MYTHIC_R ? this.mythicChestPrompt(c.poi) : INTERACT_CHEST; this.hlKind = c.box ? HL.Box : HL.Chest; this.hlId = c.id; }
-      else { const it = manualLootCandidate(cm.items.values(), p, cm.world, !!this.range, cm.stands); if (it) { h.interact = lootCard(p, it, !!this.range); this.hlKind = HL.Item; this.hlId = it.id; } }
-      if (!h.interact) { const zk = zipNear(p.x, p.y, p.z); if (zk >= 0) { h.interact = INTERACT_ZIP; this.hlKind = HL.Zip; this.hlId = zk; } } // zipline hook
-      if (!h.interact && !p.swim) { const nearTuk = vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, false, !p.grounded); if (nearTuk >= 0) { h.interact = this.tukPrompt(nearTuk); this.hlKind = HL.Tuk; this.hlId = nearTuk; } }
-    } else if (p.st === PS.Zip && p.hp > 0) { INTERACT_UNZIP.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_UNZIP; }
-    else if (p.st === PS.Climb && p.hp > 0) { INTERACT_CLIMBING.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_CLIMBING; }
-    // (economy) a Banana Stand in reach: E opens its buy menu (nothing else claimed E)
-    this.standNear = -1;
-    if (!h.interact && p.st === PS.Ground && p.hp > 0) {
-      let bd = ECON.standReach + 0.65;
-      cm.stands.forEach((s, i) => { const d = Math.hypot(s.x - p.x, s.z - p.z); if (d < bd && Math.abs(s.y - p.y) < 2.5) { bd = d; this.standNear = i; } });
-      if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
+    const ic = this.ic, itemN = cm.items.size, eHeld = this.input.interactHeld();
+    // PERF-02: cache interact queries (vehicles, glass, chests, all world loot, ziplines, stands) for up to 80 ms
+    // instead of invalidating on every 60 Hz snapshot tick; recompute immediately on E, state/item-count change, or >0.25 m move.
+    if (eHeld || this.coverHeld || p.hp <= 0 || now - ic.t >= 80 || p.st !== ic.s || itemN !== ic.n || (p.x - ic.x) ** 2 + (p.y - ic.y) ** 2 + (p.z - ic.z) ** 2 >= 0.0625 || Math.abs(p.yaw - ic.a) + Math.abs(p.pitch - ic.b) >= 0.08) {
+      h.interact = null; this.hlKind = 0;
+      const lx = -Math.sin(p.yaw) * Math.cos(p.pitch), ly = Math.sin(p.pitch), lz = -Math.cos(p.yaw) * Math.cos(p.pitch);
+      const tukAim = p.st === PS.Ground && p.hp > 0 && !p.swim ? vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, true, !p.grounded) : -1;
+      const pane = tukAim < 0 && p.st === PS.Ground && p.hp > 0 ? glassAim(cm.glass, p.x, simEyeY(p), p.z, lx, ly, lz) : -1;
+      if (p.st === PS.Ride && p.hp > 0) { /* aboard */ }
+      else if (tukAim >= 0) { h.interact = this.tukPrompt(tukAim); this.hlKind = HL.Tuk; this.hlId = tukAim; }
+      else if (pane >= 0) { h.interact = INTERACT_GLASS; this.hlKind = HL.Glass; this.hlId = pane; }
+      else if (p.st === PS.Ground && p.hp > 0) {
+        const c = cm.nearestChest(3.2, true); if (c) { h.interact = c.box ? INTERACT_BOX : c.rarity >= MYTHIC_R ? this.mythicChestPrompt(c.poi) : INTERACT_CHEST; this.hlKind = c.box ? HL.Box : HL.Chest; this.hlId = c.id; }
+        else { const it = manualLootCandidate(cm.items.values(), p, cm.world, !!this.range, cm.stands); if (it) { h.interact = lootCard(p, it, !!this.range); this.hlKind = HL.Item; this.hlId = it.id; } }
+        if (!h.interact) { const zk = zipNear(p.x, p.y, p.z); if (zk >= 0) { h.interact = INTERACT_ZIP; this.hlKind = HL.Zip; this.hlId = zk; } }
+        if (!h.interact && !p.swim) { const nearTuk = vehicleInReach(cm.vehs, p.x, p.y, p.z, simEyeY(p), lx, ly, lz, false, !p.grounded); if (nearTuk >= 0) { h.interact = this.tukPrompt(nearTuk); this.hlKind = HL.Tuk; this.hlId = nearTuk; } }
+      } else if (p.st === PS.Zip && p.hp > 0) { INTERACT_UNZIP.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_UNZIP; }
+      else if (p.st === PS.Climb && p.hp > 0) { INTERACT_CLIMBING.label = `LET GO · ${bindingText("jump", 0).toUpperCase()} JUMP OFF`; h.interact = INTERACT_CLIMBING; }
+      this.standNear = -1;
+      if (!h.interact && p.st === PS.Ground && p.hp > 0) {
+        let bd = ECON.standReach + 0.65;
+        cm.stands.forEach((s, i) => { const d = Math.hypot(s.x - p.x, s.z - p.z); if (d < bd && Math.abs(s.y - p.y) < 2.5) { bd = d; this.standNear = i; } });
+        if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
+      }
+      if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
+      ic.t = now; ic.x = p.x; ic.y = p.y; ic.z = p.z; ic.a = p.yaw; ic.b = p.pitch; ic.s = p.st; ic.n = itemN;
     }
-    { const e = this.input.interactHeld(); if (e && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear); this.lastE = e; }
-    // the crate wall in hand: what fire does
-    if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
+    if (eHeld && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear);
+    this.lastE = eHeld;
     h.resurgence.on = (cm.flags & 1) !== 0; h.resurgence.final = (cm.flags & 4) !== 0;
     h.resurgence.lives = cm.mode === "solo" ? Math.max(0, SOLO_REDEPLOYS - this.redeploysUsed) : null;
     h.resurgence.countdown = this.deadAt >= 0 && this.resCountdown != null ? Math.max(0, this.resCountdown - (now - this.deadAt) / 1000) : null;

@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import type { WorldModule } from "../../module";
 import type { WorldCtx } from "../../../engine/engine";
+import type { Scope } from "../../../engine/res/scope";
 import type { CamSpec } from "../../../engine/views";
 import { LAYOUT, GM, WALK_Y, WATER_Y, CX, CZ, INTERIOR_ROOMS, ROOM_DRESS, rootMasses, massOfPlant, type MProp } from "../../../../../shared/pois/the-murk";
 import { buildInteriors } from "../_kit/interior";
@@ -164,7 +165,7 @@ function addProp(nb: TownBins, mb: TownBins, p: MProp, rng: () => number, extra:
 const mod: WorldModule = {
   id: "poi:the-murk",
   views,
-  async build(ctx: WorldCtx) {
+  async build(ctx: WorldCtx, scope: Scope) {
     const t0 = performance.now();
     // dev ablation: ?murkoff=crown,water,fx,roots,huts,decks,veg,gm
     const OFF = new Set(flag("murkoff"));
@@ -269,13 +270,6 @@ const mod: WorldModule = {
     crownFar.name = "murk:crown-far"; crownFar.visible = false;
     const crownRoot = new THREE.Group(); crownRoot.name = "murk:crown"; crownRoot.add(crown, crownFar);
     let farNow = false;
-    ctx.onUpdate(() => {
-      const c = ctx.camera.position, d = Math.hypot(c.x - CX, c.z - CZ, c.y);
-      // the near / far crown crossfade at 420–450 m (at 210–230 m the canopy visibly thinned / thickened
-      // during every approach on foot from Mango Market and every glide)
-      if (OLD_LOD ? (farNow ? d < 210 : d > 230) : (farNow ? d < 420 : d > 450)) farNow = !farNow;
-      crown.visible = !farNow; crownFar.visible = farNow;
-    });
 
     if (!OFF.has("crown")) group.add(crownRoot);
     await Y(":crown-root");
@@ -287,17 +281,31 @@ const mod: WorldModule = {
     const CG = 10, cgrid = new Map<number, typeof lobesAll>();
     for (const L of lobesAll) { const R = L.r * 1.6; for (let i = Math.floor((L.c.x - R) / CG); i <= Math.floor((L.c.x + R) / CG); i++) for (let j = Math.floor((L.c.z - R) / CG); j <= Math.floor((L.c.z + R) / CG); j++) { const k = i * 4096 + j; let a = cgrid.get(k); if (!a) cgrid.set(k, a = []); a.push(L); } }
     const cover = (x: number, z: number) => { let k = 0; for (const L of cgrid.get(Math.floor(x / CG) * 4096 + Math.floor(z / CG)) ?? []) { const d = Math.hypot(x - L.c.x, z - L.c.z); k = Math.max(k, 1 - Math.min(1, Math.max(0, (d - L.r * 0.7) / (L.r * 0.9)))); } return k; };
-    const water = buildWater(ctx, cover);
+    const water = buildWater(ctx, cover, scope);
     await Y(":water");
-    if (!OFF.has("water")) { group.add(water.mesh, water.shelf); if (water.haze && !OFF.has("haze")) group.add(water.haze); }
+    if (!OFF.has("water")) {
+      group.add(water.mesh, water.shelf);
+      if (water.haze && !OFF.has("haze")) group.add(water.haze);
+      const wa = ctx.shared.get("water") as { uniforms?: Record<string, THREE.IUniform> } | undefined;
+      if (wa?.uniforms?.wtrMurkOwned) wa.uniforms.wtrMurkOwned.value = 1;
+    }
     const lilySpots: Array<[number, number]> = [[569, -209], [579, -203], [552, -232], [587, -243], [606, -229], [628, -238], [598, -181], [536, -205], [520, -236], [644, -226], [571, -250], [612, -262], [560, -170], [636, -250]];
-    group.add(buildLilies(ctx, lilySpots, water.levelAt, rng));
+    group.add(buildLilies(ctx, lilySpots, water.levelAt, rng, scope));
     await Y(":lilies");
     // ---- fx: fireflies, mist, sun shafts, hanging moss
-    const fx = buildFx(ctx, water.levelAt, rng);
+    const fx = buildFx(ctx, water.levelAt, rng, scope);
     await Y(":fx");
     if (!OFF.has("fx")) group.add(fx.group);
-    ctx.onUpdate((dt, t) => { water.uniforms.uTime.value = t; fx.update(t); });
+    ctx.onUpdate((_dt, t) => {
+      const c = ctx.camera.position, d = Math.hypot(c.x - CX, c.z - CZ, c.y);
+      // the near / far crown crossfade at 420–450 m (at 210–230 m the canopy visibly thinned / thickened
+      // during every approach on foot from Mango Market and every glide)
+      if (OLD_LOD ? (farNow ? d < 210 : d > 230) : (farNow ? d < 420 : d > 450)) farNow = !farNow;
+      crown.visible = !farNow; crownFar.visible = farNow;
+      water.uniforms.uTime.value = t;
+      water.update(ctx.renderer, ctx.camera as THREE.PerspectiveCamera);
+      fx.update(t, c);
+    });
     // dev handle for in-page A/B GPU timing: toggle parts by name
     (globalThis as unknown as { __murk?: unknown }).__murk = {
       parts: () => ({ water: [water.mesh], haze: water.haze ? [water.haze] : [], crown: [crownRoot], fx: [fx.group], lilies: group.children.filter((c) => c.name === "murk:lilies"), batches: group.children.filter((c) => c.name.startsWith("murk:") && !["murk:crown", "murk:water", "murk:fx", "murk:lilies", "murk:haze"].includes(c.name)),

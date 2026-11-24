@@ -243,10 +243,11 @@ export class LootSystem {
     let n = 0, ng = 0;
     const bm = this.beams.instanceMatrix.array as Float32Array, gm = this.glows.instanceMatrix.array as Float32Array;
     const bc = this.beams.instanceColor!.array as Float32Array, gc = this.glows.instanceColor!.array as Float32Array;
+    const umw = (o: THREE.Object3D, p: boolean) => { if (o.matrixAutoUpdate || o.matrixWorldNeedsUpdate) o.updateWorldMatrix(p, false); };
     for (const mb of this.members) {
       const o = mb.v.object;
       if (!drawn(o, scene)) continue;
-      o.updateWorldMatrix(true, false);
+      umw(o, true);
       this._p.setFromMatrixPosition(o.matrixWorld);
       const d = this._p.distanceTo(cp);
       const near = d < LootSystem.NEAR_R;
@@ -255,7 +256,10 @@ export class LootSystem {
       this._p.y += 0.6;
       if (!this.cull.sees(this._p, 1.4)) continue;
       const ff = d > LootSystem.FADE_R ? 1 - smooth01((d - LootSystem.FADE_R) / (LootSystem.CULL_R - LootSystem.FADE_R)) : 1;
-      if (!near) { mb.v.bob.updateWorldMatrix(false, false); this.farBatch(mb.item, d < LootSystem.FAR2_R ? 0 : 1, mb.myth).push(ff < 1 ? this._f.copy(mb.v.bob.matrixWorld).scale(this._s.setScalar(Math.max(0.001, ff))) : mb.v.bob.matrixWorld); }
+      if (!near) {
+        umw(mb.v.bob, false);
+        this.farBatch(mb.item, d < LootSystem.FAR2_R ? 0 : 1, mb.myth).push(ff < 1 ? this._f.copy(mb.v.bob.matrixWorld).scale(this._s.setScalar(Math.max(0.001, ff))) : mb.v.bob.matrixWorld);
+      }
       if (n < 512) {
         // beams / glows: the object's own frame (no bob, no spin), colour = rarity (heals: green / blue), dimmer far away; the column starts
         // at the item's top so it never washes the item
@@ -293,6 +297,11 @@ export function createLootView(_ctx: WorldCtx, _floorY: number, item: Item, rari
   // bob = the moving frame (bob + spin): the far batch copies ITS world matrix; the real item lives under it
   const bob = new THREE.Group(); bob.name = "loot-bob"; bob.add(holder);
   object.add(bob);
+  if (sys) {
+    bob.matrixAutoUpdate = false; bob.updateMatrix();
+    const own = holder.updateMatrixWorld; let was = 1;
+    holder.updateMatrixWorld = function (f?: boolean) { if (!this.visible) { was = 0; return; } own.call(this, f || !was); was = 1; };
+  }
   holder.traverse((o) => { if ((o as THREE.Mesh).isMesh) { (o as THREE.Mesh).castShadow = true; (o as THREE.Mesh).receiveShadow = true; } });
   if (!sys) {
     // standalone (stages): own beam + glow meshes
@@ -306,8 +315,11 @@ export function createLootView(_ctx: WorldCtx, _floorY: number, item: Item, rari
   const view: LootViewEx = {
     object, holder, itemRoot: holder, top, bob, beamY: 0,
     update(_dt: number, t: number) {
-      bob.position.y = lift + (grounded ? 0.004 : 0.05) * (0.5 + 0.5 * Math.sin(t * 1.7 + phase));
-      if (!grounded) bob.rotation.y = t * 0.6 + phase;
+      if (!sys || !grounded || holder.visible) {
+        bob.position.y = lift + (grounded ? 0.004 : 0.05) * (0.5 + 0.5 * Math.sin(t * 1.7 + phase));
+        if (!grounded) bob.rotation.y = t * 0.6 + phase;
+        if (sys) bob.updateMatrix();
+      }
       if (!sys) beamUniforms.uTime.value = t;
     },
     dispose() { object.removeFromParent(); if (sys) for (const m of sys.members) if (m.v === view) { sys.members.delete(m); break; } },

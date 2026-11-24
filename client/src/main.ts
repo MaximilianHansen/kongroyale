@@ -101,6 +101,9 @@ if (flag("drawcensus")) await import("./engine/draw-census").then((m) => { kr.dr
 // the video settings (engine/display.ts): frame cap / 3D resolution now, the rest once atmos + veg exist
 const display = gameMode && !shot ? new Display(engine) : null;
 kr.display = display;
+// behind the loading screen the progress bar animates on the compositor, so yielding every 40 ms to wait for VSync
+// wastes ~25-30% of boot time idle; use a 150 ms slice until the title is ready, then restore normal pacing.
+if (gameMode) engine.sliceMs = 150;
 // the final point-light count from t = 0 (1 chest-system light + 4 chest-burst pool + 2 streaming reserve — see
 // game/lights.ts): programs compiled during the build keep their key (engine.lightReserve)
 if (streamOn) engine.lightReserve(7);
@@ -473,6 +476,7 @@ if (kr.bootError) {
   document.documentElement.dataset.ready = "0";
 } else {
   bootReady = true;
+  engine.sliceMs = 40;
   kr.stage = "ready";
   kr.readyAt = Math.round(performance.now());
   postMeasure?.finish(kr, gameMode && streamOn);
@@ -641,7 +645,7 @@ async function stream(): Promise<void> {
   await Promise.all(inflight.splice(0));
   // the world is complete: every afterBuild once more (atmos shadow policy + far bake, water foam, veg programs)
   kr.streamStage = "afterBuild";
-  for (const m of [...loaded]) { await runAfterBuild(m, true); if (!urgent && !inMatch()) await nextFrame(); }
+  for (const m of [...loaded]) { await runAfterBuild(m, true); if (!urgent) await nextFrame(); }
   try { atmos()?.sweep?.(); } catch { /* reported by atmos */ }
   await integrateFresh(urgent);
   engine.sliceMs = 6;
@@ -748,19 +752,23 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     const seen = new Set<THREE.Texture>();
     const upload = (m: THREE.Material) => {
       const out: THREE.Texture[] = [];
-      for (const v of Object.values(m as unknown as Record<string, unknown>)) {
-        const t = v as THREE.Texture;
-        if (!t || !t.isTexture || seen.has(t) || (t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) continue;
-        seen.add(t);
-        if (props.get(t).__webglTexture || !t.image) continue;
-        out.push(t);
-      }
+      const add = (v: unknown) => {
+        const t = v as THREE.Texture | undefined;
+        if (t?.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) {
+          seen.add(t);
+          if (!props.get(t).__webglTexture && t.image) out.push(t);
+        }
+      };
+      for (const v of Object.values(m as unknown as Record<string, unknown>)) add(v);
       // (a ShaderMaterial keeps its textures in uniforms)
       const us = (m as THREE.ShaderMaterial).uniforms;
-      if (us) for (const k in us) { const t = us[k]?.value as THREE.Texture | undefined; if (t && t.isTexture && !seen.has(t) && !(t as unknown as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) { seen.add(t); if (!props.get(t).__webglTexture && t.image) out.push(t); } }
+      if (us) for (const k in us) add(us[k]?.value);
       return out;
     };
-    for (const [m] of fresh) for (const t of upload(m)) { try { r.initTexture(t); } catch { /* skip */ } if (!urgent) await engine.yield(); }
+    for (const [m] of fresh) for (const t of upload(m)) {
+      try { r.initTexture(t); } catch {}
+      if (!urgent) await engine.yield();
+    }
     // first draw of this module's content (all LOD levels) offscreen: buffers / VAOs / first use, now — not on the frame the
     // player first looks at it (the arrival hitch). Restored before any frame runs.
     if (gone()) return false;
@@ -791,9 +799,8 @@ async function integrateOnce(urgent: boolean, roots: THREE.Object3D[], buildGate
     if (gone()) return false;
     openGate?.();
     phase("first-use");
-    for (const pr of (r.info.programs ?? []) as unknown as Array<{ getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
-      try { if (!pr.isReady || pr.isReady()) { pr.getUniforms?.(); pr.getAttributes?.(); } } catch { /* reported by three */ }
-      if (!urgent) await engine.yield();
+    for (const pr of (r.info.programs ?? []) as unknown as Array<{ __w?: number; getUniforms?: () => unknown; getAttributes?: () => unknown; isReady?: () => boolean }>) {
+      if (!pr.__w && (!pr.isReady || pr.isReady())) { pr.__w = 1; try { pr.getUniforms?.(); pr.getAttributes?.(); } catch {} if (!urgent) await engine.yield(); }
     }
     // (what held a fresh material dissolves in instead of appearing in one frame — engine/cull.ts reveal)
     engine.cull.reveal(objs.slice(roots.length));

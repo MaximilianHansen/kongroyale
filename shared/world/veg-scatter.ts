@@ -742,7 +742,7 @@ export function inClearing(x: number, z: number, all: Clearing[]): boolean {
   const cl = clearGrid(all).get((Math.floor(x / 16) + 4096) * 8192 + Math.floor(z / 16) + 4096);
   if (!cl) return false;
   for (const c of cl) {
-    if ("r" in c) { if (dmath.pow(x - c.x, 2) + dmath.pow(z - c.z, 2) < c.r * c.r) return true; }
+    if ("r" in c) { const dx = x - c.x, dz = z - c.z; if (dx * dx + dz * dz < c.r * c.r) return true; }
     else {
       const cy = dmath.cos(c.yaw ?? 0), sy = dmath.sin(c.yaw ?? 0);
       const lx = (x - c.x) * cy + (z - c.z) * sy, lz = -(x - c.x) * sy + (z - c.z) * cy;
@@ -789,7 +789,7 @@ class GapGrid {
     for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) {
       const a = this.cells.get(this.key(x + i * this.cell, z + j * this.cell));
       if (!a) continue;
-      for (let k = 0; k < a.length; k += 2) if (dmath.pow(a[k] - x, 2) + dmath.pow(a[k + 1] - z, 2) < g2) return true;
+      for (let k = 0; k < a.length; k += 2) { const dx = a[k] - x, dz = a[k + 1] - z; if (dx * dx + dz * dz < g2) return true; }
     }
     return false;
   }
@@ -1320,7 +1320,7 @@ function gladesNear(glades: Glade[], x: number, z: number): Glade[] | undefined 
 /** inside a glade (big plants keep out; canopy trunks keep r + 1 m back so the rim crowns roof the edge) */
 function inGlade(glades: Glade[] | undefined, x: number, z: number, extra: number): boolean {
   const near = glades && gladesNear(glades, x, z); if (!near) return false;
-  for (const g of near) { const r = g.r + extra; if (dmath.pow(x - g.x, 2) + dmath.pow(z - g.z, 2) < r * r) return true; }
+  for (const g of near) { const r = g.r + extra, dx = x - g.x, dz = z - g.z; if (dx * dx + dz * dz < r * r) return true; }
   return false;
 }
 function gladeRing(glades: Glade[] | undefined, x: number, z: number): boolean {

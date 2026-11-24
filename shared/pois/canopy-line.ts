@@ -15,7 +15,9 @@ import type { Box, Surface } from "../world/colliders";
 import { poiById } from "../world/map";
 import { groundAt } from "./canopy-line-ground";
 import { interiorColliders, interiorLoot, type InteriorRoom, type RoomOpening, type InteriorStyle, type RoomRole } from "./interior-kit";
+import { mulberry } from "./town-kit";
 import * as dmath from "../sim/dmath";
+export { mulberry };
 export { groundAt };
 
 const P = poiById("canopy-line");
@@ -114,10 +116,6 @@ export const toW = (yaw: number, lx: number, lz: number): V2 => [lx * dmath.cos(
 const wrap = (a: number) => { a %= TAU; return a < 0 ? a + TAU : a; };
 /** is angle a inside [a0, a1] (a0 → a1 counter-clockwise in angle terms, lengths < 2π) */
 export function inArc(a: number, arc: V2): boolean { const L = wrap(arc[1] - arc[0]); return wrap(a - arc[0]) <= L; }
-export function mulberry(seed: number) {
-  let s = seed >>> 0;
-  return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
 /** zip / bridge parabola: lerp(a, b, t) with `sag` metres of dip at mid-span */
 export const sagY = (ya: number, yb: number, sag: number, t: number) => ya + (yb - ya) * t - 4 * sag * t * (1 - t);
 

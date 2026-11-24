@@ -50,6 +50,7 @@ export function createFx(ctx: WorldCtx): FxSystem {
   const object = new THREE.Group(); object.name = "weapons-fx";
   const u: FxUniforms = makeUniforms();
   let now = 0;
+  let frameImpacts = 0;
   const clock = () => now;
   const sunW = new THREE.Vector3(0.4, 0.8, 0.4).normalize();
   const onRender = (cam: THREE.Camera, r: THREE.WebGLRenderer) => {
@@ -196,6 +197,7 @@ export function createFx(ctx: WorldCtx): FxSystem {
       }
     },
     impact(pos, normal, surface) {
+      if (frameImpacts++ >= 6) return;
       const r = IMP[surface] ?? IMP.stone;
       const n = _a.copy(normal); if (n.lengthSq() < 1e-6) n.set(0, 1, 0); n.normalize();
       // impacts must read at 20-40 m and differ per surface:
@@ -392,6 +394,7 @@ export function createFx(ctx: WorldCtx): FxSystem {
       }
     },
     update(dt) {
+      frameImpacts = 0;
       now += Math.min(dt, 0.1);
       if (now > 900) {
         // clock rebase: keep shader float time small

@@ -522,7 +522,7 @@ class Placer {
         const before = this.used.length, nf = this.fronts.length;
         if (this.place(g, s, a)) {
           if (this.acceptChest(before)) return true;
-          this.used.splice(before, 1); this.fronts.length = nf;
+          this.used.splice(before, 1); this.fronts.length = nf; this.#occN = 0; this.#occMask = null;
         }
       }
     }
@@ -670,47 +670,46 @@ class Placer {
   }
 
   // ---------------------------------------------------------------- reachability
-  private wallMask: Uint8Array | null = null;
+  #wallMask: Uint8Array | null = null;
+  #occMask: Uint8Array | null = null;
+  #tmpMask: Uint8Array | null = null;
+  #occN = 0;
   blocked(): Uint8Array {
-    const { w, d } = this.room;
-    const W = this.gridW, D = this.gridD, cw = w / W, cd = d / D;
-    if (!this.wallMask) {
+    const { w, d } = this.room, W = this.gridW, D = this.gridD, cw = w / W, cd = d / D, R2 = CLEAR_R * CLEAR_R;
+    if (!this.#wallMask) {
       const m = new Uint8Array(W * D);
       for (let j = 0; j < D; j++) for (let i = 0; i < W; i++) {
         const x = -w / 2 + (i + 0.5) * cw, z = -d / 2 + (j + 0.5) * cd;
         let wall = Math.abs(x) > w / 2 - CLEAR_R || Math.abs(z) > d / 2 - CLEAR_R;
-        // walls (except in front of doors: the capsule stands in the doorway)
         if (wall) for (const o of this.room.openings) {
           if (o.kind === "window") continue;
-          const along = o.side % 2 === 0 ? x : z, across = o.side % 2 === 0 ? z : x;
-          const edge = o.side === 0 ? d / 2 : o.side === 1 ? w / 2 : o.side === 2 ? -d / 2 : -w / 2;
+          const along = o.side % 2 === 0 ? x : z, across = o.side % 2 === 0 ? z : x, edge = o.side === 0 ? d / 2 : o.side === 1 ? w / 2 : o.side === 2 ? -d / 2 : -w / 2;
           if (Math.abs(along - o.at) < o.w / 2 - CLEAR_R + 0.08 && Math.abs(across - edge) < CLEAR_R + 0.1) wall = false;
         }
-        if (!wall) for (const r of this.solids) {
-          const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1);
-          if (dx * dx + dz * dz < CLEAR_R * CLEAR_R) { wall = true; break; }
-        }
+        if (!wall) for (const r of this.solids) { const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1); if (dx * dx + dz * dz < R2) { wall = true; break; } }
         if (wall) m[j * W + i] = 1;
       }
-      this.wallMask = m;
+      this.#wallMask = m;
     }
-    const g = this.wallMask.slice();
-    const R2 = CLEAR_R * CLEAR_R;
-    for (const u of this.used) for (const it of u.items) {
-      if (it.col === 0) continue;
-      if (it.y + it.h <= 0.5 || it.y > 1.85) continue;   // ≤ 0.5 m = the capsule steps over it (STEP_H 0.55)
-      const r = itemRect(it);
-      const i0 = Math.max(0, Math.floor((r.x0 - CLEAR_R + w / 2) / cw)), i1 = Math.min(W - 1, Math.floor((r.x1 + CLEAR_R + w / 2) / cw));
-      const j0 = Math.max(0, Math.floor((r.z0 - CLEAR_R + d / 2) / cd)), j1 = Math.min(D - 1, Math.floor((r.z1 + CLEAR_R + d / 2) / cd));
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-        const c = j * W + i;
-        if (g[c]) continue;
-        const x = -w / 2 + (i + 0.5) * cw, z = -d / 2 + (j + 0.5) * cd;
-        // rounded corners: the capsule is round
-        const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1);
-        if (dx * dx + dz * dz < R2) g[c] = 1;
+    const n = this.used.length;
+    if (!n) return this.#wallMask;
+    const stamp = (g: Uint8Array, items: InteriorItem[]) => {
+      for (const it of items) {
+        if (!it.col || it.y + it.h <= 0.5 || it.y > 1.85) continue;
+        const r = itemRect(it), i0 = Math.max(0, Math.floor((r.x0 - CLEAR_R + w / 2) / cw)), i1 = Math.min(W - 1, Math.floor((r.x1 + CLEAR_R + w / 2) / cw));
+        const j0 = Math.max(0, Math.floor((r.z0 - CLEAR_R + d / 2) / cd)), j1 = Math.min(D - 1, Math.floor((r.z1 + CLEAR_R + d / 2) / cd));
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const c = j * W + i; if (g[c]) continue;
+          const x = -w / 2 + (i + 0.5) * cw, z = -d / 2 + (j + 0.5) * cd;
+          const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1);
+          if (dx * dx + dz * dz < R2) g[c] = 1;
+        }
       }
-    }
+    };
+    if (!this.#occMask) { this.#occMask = this.#wallMask.slice(); this.#tmpMask = new Uint8Array(W * D); }
+    const pre = n - 1;
+    while (this.#occN < pre) stamp(this.#occMask, this.used[this.#occN++].items);
+    const g = this.#tmpMask!; g.set(this.#occMask); stamp(g, this.used[pre].items);
     return g;
   }
   cellOf(x: number, z: number): number {

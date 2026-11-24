@@ -7,17 +7,14 @@
 // shared/pois/jungle-baked.json; the server colliders and the client visuals are both built from that baked data.
 import type { Box } from "../world/colliders";
 import rockProfiles from "./jungle-rock-profiles.json";
-import { peakTrail, trailBoxes, type TrailStep } from "./jungle-layout";
+import { mulberry, peakTrail, trailBoxes, type TrailStep } from "./jungle-layout";
+export { mulberry };
 import { LADDERS } from "./ladders";
 import { pathLines } from "../world/terrain-gen";
 import * as dmath from "../sim/dmath";
 
 export type H = (x: number, z: number) => number;
 export type Clearing = { x: number; z: number; r: number } | { x: number; z: number; hx: number; hz: number; yaw?: number };
-export function mulberry(seed: number) {
-  let a = seed >>> 0 || 1;
-  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
 const box = (x: number, y: number, z: number, w: number, h: number, d: number, yaw = 0, surf: Box["surf"] = "stone"): Box => ({ c: [x, y, z], h: [w / 2, h / 2, d / 2], yaw, surf });
 
 export interface Fall { top: [number, number, number]; dir: [number, number]; width: number; v0: number; /** slides down the terrain face (top snaps to the rim edge) */ cascade?: boolean }

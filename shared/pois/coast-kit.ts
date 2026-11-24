@@ -296,6 +296,11 @@ export function spiral(k: string, cx: number, cz: number, y0: number, a0: number
   return out;
 }
 
+export function railCol(x0: number, z0: number, y0: number, x1: number, z1: number, y1: number, h = 1.0, k = "rail", surf: Surface = "metal"): Piece {
+  const L = dmath.hypot(x1 - x0, z1 - z0), yaw = dmath.atan2(x1 - x0, z1 - z0), pitch = -dmath.atan2(y1 - y0, L);
+  return { k, c: [(x0 + x1) / 2, (y0 + y1) / 2 + h / 2, (z0 + z1) / 2], h: [0.05, h / 2, dmath.hypot(L, y1 - y0) / 2], yaw, pitch, col: true, noShoot: true, surf };
+}
+
 /** a ring of wall segments (cylinder approximation) — for round towers. Gaps: angular windows [a0,a1] left open. */
 export function ringWall(k: string, cx: number, cz: number, y0: number, h: number, r: number, t: number, segs: number,
   gaps: Array<[number, number]> = [], o: Partial<Piece> = {}): Piece[] {

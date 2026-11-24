@@ -417,14 +417,6 @@
     "client/src/world/pois/peel-harbor/index.ts": [
       "const fp = workerPool(() => new Worker(new URL(\"../_kit/harbor-tex.worker.ts\", import.meta.url), { type: \"module\" }), 1);"
     ],
-    "client/src/world/pois/the-murk/fx.ts": [
-      "const t = new THREE.CanvasTexture(c);"
-    ],
-    "client/src/world/pois/the-murk/water.ts": [
-      "const t = new THREE.DataTexture(d, W, Hh, THREE.RGBAFormat);",
-      "const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;",
-      "const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;"
-    ],
     "client/src/world/pois/the-wreck/freighter.ts": [
       "shaftM ??= (() => { const c = document.createElement(\"canvas\"); c.width = 8; c.height = 128; const g = c.getContext(\"2d\")!, gr = g.createLinearGradient(0, 0, 0, 128); gr.addColorStop(0, \"rgba(255,236,190,0.0)\"); gr.addColorStop(0.08, \"rgba(255,236,190,0.75)\"); gr.addColorStop(0.6, \"rgba(255,226,170,0.35)\"); gr.addColorStop(1, \"rgba(255,220,160,0)\"); g.fillStyle = gr; g.fillRect(0, 0, 8, 128); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, name: \"wreck-hold-shaft\" }); })();",
       "poolM ??= (() => { const c = document.createElement(\"canvas\"); c.width = c.height = 128; const g = c.getContext(\"2d\")!; const gr = g.createRadialGradient(64, 64, 4, 64, 64, 62); gr.addColorStop(0, \"rgba(255,240,200,0.9)\"); gr.addColorStop(1, \"rgba(255,230,180,0)\"); g.fillStyle = gr; g.fillRect(0, 0, 128, 128); g.globalCompositeOperation = \"destination-out\"; for (let i = 0; i < 60; i++) { g.strokeStyle = `rgba(0,0,0,${0.3 + (i % 3) * 0.2})`; g.lineWidth = 3; g.beginPath(); g.arc(20 + ((i * 37) % 90), 20 + ((i * 53) % 90), 6 + (i % 5) * 3, 0, 5); g.stroke(); } const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return new THREE.MeshBasicMaterial({ map: t, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, name: \"wreck-hold-pool\" }); })();"
@@ -489,44 +481,6 @@
     ],
     "client/src/world/veg/textures.ts": [
       "const t = new THREE.CanvasTexture(c);"
-    ],
-    "client/src/world/water/bakeclient.ts": [
-      "w = new Worker(new URL(\"./bake.worker.ts\", import.meta.url), { type: \"module\" });"
-    ],
-    "client/src/world/water/fields.ts": [
-      "const texture = new THREE.DataTexture(new Uint16Array(n * 4), res, res, THREE.RGBAFormat, THREE.HalfFloatType);",
-      "const texture2 = new THREE.DataTexture(new Uint8Array(n * 4).fill(128), res, res, THREE.RGBAFormat, THREE.UnsignedByteType);",
-      "const texture3 = new THREE.DataTexture(new Uint16Array(n * 4), res, res, THREE.RGBAFormat, THREE.HalfFloatType);",
-      "this.texture = new THREE.DataTexture(this.data, this.size, this.size, THREE.RedFormat, THREE.UnsignedByteType);"
-    ],
-    "client/src/world/water/flotsam.ts": [
-      "const t = new THREE.CanvasTexture(c);"
-    ],
-    "client/src/world/water/grab.ts": [
-      "if (!this.texture) { this.texture = new THREE.ExternalTexture(tex); this.texture.name = \"water-scene-grab\"; }",
-      "if (!this.depth) { this.depth = new THREE.ExternalTexture(tex); this.depth.name = \"water-scene-depth\"; }"
-    ],
-    "client/src/world/water/interact.ts": [
-      "this.rts = [new THREE.WebGLRenderTarget(N, N, opts), new THREE.WebGLRenderTarget(N, N, opts)];"
-    ],
-    "client/src/world/water/obstacles.ts": [
-      "this.rtA = new THREE.WebGLRenderTarget(size, size, { ...opts, format: THREE.RGFormat });",
-      "this.rtP = new THREE.WebGLRenderTarget(size, size, opts);",
-      "this.rtB = new THREE.WebGLRenderTarget(blurSize, blurSize, opts);",
-      "this.rtC = new THREE.WebGLRenderTarget(blurSize, blurSize, { ...opts, format: THREE.RGFormat });",
-      "this.rtW1 = new THREE.WebGLRenderTarget(WS, WS, opts);",
-      "this.rtW2 = new THREE.WebGLRenderTarget(WS, WS, opts);"
-    ],
-    "client/src/world/water/skyirr.ts": [
-      "private rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.FloatType, depthBuffer: false, stencilBuffer: false, generateMipmaps: false });"
-    ],
-    "client/src/world/water/textures.ts": [
-      "const t = new THREE.DataArrayTexture(arr, size, size, 3);"
-    ],
-    "client/src/world/water/wavetile.ts": [
-      "this.tile = new THREE.WebGLRenderTarget(res, res, {",
-      "this.caustics = new THREE.WebGLRenderTarget(causRes, causRes, {",
-      "this.causTmp = new THREE.WebGLRenderTarget(causRes, causRes, {"
     ]
   }
 }

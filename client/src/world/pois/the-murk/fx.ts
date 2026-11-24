@@ -3,22 +3,43 @@
 // gaps), hanging moss (alpha strand cards swaying from the hero's limbs, eaves and rails). All in one group; cheap.
 import * as THREE from "three";
 import type { WorldCtx } from "../../../engine/engine";
-import { LAYOUT, GM, WATER_Y } from "../../../../../shared/pois/the-murk";
+import type { Scope } from "../../../engine/res/scope";
+import { releaseAfterUpload } from "../../../engine/texture-release";
+import { LAYOUT, GM, WATER_Y, CX, CZ } from "../../../../../shared/pois/the-murk";
 import { toWorld } from "../../../../../shared/pois/town-kit";
 
-function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, srgb = true): THREE.CanvasTexture {
-  const c = document.createElement("canvas"); c.width = w; c.height = h;
-  draw(c.getContext("2d")!);
-  const t = new THREE.CanvasTexture(c);
+export function canvasTex(scope: Scope, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, srgb = true): THREE.CanvasTexture {
+  const mk = () => {
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    draw(c.getContext("2d")!);
+    return c;
+  };
+  const t = releaseAfterUpload(scope.texture("tex.world", new THREE.CanvasTexture(mk())), mk);
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  t.anisotropy = 8;
+  if (srgb) t.anisotropy = 8;
   return t;
 }
 
-export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number, rng: () => number) {
+export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number, rng: () => number, scope: Scope) {
+  const fxScope = scope.child("fx");
   const group = new THREE.Group();
   group.name = "murk:fx";
   const time = { value: 0 };
+
+  const distCull: Array<[THREE.Object3D, number]> = [];
+  const regFx = <T extends THREE.Object3D>(obj: T, g: THREE.BufferGeometry, rPad: number, maxD: number, order: number, name: string) => {
+    g.computeBoundingSphere();
+    if (g.boundingSphere) g.boundingSphere.radius += rPad;
+    obj.name = name; obj.renderOrder = order;
+    distCull.push([obj, maxD]);
+    group.add(obj);
+    return obj;
+  };
+  const qIdx = (count: number) => {
+    const idx: number[] = [];
+    for (let i = 0; i < count; i++) idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
+    return idx;
+  };
 
   // ---------------------------------------------------------------- fireflies
   {
@@ -56,14 +77,12 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
         }`,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
-    const pts = new THREE.Points(g, mat);
-    pts.name = "murk:fireflies"; pts.frustumCulled = false; pts.renderOrder = 5;
-    group.add(pts);
+    regFx(new THREE.Points(fxScope.geometry("geo.world", g), fxScope.material(mat)), g, 4, 160, 5, "murk:fireflies");
   }
 
   // ---------------------------------------------------------------- mist cards
   {
-    const tex = canvasTex(256, 128, (g) => {
+    const tex = canvasTex(fxScope, 256, 128, (g) => {
       const gr = g.createRadialGradient(128, 70, 6, 128, 64, 128);
       gr.addColorStop(0, "rgba(255,255,255,0.9)"); gr.addColorStop(0.5, "rgba(255,255,255,0.35)"); gr.addColorStop(1, "rgba(255,255,255,0)");
       g.fillStyle = gr; g.fillRect(0, 0, 256, 128);
@@ -78,13 +97,11 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
       for (let k = 0; k < 4; k++) { pos.push(x, lv + 0.2 + rng() * 0.35, z); sz.push(7 + rng() * 6, 1.1 + rng() * 0.7); }
       off.push(-1, -1, 1, -1, 1, 1, -1, 1);
     }
-    const n = pos.length / 12, idx: number[] = [];
-    for (let i = 0; i < n; i++) idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
-    const g = new THREE.BufferGeometry();
+    const g = fxScope.geometry("geo.world", new THREE.BufferGeometry());
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("aOff", new THREE.Float32BufferAttribute(off, 2));
     g.setAttribute("aSize", new THREE.Float32BufferAttribute(sz, 2));
-    g.setIndex(idx);
+    g.setIndex(qIdx(pos.length / 12));
     const mat = new THREE.ShaderMaterial({
       uniforms: { uTime: time, uMap: { value: tex }, uColor: { value: new THREE.Color("#c9d2b8") } },
       vertexShader: `attribute vec2 aOff; attribute vec2 aSize; uniform float uTime; varying vec2 vUv; varying float vA;
@@ -101,9 +118,7 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
         void main() { float a = texture2D(uMap, vUv).a * vA * 0.07; if (a < 0.004) discard; gl_FragColor = vec4(uColor, a); }`,
       transparent: true, depthWrite: false,
     });
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.name = "murk:mist"; mesh.frustumCulled = false; mesh.renderOrder = 4;
-    group.add(mesh);
+    regFx(new THREE.Mesh(g, fxScope.material(mat)), g, 12, 220, 4, "murk:mist");
   }
 
   // ---------------------------------------------------------------- sun shafts (along the live sun direction)
@@ -116,12 +131,10 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
       const y = Math.max(WATER_Y, ctx.terrain.height(x, z));
       for (const [u, v] of [[-1, 0], [1, 0], [1, 1], [-1, 1]]) { pos.push(x, y, z); par.push(u * w, v, 26 + rng() * 6, rng() * 10); }
     }
-    const n = pos.length / 12, idx: number[] = [];
-    for (let i = 0; i < n; i++) idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
-    const g = new THREE.BufferGeometry();
+    const g = fxScope.geometry("geo.world", new THREE.BufferGeometry());
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("aPar", new THREE.Float32BufferAttribute(par, 4));
-    g.setIndex(idx);
+    g.setIndex(qIdx(pos.length / 12));
     const mat = new THREE.ShaderMaterial({
       uniforms: shaftU,
       vertexShader: `attribute vec4 aPar; uniform vec3 uSun; uniform float uTime; varying vec2 vUv; varying float vA;
@@ -151,14 +164,12 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
         }`,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
     });
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.name = "murk:shafts"; mesh.frustumCulled = false; mesh.renderOrder = 6;
-    group.add(mesh);
+    regFx(new THREE.Mesh(g, fxScope.material(mat)), g, 36, 260, 6, "murk:shafts");
   }
 
   // ---------------------------------------------------------------- hanging moss
   {
-    const tex = canvasTex(256, 512, (g) => {
+    const tex = canvasTex(fxScope, 256, 512, (g) => {
       g.clearRect(0, 0, 256, 512);
       let s = 7;
       const r = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -185,21 +196,21 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
       for (let k = 0; k < 4; k++) { const u = (rng() - 0.5) * p.h.w; const [x, z] = toWorld(p.h, u, (rng() < 0.5 ? 1 : -1) * (p.h.d / 2 + p.h.overhang - 0.1)); anchors.push({ x, y: p.tipY + 0.05, z, len: 0.8 + rng() * 0.9, w: 0.4 + rng() * 0.3 }); }
     }
     for (let k = 0; k < 10; k++) { const a = rng() * Math.PI * 2; anchors.push({ x: GM.x + Math.cos(a) * GM.platH, y: GM.platY - 0.2, z: GM.z + Math.sin(a) * GM.platH, len: 1.2 + rng() * 1.6, w: 0.5 + rng() * 0.4 }); }
-    const pos: number[] = [], uv: number[] = [], sw: number[] = [], idx: number[] = [];
+    const pos: number[] = [], uv: number[] = [], sw: number[] = [];
     for (const a of anchors) {
       for (let c = 0; c < 2; c++) {
         const yaw = rng() * Math.PI + c * Math.PI / 2, dx = Math.cos(yaw) * a.w / 2, dz = Math.sin(yaw) * a.w / 2;
-        const b = pos.length / 3, u0 = rng() < 0.5 ? 0 : 0.5;
+        const u0 = rng() < 0.5 ? 0 : 0.5;
         pos.push(a.x - dx, a.y, a.z - dz, a.x + dx, a.y, a.z + dz, a.x + dx, a.y - a.len, a.z + dz, a.x - dx, a.y - a.len, a.z - dz);
         uv.push(u0, 1, u0 + 0.5, 1, u0 + 0.5, 0, u0, 0);
-        sw.push(0, 0, 1, 1); idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+        sw.push(0, 0, 1, 1);
       }
     }
-    const g = new THREE.BufferGeometry();
+    const g = fxScope.geometry("geo.world", new THREE.BufferGeometry());
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
     g.setAttribute("aSway", new THREE.Float32BufferAttribute(sw, 1));
-    g.setIndex(idx);
+    g.setIndex(qIdx(pos.length / 12));
     g.computeVertexNormals();
     const mat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.35, side: THREE.DoubleSide, roughness: 0.9, metalness: 0, color: "#c8c89a", name: "murk:moss" });
     mat.onBeforeCompile = (sh) => {
@@ -209,9 +220,9 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
       sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * vec3(0.12, 0.13, 0.06);");
     };
     mat.customProgramCacheKey = () => "murk-moss";
-    const mesh = new THREE.Mesh(g, mat);
+    const mesh = new THREE.Mesh(g, fxScope.material(mat));
     mesh.name = "murk:moss"; mesh.castShadow = false; mesh.receiveShadow = true;
-    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.35 });
+    mesh.customDepthMaterial = fxScope.material(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.35 }));
     group.add(mesh);
   }
 
@@ -220,19 +231,18 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
     const ch = LAYOUT.props.find((p) => p.kind === "chimney");
     if (ch) {
       const top = new THREE.Vector3(ch.x, ch.y + (ch.h ?? 3) + 0.4, ch.z);
-      const tex = canvasTex(128, 128, (g) => {
+      const tex = canvasTex(fxScope, 128, 128, (g) => {
         const gr = g.createRadialGradient(64, 64, 4, 64, 64, 64);
         gr.addColorStop(0, "rgba(255,255,255,0.85)"); gr.addColorStop(0.45, "rgba(255,255,255,0.4)"); gr.addColorStop(1, "rgba(255,255,255,0)");
         g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
       });
       const N = 40, pos: number[] = [], off: number[] = [], ph: number[] = [];
       for (let i = 0; i < N; i++) { for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { pos.push(top.x, top.y, top.z); off.push(u, v); ph.push(i / N, rng()); } }
-      const idx: number[] = []; for (let i = 0; i < N; i++) idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
-      const g = new THREE.BufferGeometry();
+      const g = fxScope.geometry("geo.world", new THREE.BufferGeometry());
       g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
       g.setAttribute("aOff", new THREE.Float32BufferAttribute(off, 2));
       g.setAttribute("aPh", new THREE.Float32BufferAttribute(ph, 2));
-      g.setIndex(idx);
+      g.setIndex(qIdx(N));
       const mat = new THREE.ShaderMaterial({
         uniforms: { uTime: time, uMap: { value: tex } },
         vertexShader: `attribute vec2 aOff; attribute vec2 aPh; uniform float uTime; varying vec2 vUv; varying float vA;
@@ -252,9 +262,7 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
           void main() { float a = texture2D(uMap, vUv).a * vA * 0.5; if (a < 0.004) discard; gl_FragColor = vec4(vec3(0.82, 0.8, 0.76), a); }`,
         transparent: true, depthWrite: false,
       });
-      const m = new THREE.Mesh(g, mat);
-      m.name = "murk:smoke"; m.frustumCulled = false; m.renderOrder = 7;
-      group.add(m);
+      regFx(new THREE.Mesh(g, fxScope.material(mat)), g, 65, 1100, 7, "murk:smoke");
     }
   }
 
@@ -263,7 +271,7 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
     // hand-knotted ROPE netting (the even thin diamond lines read as chain-link): twisted cords that sag a little
     // between knots, a dark outline + a light twist highlight, fat knots, colour drift from tar-brown to sun-bleached tan,
     // a few broken meshes; tiles seamlessly (5 × 5 meshes per tile)
-    const tex = canvasTex(256, 256, (g) => {
+    const tex = canvasTex(fxScope, 256, 256, (g) => {
       g.clearRect(0, 0, 256, 256);
       let sd = 0x6e7; const rr = () => ((sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
       const M5 = 5, st = 256 / M5;
@@ -293,9 +301,10 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
       }
     });
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    const mat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.4, side: THREE.DoubleSide, color: "#c9c2a8", roughness: 0.9, metalness: 0, name: "murk:net-rope" });
+    const mat = fxScope.material(new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.4, side: THREE.DoubleSide, color: "#c9c2a8", roughness: 0.9, metalness: 0, name: "murk:net-rope" }));
     mat.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * 0.18;"); };
     mat.customProgramCacheKey = () => "murk-net";
+    const netDepth = fxScope.material(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.4 }));
     const drape = (a: THREE.Vector3, b: THREE.Vector3, h: number, sag: number, out: THREE.Vector3) => {
       // a sagging curtain hung between a and b, bellied toward `out`
       const nu = 14, nv = 10, pos: number[] = [], uv: number[] = [], idx: number[] = [];
@@ -309,10 +318,10 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
         pos.push(p.x, p.y, p.z); uv.push(u * w * 0.85, v * h * 0.85);
       }
       for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) { const q = j * (nu + 1) + i; idx.push(q, q + nu + 1, q + 1, q + 1, q + nu + 1, q + nu + 2); }
-      const g = new THREE.BufferGeometry();
+      const g = fxScope.geometry("geo.world", new THREE.BufferGeometry());
       g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
       const m = new THREE.Mesh(g, mat); m.name = "murk:net"; m.castShadow = false; m.receiveShadow = true;
-      m.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.4 });
+      m.customDepthMaterial = netDepth;
       group.add(m);
     };
     for (const p of LAYOUT.parts) {
@@ -353,15 +362,17 @@ export function buildFx(ctx: WorldCtx, levelAt: (x: number, z: number) => number
           if (a < 0.004) discard; gl_FragColor = vec4(vec3(1.0, 0.62, 0.25) * a * 1.6, a); }`,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
-    const pts = new THREE.Points(g, mat);
-    pts.name = "murk:lantern-glow"; pts.frustumCulled = false; pts.renderOrder = 5;
-    group.add(pts);
+    regFx(new THREE.Points(fxScope.geometry("geo.world", g), fxScope.material(mat)), g, 4, 170, 5, "murk:lantern-glow");
   }
 
   return {
     group,
-    update(t: number) {
+    update(t: number, cam?: THREE.Vector3) {
       time.value = t;
+      if (cam) {
+        const d = Math.hypot(cam.x - CX, cam.z - CZ);
+        for (const [obj, maxD] of distCull) obj.visible = d < maxD;
+      }
       const sd = ctx.shared.get("sunDir") as THREE.Vector3 | undefined;
       if (sd) shaftU.uSun.value.copy(sd);
     },
