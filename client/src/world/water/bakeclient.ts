@@ -1,12 +1,11 @@
 // Main-thread side of the water bake worker (bake.worker.ts): allocates the field + texture objects EMPTY right away (the
-// materials compile against them), posts the jobs, and fills the textures when the results arrive. Falls back to the
-// main-thread bake when workers are unavailable.
+// materials compile against them), posts the jobs, and fills the textures when the results arrive.
 import type { Terrain } from "../../../../shared/world/terrain";
 import type { CamSpec } from "../../engine/views";
+import type { Scope } from "../../engine/res/scope";
 import { createFields, type WaterFields } from "./fields";
 import { makeWaterTextures, type WaterTextures } from "./textures";
-import { bakeFieldData, type FieldData } from "./fieldbake";
-import { waterTexData } from "./texbake";
+import type { FieldData } from "./fieldbake";
 import { assetUrl } from "../../engine/assets";
 
 export interface WaterBake {
@@ -22,40 +21,39 @@ export interface WaterBake {
 
 let seq = 0;
 
-export function startBake(T: Terrain, texSize: number): WaterBake {
+export function startBake(T: Terrain, texSize: number, scope: Scope): WaterBake {
+  const workerScope = scope.child("bake-workers");
   const t0 = performance.now();
-  const fields = createFields(T);
-  const tex = makeWaterTextures(texSize, true);
   const timings: WaterBake["timings"] = {};
-  // TWO workers: the texture layers (Worley-heavy, ~1-2 s) and the fields + beach camera run in parallel
-  const mk = () => {
-    const pending = new Map<number, (m: Record<string, unknown>) => void>();
-    let w: Worker | null = null;
+  const runJob = async (msg: Record<string, unknown>) => {
+    if (scope.isDisposed) throw new Error("water bake cancelled");
+    const id = ++seq;
+    const jobScope = workerScope.child(`job-${id}`);
+    const w = jobScope.worker(new Worker(new URL("./bake.worker.ts", import.meta.url), { type: "module" }));
     try {
-      w = new Worker(new URL("./bake.worker.ts", import.meta.url), { type: "module" });
-      w.onmessage = (e: MessageEvent<Record<string, unknown>>) => { const r = pending.get(e.data.id as number); pending.delete(e.data.id as number); r?.(e.data); };
-      w.onerror = (e) => { console.warn("[water] bake worker failed — main-thread fallback", e.message); for (const r of pending.values()) r({ error: "worker" }); pending.clear(); w = null; };
-    } catch (e) { console.warn("[water] no bake worker — main-thread fallback", e); w = null; }
-    const job = (msg: Record<string, unknown>, transfer: Transferable[] = []) => new Promise<Record<string, unknown>>((res) => {
-      if (!w) { res({ error: "no worker" }); return; }
-      const id = ++seq; pending.set(id, res);
-      w.postMessage({ ...msg, id }, transfer);
-    });
-    return { job, close: () => { w?.terminate(); w = null; } };
+      const r = await new Promise<Record<string, unknown>>((res, rej) => {
+        w.onmessage = (e: MessageEvent<Record<string, unknown>>) => { if (e.data.id === id) res(e.data); };
+        w.onerror = (e) => rej(new Error(e.message || "worker error"));
+        w.postMessage({ ...msg, id });
+      });
+      if (r.error) throw new Error(String(r.error));
+      return r;
+    } finally {
+      jobScope.dispose();
+    }
   };
-  const wTex = mk(), wFld = mk();
-  // (the heights are copied, not transferred: the terrain keeps its own arrays)
-  const texP = wTex.job({ kind: "tex", size: texSize }).then((r) => {
-    tex.fill(r.error ? waterTexData(texSize) : (r.data as Uint8Array));
+  const bakeTex = () => runJob({ kind: "tex", size: texSize });
+  const bakeFields = async () => (await runJob({ kind: "fields", heights: T.heights, biome: T.biome, res: T.res, cell: T.cell, half: T.half })).fd as FieldData;
+  const fields = createFields(T, scope, bakeFields);
+  const tex = makeWaterTextures(texSize, scope, bakeTex);
+  const texP = bakeTex().then((r) => {
+    tex.fill(r.data as Uint8Array);
     timings.tex = Math.round((r.ms as number) ?? -1);
   });
-  const fieldsP = wFld.job({ kind: "fields", heights: T.heights, biome: T.biome, res: T.res, cell: T.cell, half: T.half }).then((r) => {
-    const fd = r.error ? bakeFieldData(T.heights, T.biome, T.res, T.cell, T.half) : (r.fd as FieldData);
+  const fieldsP = bakeFields().then((fd) => {
     fields.fill(fd);
     timings.fields = Math.round(fd.ms);
   });
-  texP.then(() => wTex.close());
-  fieldsP.then(() => wFld.close());
   const done = Promise.all([texP, fieldsP]).then(() => { timings.wall = Math.round(performance.now() - t0); });
   const beach = async (): Promise<CamSpec | null> => {
     const tb = performance.now();
@@ -71,15 +69,13 @@ export function startBake(T: Terrain, texSize: number): WaterBake {
       console.info(`[water] beach-view cache miss (terrain hash ${hash}, status ${r.status})`);
     } catch (e) { console.info("[water] beach-view cache unavailable", String(e)); }
     // 2. solve it in the worker (never on the main thread: ~3-7 s with the veg scatter replay)
-    const wBeach = mk();
-    const r = await wBeach.job({ kind: "beach", heights: T.heights, biome: T.biome });
-    wBeach.close();
-    timings.beach = Math.round(performance.now() - tb);
-    if (r.error) {
-      const { solveBeachView } = await import("./beachcam");
-      return solveBeachView(T);
-    }
-    return (r.view as CamSpec | null) ?? null;
+    try {
+      const r = await runJob({ kind: "beach", heights: T.heights, biome: T.biome });
+      timings.beach = Math.round(performance.now() - tb);
+      return (r.view as CamSpec | null) ?? null;
+    } catch { /* fallback below */ }
+    const { solveBeachView } = await import("./beachcam");
+    return solveBeachView(T);
   };
   return { fields, tex, done, beach, timings };
 }

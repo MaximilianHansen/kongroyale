@@ -45,10 +45,12 @@ uniform sampler2D wtrObstacle;    // auto-baked waterline proximity + registered
 uniform float wtrObstacleScale;
 uniform vec3 wtrSimST;            // window min corner xz, 1/size
 uniform float wtrSimOn;
-uniform vec3 wtrMurkP;                   // THE MURK: x, z, radius
+uniform vec3 wtrMurkP;
+uniform float wtrMurkOwned;
 uniform vec4 wtrHarborP;                 // peel-harbor basin ellipse: cx, cz, 1/rx, 1/rz
 uniform vec3 wtrLagoonP;                 // THE WRECK's emerald lagoon: x, z, radius
 uniform vec4 wtrLagoon2P;                // WRECK BAY's cove: x, z, radius, strength
+vec2 wtrObsUv(vec2 p) { return vec2(p.x * wtrObstacleScale + 0.5, 0.5 - p.y * wtrObstacleScale); }
 varying vec3 vMask;                      // (murk × calm, harbor, wreck lagoon) — smooth analytic masks, per vertex
 
 // field2.b packs calm (lagoon water, < 0.5) and coral heads (> 0.5) — see fields.ts
@@ -414,7 +416,7 @@ if (shoreD0 < -(reachL + 3.0 + camD0 * 0.1)) waterPos.y = min(waterPos.y, fld0.r
 {
   float cheb = max(abs(position.x), abs(position.z));
   float cellEst = max(1.0, cheb / 16.0);
-  float obV = textureLod(wtrObstacle, vec2(wxz0.x * wtrObstacleScale + 0.5, 0.5 - wxz0.y * wtrObstacleScale), 0.0).r;
+  float obV = textureLod(wtrObstacle, wtrObsUv(wxz0), 0.0).r;
   vec2 suvV = (wxz0 - wtrSimST.xy) * wtrSimST.z;
   bool simV = wtrSimOn > 0.5 && suvV.x > -0.05 && suvV.y > -0.05 && suvV.x < 1.05 && suvV.y < 1.05;
   // (the far surf lines live 3-40 m out but only beyond ~220 m from the camera; nearer, foam never reaches past ~10 m)
@@ -539,6 +541,7 @@ export const FRAG_DEPTH_ONLY = /* glsl */ `void main() { gl_FragColor = vec4(0.0
 /** fragment declarations + helpers shared by the multiply pass and the main pass */
 const SURF_PARS = /* glsl */ `
 ${COMMON}
+float wtrObs(vec2 p) { return texture2D(wtrObstacle, wtrObsUv(p)).r; }
 uniform sampler2D wtrTile;
 // (wtrTex2: layer 0 = foam, layer 1 = noise, layer 2 = caustic net — declared with the shared vertex/fragment pars)
 uniform highp sampler2DArray wtrTex2;
@@ -651,6 +654,9 @@ const SURF_CORE = /* glsl */ `
   float fp = max(max(length(gx), length(gy)), 1e-4);          // major axis (m / px) — anisotropic at grazing angles
   float fpMin = max(min(length(gx), length(gy)), 1e-4);
   float fpT = max(fpMin, fp * 0.2);                            // what anisotropic filtering still resolves
+  #ifndef WTR_UNDER
+  if (murk > 0.985 && wtrMurkOwned > 0.5) discard;
+  #endif
   float nearF = 1.0 - smoothstep(40.0, 400.0, dist);
   float farMix = smoothstep(150.0, 900.0, dist);
 
@@ -677,7 +683,7 @@ const SURF_CORE = /* glsl */ `
   // scene behind (no tint, no sheen): the wet band is 1-3 m of darker glossy sand that breathes with the waves, never
   // a static 5-12 m grey-brown strip
   float wetH = 0.0;
-  if (tHs > -0.4 && tHs < liftMaxP + 0.25) {
+  if (wetZone > 0.001 && tHs > -0.4 && tHs < liftMaxP + 0.25) {
     float jit = (vNzS.g - 0.5) * 0.22 + (vNzS.b - 0.5) * 0.1;
     float a1 = wtrCycA(xz, nCyc - 1.0), a2 = wtrCycA(xz, nCyc - 2.0);
     // (the oldest wave fades out over its last cycle: no discontinuity where the cycle count ticks over along the beach)
@@ -757,9 +763,11 @@ const SURF_CORE = /* glsl */ `
   // waterline proximity of anything piercing the surface (hulls, quay walls, piles, rocks, containers): ≈ 1 at the
   // object → 0 at ~4 m, plus the shapes other areas registered
   // (+ G: the WIDE proximity, ≈ 1 at a hull / wall / sea stack → 0 at ~16 m: the foam churn seen from the air)
-  vec2 obs2 = texture2D(wtrObstacle, vec2(xz.x * wtrObstacleScale + 0.5, 0.5 - xz.y * wtrObstacleScale)).rg;
+  vec2 obs2 = texture2D(wtrObstacle, wtrObsUv(xz)).rg;
   float obst = obs2.r, obW = obs2.g;
-  vec3 Tfloor, ramp; float scat, thick, dCol, pathD, fCap;
+  vec3 Tfloor = vec3(0.0), ramp = vec3(0.0); float scat = 0.0, thick = 0.0, dCol = 0.0, pathD = 0.0, fCap = 0.0;
+  float wEdgeL = 1.0;
+  #if !defined(WTR_FOAMPASS) || defined(WTR_DEBUG)
   #if defined(WTR_VALL)
   {
     // per vertex everywhere; next to objects the pixel adds what wtrColumn does with obst: the water right at a hull /
@@ -800,7 +808,8 @@ const SURF_CORE = /* glsl */ `
                  * (1.0 - harbor) * (1.0 - lagoon) * (1.0 - murk) * (1.0 - calm) * wtrCoastAmt * 0.9);
     ramp = mix(ramp, wtrCoastTq, coastK);
   }
-  float wEdgeL = smoothstep(0.0, mix(0.05, 0.4, max(calm, murk)), thick);
+  wEdgeL = smoothstep(0.0, mix(0.05, 0.4, max(calm, murk)), thick);
+  #endif
   // the foam keeps the DRAWN surface's edge: the contact line / swash lace sit right AT the waterline, where the
   // physical depth (wEdgeL) fades the water body out
   float wEdgeF = smoothstep(0.0, mix(0.025, 0.2, max(calm, murk)), dFg);
@@ -910,6 +919,7 @@ uniform vec3 wtrSkyIrr;
 uniform sampler2D wtrSceneDepth;
 uniform sampler2D wtrSceneCol;
 uniform vec4 wtrGrab;             // 1/width, 1/height, depth valid, colour valid
+uniform float wtrGrabMaxV;
 uniform vec2 wtrCamNF;            // camera near, far
 uniform mat4 wtrProj;             // the camera's projection (as drawn: TAA jitter included)
 uniform float wtrRefract;         // screen-space refraction: metres of lateral shift per unit slope per metre of water
@@ -929,6 +939,7 @@ float wScLap = 0.0;   // lapping ring coverage (0..1)
 float wFilmObj = 0.0;
 float wLeaf = 0.0; vec3 wLeafCol = vec3(0.0); float wMurk = 0.0; float wLag = 0.0;   // THE MURK: floating leaves / litter on the tea water
 float wtrViewZ(float d) { float n = wtrCamNF.x, f = wtrCamNF.y; return (2.0 * n * f) / ((f + n) - (d * 2.0 - 1.0) * (f - n)); }
+vec2 wtrSuv() { return clamp(gl_FragCoord.xy * wtrGrab.xy, vec2(0.0), vec2(1.0, wtrGrabMaxV)); }
 #if defined(ATMOS) && defined(WTR_VATM)
 varying vec3 vAtmA;
 varying vec3 vAtmB;
@@ -996,6 +1007,10 @@ float wtrSparkCell(vec2 p, float t) {
 // that pops between octaves at a distance step is just another twinkle)
 float wtrSparkleAt(vec2 xz, float fp, float t) {
   return wtrSparkCell(xz / exp2(floor(log2(max(fp * 3.0, 0.04)) + 0.5)), t);
+}
+vec2 wtrCw(vec2 xz, vec2 gx, vec2 gy, vec2 D, float k, float f, float a) {
+  float ph = k * dot(D, xz) - f * wtrTime, sp = 0.5 + 0.5 * sin(ph);
+  return D * (a * 3.0 * sp * sp * cos(ph) * (1.0 - smoothstep(0.7, 2.0, k * max(abs(dot(gx, D)), abs(dot(gy, D))) * wtrChopBL)));
 }
 `;
 
@@ -1072,45 +1087,50 @@ vec3 wtrReflSkyHi(vec3 d) {
 // boats, treeline and cliffs mirrored in the water at grazing angles). 20 steps growing ×1.3 (≈ 0.3 m → 400 m) + a
 // 3-step binary refine; misses (sky, off-screen) keep the analytic sky reflection. rgb = scene radiance, a = weight
 // (the Medium / Low tier — WTR_LITE — marches 9 growing steps + 3 refines instead of 20 + 3)
-#ifdef WTR_LITE
+#ifdef WTR_LOW
+#define WTR_SSR_N 6
+#define WTR_SSR_G 1.95
+#define WTR_SSR_R 2
+#elif defined(WTR_LITE)
 #define WTR_SSR_N 9
 #define WTR_SSR_G 1.65
 #define WTR_SSR_R 3
+#elif defined(WTR_ULTRA)
+#define WTR_SSR_N 24
+#define WTR_SSR_G 1.24
+#define WTR_SSR_R 4
 #else
 #define WTR_SSR_N 20
 #define WTR_SSR_G 1.3
 #define WTR_SSR_R 3
 #endif
+vec2 wtrGrabUv(vec4 c) { return clamp(c.xy / max(c.w, 1e-4) * 0.5 + 0.5, vec2(0.0), vec2(1.0, wtrGrabMaxV)); }
 vec4 wtrSSRTrace(vec3 P, vec3 R, float dist) {
   if (wtrGrab.w < 0.5 || R.y < 0.002) return vec4(0.0);
-  vec3 p = P;
-  float st = 0.2 + dist * 0.012;
+  vec4 cp0 = wtrProj * (viewMatrix * vec4(P, 1.0)), cpDir = wtrProj * (viewMatrix * vec4(R, 0.0));
+  float t0 = 0.0, st = 0.2 + dist * 0.012, hit = 0.0;
   vec2 huv = vec2(0.0);
-  float hit = 0.0;
   for (int i = 0; i < WTR_SSR_N; i++) {
-    vec3 q = p + R * st;
-    vec4 c = wtrProj * (viewMatrix * vec4(q, 1.0));
+    float t1 = t0 + st;
+    vec4 c = cp0 + cpDir * t1;
     if (c.w <= 0.0) break;
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > wtrGrabMaxV) break;
     float dz = c.w - wtrViewZ(texture2D(wtrSceneDepth, uv).r);
     if (dz > 0.0 && dz < st * 2.0 + 0.4) {
-      vec3 a = p, b = q;
+      float ta = t0, tb = t1;
       for (int k = 0; k < WTR_SSR_R; k++) {
-        vec3 m = (a + b) * 0.5;
-        vec4 cm = wtrProj * (viewMatrix * vec4(m, 1.0));
-        vec2 um = cm.xy / cm.w * 0.5 + 0.5;
-        if (cm.w > wtrViewZ(texture2D(wtrSceneDepth, um).r)) b = m; else a = m;
+        float tm = 0.5 * (ta + tb);
+        if ((cp0.w + cpDir.w * tm) > wtrViewZ(texture2D(wtrSceneDepth, wtrGrabUv(cp0 + cpDir * tm)).r)) tb = tm; else ta = tm;
       }
-      vec4 cb = wtrProj * (viewMatrix * vec4(b, 1.0));
-      huv = cb.xy / cb.w * 0.5 + 0.5;
+      huv = wtrGrabUv(cp0 + cpDir * tb);
       hit = 1.0;
       break;
     }
-    p = q; st *= WTR_SSR_G;
+    t0 = t1; st *= WTR_SSR_G;
   }
   if (hit < 0.5) return vec4(0.0);
-  vec2 e = smoothstep(vec2(0.0), vec2(0.07), huv) * (1.0 - smoothstep(vec2(0.93), vec2(1.0), huv));
+  vec2 e = smoothstep(vec2(0.0), vec2(0.07), huv) * (1.0 - smoothstep(vec2(0.93, max(0.0, wtrGrabMaxV - 0.07)), vec2(1.0, wtrGrabMaxV), huv));
   return vec4(texture2D(wtrSceneCol, huv).rgb, e.x * e.y);
 }
 #endif
@@ -1451,9 +1471,8 @@ const FOAM_STACK = /* glsl */ `
         // the gradient (which way is away from the object; the swell arrives from -W_D[0], so the windward face gets the
         // surf, the lee side a thin line) …
         // (central differences over ±1.2 m: a smooth direction, no texel-scale spokes)
-        #define WTR_OB(p) texture2D(wtrObstacle, vec2((p).x * wtrObstacleScale + 0.5, 0.5 - (p).y * wtrObstacleScale)).r
-        float oE = WTR_OB(xz + vec2(1.2, 0.0)), oW = WTR_OB(xz - vec2(1.2, 0.0));
-        float oS = WTR_OB(xz + vec2(0.0, 1.2)), oN = WTR_OB(xz - vec2(0.0, 1.2));
+        float oE = wtrObs(xz + vec2(1.2, 0.0)), oW = wtrObs(xz - vec2(1.2, 0.0));
+        float oS = wtrObs(xz + vec2(0.0, 1.2)), oN = wtrObs(xz - vec2(0.0, 1.2));
         vec2 gO = vec2(oE - oW, oS - oN);
         float gl = length(gO);
         vec2 away = gl > 1e-4 ? -gO / gl : vec2(1.0, 0.0);
@@ -1461,12 +1480,11 @@ const FOAM_STACK = /* glsl */ `
         // … and the curvature of the ring = the second derivative of the distance ALONG the ring (±1.5 m): ~1/(r + d) at a
         // bow, a rock point or a container corner, 0 along a straight quay wall or hull side (tangent samples keep their
         // distance, so the object's saturated interior never fakes a tip)
-        float oA = WTR_OB(xz + perp * 1.5), oB = WTR_OB(xz - perp * 1.5);
+        float oA = wtrObs(xz + perp * 1.5), oB = wtrObs(xz - perp * 1.5);
         // … and the object's SIZE: 2 m further toward it, a wall / hull / big rock is still solid; a pile, a post or a
         // small rock is already behind us (small objects get a broken lace collar of 0.2-0.6 m, never a flat white pad or
         // the dense tip wash)
-        float big = smoothstep(0.8, 0.97, WTR_OB(xz - away * 2.0));
-        #undef WTR_OB
+        float big = smoothstep(0.8, 0.97, wtrObs(xz - away * 2.0));
         // (… or LONG: a quay wall or a hull side bakes as a thin sheared strip (its deck is above the waterline slab), so
         // 2 m "into" it is empty again and the depth test above called every wall small — the quay and the ship got no
         // foam. Along the object (±1.5 m tangentially) a wall keeps its proximity, a pile or a post loses it)
@@ -1561,7 +1579,7 @@ const FOAM_STACK = /* glsl */ `
       //     aerial render's harbor: white water all along the quay's rock base and the ship's hull)
 #ifndef WTR_NEAR
       if (mChurn) {
-        vec2 ouv = vec2(xz.x * wtrObstacleScale + 0.5, 0.5 - xz.y * wtrObstacleScale);
+        vec2 ouv = wtrObsUv(xz);
         float gE = texture2D(wtrObstacle, ouv + vec2(3.0 * wtrObstacleScale, 0.0)).g - obW;
         float gS = texture2D(wtrObstacle, ouv - vec2(0.0, 3.0 * wtrObstacleScale)).g - obW;
         vec2 gW = vec2(gE, gS);
@@ -1584,7 +1602,7 @@ const FOAM_STACK = /* glsl */ `
       // (h2) SURGE: every swell bursts against the windward face of a sea stack / big rock and washes round
       //      it — a thick bubbly white band 2-6 m wide, pulsing, draining into patches
       if (mSurge) {
-        vec2 ouvS = vec2(xz.x * wtrObstacleScale + 0.5, 0.5 - xz.y * wtrObstacleScale);
+        vec2 ouvS = wtrObsUv(xz);
         float gxS = texture2D(wtrObstacle, ouvS + vec2(3.0 * wtrObstacleScale, 0.0)).g - texture2D(wtrObstacle, ouvS - vec2(3.0 * wtrObstacleScale, 0.0)).g;
         float gzS = texture2D(wtrObstacle, ouvS - vec2(0.0, 3.0 * wtrObstacleScale)).g - texture2D(wtrObstacle, ouvS + vec2(0.0, 3.0 * wtrObstacleScale)).g;
         vec2 gS = vec2(gxS, gzS);
@@ -1617,26 +1635,6 @@ const FOAM_STACK = /* glsl */ `
       if (simFoam > 0.002) foam += wtrFoamCov(min(simFoam, 1.0) * 0.85, lace, dens, aa) * min(simFoam * 1.5, 1.0);
     }
   }
-  #if !defined(WTR_UNDER) && !defined(WTR_FOAMPASS)
-  // WHITECAPS in the harbor basin: the chop reflected off the quays breaks into small white caps scattered over the
-  // crests (the target art's harbor: cobalt chop with white-capped crests) — each cap lives a few seconds and drifts
-  // (not right under the camera: a cap is a ~1 m patch — at a few metres it read as scattered paper cut-outs)
-  float capZ = max(harbor, 0.45 * smoothstep(8.0, 20.0, dT) * (1.0 - lagoon) * (1.0 - murk)) * (1.0 - calm) * wtrWhitecaps * smoothstep(1.5, 4.0, dT) * (1.0 - smoothstep(0.25, 0.7, obst)) * (1.0 - smoothstep(350.0, 700.0, dist))
-             * smoothstep(12.0, 40.0, dist);
-  if (capZ > 0.01) {
-    vec2 cuv = xz / 5.5 + wtrTime * vec2(0.021, 0.013);
-    vec4 fCap = wtrFoamG(cuv, gx / 5.5, gy / 5.5);
-    vec4 nCap = wtrNoiseG(xz / 17.0 + wtrTime * vec2(-0.004, 0.006), gx / 17.0, gy / 17.0);
-    // life: each patch of the noise field blinks on and off at its own phase
-    float life = smoothstep(0.1, 0.6, 0.5 + 0.5 * sin(wtrTime * 0.8 + nCap.b * 18.0));
-    float crestK = smoothstep(0.5, 0.95, vCrest) * 0.3 + smoothstep(0.1, 0.35, length(ripS)) * 0.2;
-    float capM = smoothstep(0.66, 0.8, nCap.g * 0.45 + fCap.g * 0.35 + crestK) * life * capZ;
-    float aaC = min(0.4, 4.0 * sqrt(fp * fpMin) / 5.5);
-    foam += wtrFoamCov(capM * 0.62, fCap.r * 0.7 + fCap.b * 0.3, fCap.g, aaC) * capM * 0.9;
-  }
-  #endif
-  foam = clamp(foam * wtrFoamAmount, 0.0, 1.0) * wEdgeF * (1.0 - dry);
-  wFoam = foam;
 `;
 
 // replaces <color_fragment>
@@ -1653,7 +1651,7 @@ diffuseColor = vec4(1.0); wRamp = vec3(0.0, 0.2, 0.3); wScat = 1.0; wEdge = 1.0;
   // (out to 600 m for the grazing-ray closure below — the dark wedge along distant waterlines; every object
   //  test keeps its own ≤ 150-220 m fade)
   if (wtrGrab.z > 0.5 && dist < 600.0) {
-    vec2 suvS = gl_FragCoord.xy * wtrGrab.xy;
+    vec2 suvS = wtrSuv();
     float szS = wtrViewZ(texture2D(wtrSceneDepth, suvS).r);
     float wzS = max(vViewPosition.z, 1e-3);
     wScRay = max(szS - wzS, 0.0) * dist / wzS;                       // metres of water along the ray to the scene
@@ -1707,19 +1705,16 @@ diffuseColor = vec4(1.0); wRamp = vec3(0.0, 0.2, 0.3); wScat = 1.0; wEdge = 1.0;
     // CONTACT COLLAR: a broken bubbly ring 0.2-0.5 m wide wherever an object crosses the surface (screen-space: every
     // pile, ladder, hull, rock, root, crate — whatever loaded when), + LAPPING rings drifting out from it. Not at the
     // shoreline (the swash stack owns it) and not where the "object" is the seabed itself
+    #if defined(WTR_UNDER) || defined(WTR_FOAMMAIN) || defined(WTR_DEBUG)
     float objC = smoothstep(0.12, 0.35, dFg - dObj) * step(0.22, dFg) * (1.0 - smoothstep(70.0, 110.0, dist)) * wtrContactD;
     if (objC > 0.001) {
-      float wv = vNzS.g;                                                // along-object variation (13 m noise, per vertex)
-      // (0.35-0.7 m + ≥ 3 px — at 0.3-0.55 m + 1.5 px a pile 30 m from a 4 m eye got a 2-3 px line)
-      float cw = mix(0.35, 0.7, smoothstep(0.25, 0.75, wv)) + 3.0 * fp;
+      float cw = mix(0.35, 0.7, smoothstep(0.25, 0.75, vNzS.g)) + 3.0 * fp;
       wScC = (1.0 - smoothstep(cw * 0.45, cw, wScRay)) * objC;
-      // two lapping rings drifting outward, fading as they go (0.35 → 1.4 m)
-      float ph = fract(wtrTime * 0.32 + wv * 3.1);
-      float ph2 = fract(ph + 0.5);
-      float rw = 0.08 + 1.2 * fp;
-      float lap = exp(-pow((wScRay - (cw + ph * 1.5)) / rw, 2.0)) * (1.0 - ph) + exp(-pow((wScRay - (cw + ph2 * 1.5)) / rw, 2.0)) * (1.0 - ph2);
-      wScLap = lap * objC * (1.0 - smoothstep(35.0, 60.0, dist));
+      float ph = fract(wtrTime * 0.32 + vNzS.g * 3.1), ph2 = fract(ph + 0.5), rw = 0.08 + 1.2 * fp;
+      float rr = exp(-pow((wScRay - (cw + ph * 1.5)) / rw, 2.0)) * (1.0 - ph) + exp(-pow((wScRay - (cw + ph2 * 1.5)) / rw, 2.0)) * (1.0 - ph2);
+      wScLap = rr * objC * (1.0 - smoothstep(35.0, 60.0, dist));
     }
+    #endif
   }
   #endif
   #ifdef WTR_X_CUTA
@@ -1805,56 +1800,14 @@ diffuseColor = vec4(1.0); wRamp = vec3(0.0, 0.2, 0.3); wScat = 1.0; wEdge = 1.0;
     // (from 1.5 m of water — the swimmer's open water off the N beach is 5-6 m deep and got only ~40 % of it)
     float kCh = smoothstep(1.5, 5.0, dT) * (1.0 - lagoon) * (1.0 - murk) * (1.0 - calm) * (1.0 - smoothstep(90.0, 160.0, dist)) * (1.0 - harbor * 0.5);
     if (kCh > 0.01) {
-      vec2 chop = vec2(0.0);
-    { const vec2 D = vec2(0.87758, 0.47943);
-      float dph = 1.69816 * max(abs(dot(gx, D)), abs(dot(gy, D)));             // phase per pixel along this wave
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 1.69816 * dot(D, xz) - 4.08154 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.10000 * 3.0 * sp * sp * cos(ph) * bl); }
-    { const vec2 D = vec2(0.62161, -0.78333);
-      float dph = 2.73182 * max(abs(dot(gx, D)), abs(dot(gy, D)));             // phase per pixel along this wave
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 2.73182 * dot(D, xz) - 5.17679 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.17500 * 3.0 * sp * sp * cos(ph) * bl); }
-    { const vec2 D = vec2(-0.58850, 0.80850);
-      float dph = 3.92699 * max(abs(dot(gx, D)), abs(dot(gy, D)));             // phase per pixel along this wave
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 3.92699 * dot(D, xz) - 6.20675 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.08000 * 3.0 * sp * sp * cos(ph) * bl); }
-    { const vec2 D = vec2(0.45360, 0.89121);
-      float dph = 1.18551 * max(abs(dot(gx, D)), abs(dot(gy, D)));             // phase per pixel along this wave
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 1.18551 * dot(D, xz) - 3.41025 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.12000 * 3.0 * sp * sp * cos(ph) * bl); }
-    { const vec2 D = vec2(-0.85689, -0.51550);
-      float dph = 5.46364 * max(abs(dot(gx, D)), abs(dot(gy, D)));             // phase per pixel along this wave
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 5.46364 * dot(D, xz) - 7.32109 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.06000 * 3.0 * sp * sp * cos(ph) * bl); }
-    { const vec2 D = vec2(-0.97096, 0.23925);
-      float dph = 2.16662 * max(abs(dot(gx, D)), abs(dot(gy, D)));             // phase per pixel along this wave
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 2.16662 * dot(D, xz) - 4.61026 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.09000 * 3.0 * sp * sp * cos(ph) * bl); }
-    // + two short wavelets (0.77 m, 0.54 m): the crisp small facets a swimmer sees right in front of the face
-    { const vec2 D = vec2(0.30902, -0.95106);
-      float dph = 8.16814 * max(abs(dot(gx, D)), abs(dot(gy, D)));
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 8.16814 * dot(D, xz) - 8.94822 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.05000 * 3.0 * sp * sp * cos(ph) * bl); }
-    { const vec2 D = vec2(-0.74314, -0.66913);
-      float dph = 11.6355 * max(abs(dot(gx, D)), abs(dot(gy, D)));
-      float bl = 1.0 - smoothstep(0.7, 2.0, dph * wtrChopBL);
-      float ph = 11.6355 * dot(D, xz) - 10.6799 * wtrTime;
-      float sp = 0.5 + 0.5 * sin(ph);
-      chop += D * (0.04000 * 3.0 * sp * sp * cos(ph) * bl); }
+      vec2 chop = wtrCw(xz, gx, gy, vec2(0.87758, 0.47943), 1.69816, 4.08154, 0.1)
+                + wtrCw(xz, gx, gy, vec2(0.62161, -0.78333), 2.73182, 5.17679, 0.175)
+                + wtrCw(xz, gx, gy, vec2(-0.5885, 0.8085), 3.92699, 6.20675, 0.08)
+                + wtrCw(xz, gx, gy, vec2(0.4536, 0.89121), 1.18551, 3.41025, 0.12)
+                + wtrCw(xz, gx, gy, vec2(-0.85689, -0.5155), 5.46364, 7.32109, 0.06)
+                + wtrCw(xz, gx, gy, vec2(-0.97096, 0.23925), 2.16662, 4.61026, 0.09)
+                + wtrCw(xz, gx, gy, vec2(0.30902, -0.95106), 8.16814, 8.94822, 0.05)
+                + wtrCw(xz, gx, gy, vec2(-0.74314, -0.66913), 11.6355, 10.6799, 0.04);
       ripS += chop * kCh * wtrChop;
     }
   }
@@ -1970,11 +1923,11 @@ diffuseColor = vec4(1.0); wRamp = vec3(0.0, 0.2, 0.3); wScat = 1.0; wEdge = 1.0;
   #if defined(WTR_SCENE) && !defined(WTR_UNDER) && !defined(WTR_CANVAS)
   // mirrored scene (screen-space): the reflected ray off a half-flattened normal (the ripples wobble the image without
   // shredding it). Over the whole near + mid water; misses keep the sky
-  if (wtrSSR > 0.0 && Fr > 0.012 && dist < 320.0) {
+  float ssrD = 1.0 - smoothstep(220.0, 320.0, dist), ssrK = Fr * wtrSSR * ssrD;
+  if (ssrK > 0.012) {
     vec3 nR = normalize(mix(vec3(0.0, 1.0, 0.0), wN, 0.45));
     vec4 sr = wtrSSRTrace(vWPos + vec3(0.0, 0.02, 0.0), reflect(-V, nR), dist);
-    sr.a *= 1.0 - smoothstep(220.0, 320.0, dist);
-    wRefl = mix(wRefl, sr.rgb * Fr * wtrSSR, sr.a);
+    wRefl = mix(wRefl, sr.rgb * Fr * wtrSSR, sr.a * ssrD * smoothstep(0.012, 0.024, ssrK));
   }
   #endif
 
@@ -1988,6 +1941,26 @@ diffuseColor = vec4(1.0); wRamp = vec3(0.0, 0.2, 0.3); wScat = 1.0; wEdge = 1.0;
   #else
   float foam = 0.0;
   #endif
+  #ifndef WTR_UNDER
+  // WHITECAPS in the harbor basin: the chop reflected off the quays breaks into small white caps scattered over the
+  // crests (the target art's harbor: cobalt chop with white-capped crests) — each cap lives a few seconds and drifts
+  // (not right under the camera: a cap is a ~1 m patch — at a few metres it read as scattered paper cut-outs)
+  float capZ = max(harbor, 0.45 * smoothstep(8.0, 20.0, dT) * (1.0 - lagoon) * (1.0 - murk)) * (1.0 - calm) * wtrWhitecaps * smoothstep(1.5, 4.0, dT) * (1.0 - smoothstep(0.25, 0.7, obst)) * (1.0 - smoothstep(350.0, 700.0, dist))
+             * smoothstep(12.0, 40.0, dist);
+  if (capZ > 0.01) {
+    vec2 cuv = xz / 5.5 + wtrTime * vec2(0.021, 0.013);
+    vec4 fCap = wtrFoamG(cuv, gx / 5.5, gy / 5.5);
+    vec4 nCap = wtrNoiseG(xz / 17.0 + wtrTime * vec2(-0.004, 0.006), gx / 17.0, gy / 17.0);
+    // life: each patch of the noise field blinks on and off at its own phase
+    float life = smoothstep(0.1, 0.6, 0.5 + 0.5 * sin(wtrTime * 0.8 + nCap.b * 18.0));
+    float crestK = smoothstep(0.5, 0.95, vCrest) * 0.3 + smoothstep(0.1, 0.35, length(ripS)) * 0.2;
+    float capM = smoothstep(0.66, 0.8, nCap.g * 0.45 + fCap.g * 0.35 + crestK) * life * capZ;
+    float aaC = min(0.4, 4.0 * sqrt(fp * fpMin) / 5.5);
+    foam += wtrFoamCov(capM * 0.62, fCap.r * 0.7 + fCap.b * 0.3, fCap.g, aaC) * capM * 0.9;
+  }
+  #endif
+  foam = clamp(foam * wtrFoamAmount, 0.0, 1.0) * wEdgeF * (1.0 - dry);
+  wFoam = foam;
   #if !defined(WTR_FAR) && !defined(WTR_UNDER)
   // THE MURK: floating leaves + litter drifting on the tea water (one jittered leaf per ~0.9 m cell in ~40 % of cells)
   if (murk > 0.05 && dist < 80.0 && dF > 0.03) {
@@ -2104,13 +2077,32 @@ diffuseColor = vec4(1.0); wRamp = vec3(0.0, 0.2, 0.3); wScat = 1.0; wEdge = 1.0;
 export const FRAG_FOAM = /* glsl */ `
 {
   ${SURF_CORE}
-  wDist = dist; wEdge = wEdgeL;
+  wDist = dist;
+  #ifdef WTR_DEBUG
+  wEdge = wEdgeL;
+  #endif
+  #if defined(WTR_SCENE) && !defined(WTR_UNDER)
+  if (wtrGrab.z > 0.5 && wtrContactD > 0.0 && dist < 110.0 && dFg > 0.22) {
+    float szS = wtrViewZ(texture2D(wtrSceneDepth, wtrSuv()).r), wzS = max(vViewPosition.z, 1e-3);
+    wScRay = max(szS - wzS, 0.0) * dist / wzS;
+    float objC = smoothstep(0.12, 0.35, dFg - wScRay * clamp(V.y, 0.0, 1.0)) * step(0.22, dFg) * (1.0 - smoothstep(70.0, 110.0, dist)) * wtrContactD;
+    if (objC > 0.001) {
+      float cw = mix(0.35, 0.7, smoothstep(0.25, 0.75, vNzS.g)) + 3.0 * fp;
+      wScC = (1.0 - smoothstep(cw * 0.45, cw, wScRay)) * objC;
+      float ph = fract(wtrTime * 0.32 + vNzS.g * 3.1), ph2 = fract(ph + 0.5), rw = 0.08 + 1.2 * fp;
+      float rr = exp(-pow((wScRay - (cw + ph * 1.5)) / rw, 2.0)) * (1.0 - ph) + exp(-pow((wScRay - (cw + ph2 * 1.5)) / rw, 2.0)) * (1.0 - ph2);
+      wScLap = rr * objC * (1.0 - smoothstep(35.0, 60.0, dist));
+    }
+  }
+  #endif
   float simFoam = 0.0;
   {
     vec2 suv1 = (xz - wtrSimST.xy) * wtrSimST.z;
     if (wtrSimOn > 0.5 && suv1.x > 0.0 && suv1.y > 0.0 && suv1.x < 1.0 && suv1.y < 1.0) simFoam = textureLod(wtrSim, suv1, 0.0).b;
   }
   ${FOAM_STACK}
+  foam = clamp(foam * wtrFoamAmount, 0.0, 1.0) * wEdgeF * (1.0 - dry);
+  wFoam = foam;
   if (foam < 0.003 && wtrDebug < 0.5) discard;
   diffuseColor = vec4(wtrFoamCol, 1.0);
 }
@@ -2301,14 +2293,14 @@ export const FRAG_OPAQUE = /* glsl */ `
     // the surface (a pile, a hull, a kong): such a sample falls back to the pixel straight behind
     // (not over the swash / wet-sand film — there is no water to refract, and the scene copy is not bit-identical
     // to the frame behind: the film read paler than the sand around it, an outlined strip)
-    if (wtrGrab.w > 0.5 && wtrGrab.z > 0.5 && wtrRefract > 0.0 && wDist < 160.0 && wWet < 0.5) {
-      vec2 suvR = gl_FragCoord.xy * wtrGrab.xy;
+    if (wtrGrab.w > 0.5 && wtrGrab.z > 0.5 && wtrRefract > 0.0 && wDist < 160.0 && wWet < 0.5 && (mulOut.r + mulOut.g + mulOut.b) > 0.004) {
+      vec2 suvR = wtrSuv();
       vec3 nV = (viewMatrix * vec4(wN.x, 0.0, wN.z, 0.0)).xyz;
       float vzR = max(vViewPosition.z, 0.5);
       float thkR = min(wScRay, 2.5) * (1.0 - smoothstep(90.0, 160.0, wDist));
       vec2 offR = vec2(nV.x * wtrProj[0][0], nV.y * wtrProj[1][1]) * (wtrRefract * thkR * 0.5 / vzR);
       offR = clamp(offR, vec2(-0.03), vec2(0.03));
-      vec2 ruv = suvR + offR;
+      vec2 ruv = clamp(suvR + offR, vec2(0.0), vec2(1.0, wtrGrabMaxV));
       if (wtrViewZ(texture2D(wtrSceneDepth, ruv).r) < vzR + 0.05) ruv = suvR;
       vec3 scR = texture2D(wtrSceneCol, ruv).rgb;
       // real tropical shallows are cool white carbonate sand seen through clear water (Grace Bay,

@@ -4,14 +4,19 @@
 // triangles above the bed are dropped. Normals: animated ripples (analytic, no textures). Lily pads: one instanced mesh.
 import * as THREE from "three";
 import type { WorldCtx } from "../../../engine/engine";
+import type { Scope } from "../../../engine/res/scope";
+import { releaseAfterUpload } from "../../../engine/texture-release";
 import { murkSurface, shelfTop, shelfCells, groundAt, SURF, LAYOUT, GM, gmRadius, CX, CZ } from "../../../../../shared/pois/the-murk";
+import { canvasTex } from "./fx";
 import { SceneGrab } from "../../water/grab";
 import { flag } from "../../../flags";
 
 const { x0: X0, x1: X1, z0: Z0, z1: Z1, step: STEP } = SURF;
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const _mkVP = new THREE.Matrix4();
+const _mkFrustum = new THREE.Frustum();
 
-export interface MurkWater { mesh: THREE.Mesh; shelf: THREE.Mesh; haze: THREE.Mesh | null; levelAt(x: number, z: number): number; uniforms: { uTime: { value: number }; uDbg: { value: number } } }
+export interface MurkWater { mesh: THREE.Mesh; shelf: THREE.Mesh; haze: THREE.Mesh | null; levelAt(x: number, z: number): number; uniforms: { uTime: { value: number }; uDbg: { value: number } }; update(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera): void }
 
 /** canopy cover 0..1 at (x, z): the swamp water under the crowns reflects the dark canopy, not the open sky */
 export type CoverFn = (x: number, z: number) => number;
@@ -19,60 +24,58 @@ export type CoverFn = (x: number, z: number) => number;
  *  its sun gaps), G = height / 32 of the solid things standing in the water (huts, trunks, the hero, walks + rails), so
  *  the shader can march the reflected ray and mirror them — a planar reflection's read without a second scene render */
 const RM = { x0: SURF.x0 - 24, z0: SURF.z0 - 24, w: SURF.x1 - SURF.x0 + 48, h: SURF.z1 - SURF.z0 + 48 };
-function reflMap(cover: CoverFn): THREE.DataTexture {
-  const W = RM.w, Hh = RM.h, d = new Uint8Array(W * Hh * 4);
-  for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) { const k = (j * W + i) * 4; d[k] = Math.round(255 * cover(RM.x0 + i + 0.5, RM.z0 + j + 0.5)); d[k + 3] = 255; }
-  const put = (x: number, z: number, hgt: number) => {
-    const i = Math.floor(x - RM.x0), j = Math.floor(z - RM.z0);
-    if (i < 0 || j < 0 || i >= W || j >= Hh) return;
-    const k = (j * W + i) * 4 + 1; d[k] = Math.max(d[k], Math.min(255, Math.round(hgt / 32 * 255)));
+function reflMap(cover: CoverFn, scope: Scope): THREE.DataTexture {
+  const fill = () => {
+    const W = RM.w, Hh = RM.h, d = new Uint8Array(W * Hh * 4);
+    for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) { const k = (j * W + i) * 4; d[k] = Math.round(255 * cover(RM.x0 + i + 0.5, RM.z0 + j + 0.5)); d[k + 3] = 255; }
+    const put = (x: number, z: number, hgt: number) => {
+      const i = Math.floor(x - RM.x0), j = Math.floor(z - RM.z0);
+      if (i < 0 || j < 0 || i >= W || j >= Hh) return;
+      const k = (j * W + i) * 4 + 1; d[k] = Math.max(d[k], Math.min(255, Math.round(hgt / 32 * 255)));
+    };
+    const rect = (cx: number, cz: number, yaw: number, hw: number, hd: number, hgt: number) => {
+      const c = Math.cos(yaw), sn = Math.sin(yaw), R = Math.hypot(hw, hd) + 1;
+      for (let z = Math.floor(cz - R); z <= cz + R; z++) for (let x = Math.floor(cx - R); x <= cx + R; x++) {
+        const dx = x + 0.5 - cx, dz = z + 0.5 - cz, lx = dx * c - dz * sn, lz = dx * sn + dz * c;
+        if (Math.abs(lx) <= hw + 0.35 && Math.abs(lz) <= hd + 0.35) put(x + 0.5, z + 0.5, hgt);
+      }
+    };
+    const disc = (cx: number, cz: number, r: number, hgt: number) => { for (let z = Math.floor(cz - r - 1); z <= cz + r + 1; z++) for (let x = Math.floor(cx - r - 1); x <= cx + r + 1; x++) if (Math.hypot(x + 0.5 - cx, z + 0.5 - cz) <= r + 0.5) put(x + 0.5, z + 0.5, hgt); };
+    for (const k of LAYOUT.decks) rect(k.x, k.z, k.yaw, k.w / 2, k.d / 2, k.y + 0.95);
+    for (const p of LAYOUT.parts) rect(p.h.x, p.h.z, p.h.yaw, p.h.w / 2 + p.h.overhang * 0.5, p.h.d / 2 + p.h.overhang * 0.5, p.ridgeY);
+    for (const t of LAYOUT.trees) disc(t.x, t.z, 0.6 * t.s + 0.2, t.top[1]);
+    for (const r of LAYOUT.roots) if (r.kind === "trunk") { const e = r.pts[r.pts.length - 1]; disc(e[0], e[2], r.r0, e[1]); }
+    disc(GM.x, GM.z, gmRadius(2), 8); disc(GM.x, GM.z, gmRadius(10), 24);
+    return { data: d, width: W, height: Hh };
   };
-  const rect = (cx: number, cz: number, yaw: number, hw: number, hd: number, hgt: number) => {
-    const c = Math.cos(yaw), sn = Math.sin(yaw), R = Math.hypot(hw, hd) + 1;
-    for (let z = Math.floor(cz - R); z <= cz + R; z++) for (let x = Math.floor(cx - R); x <= cx + R; x++) {
-      const dx = x + 0.5 - cx, dz = z + 0.5 - cz, lx = dx * c - dz * sn, lz = dx * sn + dz * c;
-      if (Math.abs(lx) <= hw + 0.35 && Math.abs(lz) <= hd + 0.35) put(x + 0.5, z + 0.5, hgt);
-    }
-  };
-  const disc = (cx: number, cz: number, r: number, hgt: number) => { for (let z = Math.floor(cz - r - 1); z <= cz + r + 1; z++) for (let x = Math.floor(cx - r - 1); x <= cx + r + 1; x++) if (Math.hypot(x + 0.5 - cx, z + 0.5 - cz) <= r + 0.5) put(x + 0.5, z + 0.5, hgt); };
-  for (const k of LAYOUT.decks) rect(k.x, k.z, k.yaw, k.w / 2, k.d / 2, k.y + 0.95);
-  for (const p of LAYOUT.parts) rect(p.h.x, p.h.z, p.h.yaw, p.h.w / 2 + p.h.overhang * 0.5, p.h.d / 2 + p.h.overhang * 0.5, p.ridgeY);
-  for (const t of LAYOUT.trees) disc(t.x, t.z, 0.6 * t.s + 0.2, t.top[1]);
-  for (const r of LAYOUT.roots) if (r.kind === "trunk") { const e = r.pts[r.pts.length - 1]; disc(e[0], e[2], r.r0, e[1]); }
-  disc(GM.x, GM.z, gmRadius(2), 8); disc(GM.x, GM.z, gmRadius(10), 24);
-  const t = new THREE.DataTexture(d, W, Hh, THREE.RGBAFormat);
+  const t = scope.texture("tex.world", new THREE.DataTexture(fill().data, RM.w, RM.h, THREE.RGBAFormat));
   t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   t.needsUpdate = true;
-  return t;
+  return releaseAfterUpload(t, fill);
 }
 
 /** the swamp bed seen through the tea: silt with sunk leaf litter, twigs, seed pods and sand ripples (tiles every 3.2 m;
  *  ×2 albedo — the vertex colour carries the large-scale value) */
-function siltTexture(): THREE.CanvasTexture {
-  const S = 512, c = document.createElement("canvas"); c.width = c.height = S;
-  const g = c.getContext("2d")!;
-  let seed = 0x51a7; const r = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  g.fillStyle = "#807058"; g.fillRect(0, 0, S, S);
-  // wrap-around draw helper (seamless tiling)
-  // (only the wrap copies a stroke actually reaches — 9 copies of every stroke made this ~0.5 s of the build)
-  let wx = 0, wy = 0, wr = 0;
-  const at = (x: number, y: number, r: number) => { wx = x; wy = y; wr = r; };
-  const W = (f: (ox: number, oy: number) => void) => { for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { if (wx + ox + wr < 0 || wx + ox - wr > S || wy + oy + wr < 0 || wy + oy - wr > S) continue; f(ox, oy); } };
-  for (let k = 0; k < 260; k++) { const x = r() * S, y = r() * S, rr = 10 + r() * 40, l = 34 + r() * 22; at(x, y, rr);
-    W((ox, oy) => { const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rr); gr.addColorStop(0, `hsla(${32 + r() * 18},${22 + r() * 14}%,${l}%,0.35)`); gr.addColorStop(1, "hsla(35,20%,40%,0)"); g.fillStyle = gr; g.fillRect(x + ox - rr, y + oy - rr, 2 * rr, 2 * rr); }); }
-  // sand ripples
-  g.lineWidth = 3;
-  for (let k = 0; k < 40; k++) { const y = r() * S, x = r() * S, len = 60 + r() * 120; at(x + len / 2, y, len / 2 + 12);
-    W((ox, oy) => { g.strokeStyle = "rgba(160,140,100,0.18)"; g.beginPath(); g.moveTo(x + ox, y + oy); g.quadraticCurveTo(x + ox + len / 2, y + oy - 8 + r() * 16, x + ox + len, y + oy + (r() - 0.5) * 10); g.stroke(); }); }
-  // sunk leaves (brown / ochre / olive) with a midrib
-  for (let k = 0; k < 150; k++) { const x = r() * S, y = r() * S, a = r() * 6.283, L = 9 + r() * 16, hue = [24, 32, 40, 60][Math.floor(r() * 4)], lt = 22 + r() * 22; at(x, y, L * 1.3);
-    W((ox, oy) => { g.save(); g.translate(x + ox, y + oy); g.rotate(a); g.fillStyle = `hsla(${hue},${40 + r() * 20}%,${lt}%,0.85)`; g.beginPath(); g.ellipse(0, 0, L, L * 0.38, 0, 0, 6.283); g.fill();
-      g.strokeStyle = `hsla(${hue},30%,${lt + 14}%,0.6)`; g.lineWidth = 1; g.beginPath(); g.moveTo(-L, 0); g.lineTo(L * 1.2, 0); g.stroke(); g.restore(); }); }
-  // twigs + dark seed pods
-  for (let k = 0; k < 28; k++) { const x = r() * S, y = r() * S, a = r() * 6.283, L = 20 + r() * 50; at(x, y, L + 4);
-    W((ox, oy) => { g.strokeStyle = `rgba(${50 + r() * 20},${38 + r() * 14},${24},0.8)`; g.lineWidth = 2 + r() * 2; g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + Math.cos(a) * L, y + oy + Math.sin(a) * L); g.stroke(); }); }
-  for (let k = 0; k < 90; k++) { const x = r() * S, y = r() * S; at(x, y, 5); W((ox, oy) => { g.fillStyle = `rgba(40,32,20,${0.4 + r() * 0.4})`; g.beginPath(); g.arc(x + ox, y + oy, 1.5 + r() * 2.5, 0, 6.283); g.fill(); }); }
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+function siltTexture(scope: Scope): THREE.CanvasTexture {
+  const S = 512, t = canvasTex(scope, S, S, (g) => {
+    let seed = 0x51a7; const r = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    g.fillStyle = "#807058"; g.fillRect(0, 0, S, S);
+    let wx = 0, wy = 0, wr = 0;
+    const at = (x: number, y: number, rr: number) => { wx = x; wy = y; wr = rr; };
+    const W = (f: (ox: number, oy: number) => void) => { for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { if (wx + ox + wr < 0 || wx + ox - wr > S || wy + oy + wr < 0 || wy + oy - wr > S) continue; f(ox, oy); } };
+    for (let k = 0; k < 260; k++) { const x = r() * S, y = r() * S, rr = 10 + r() * 40, l = 34 + r() * 22; at(x, y, rr);
+      W((ox, oy) => { const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rr); gr.addColorStop(0, `hsla(${32 + r() * 18},${22 + r() * 14}%,${l}%,0.35)`); gr.addColorStop(1, "hsla(35,20%,40%,0)"); g.fillStyle = gr; g.fillRect(x + ox - rr, y + oy - rr, 2 * rr, 2 * rr); }); }
+    g.lineWidth = 3;
+    for (let k = 0; k < 40; k++) { const y = r() * S, x = r() * S, len = 60 + r() * 120; at(x + len / 2, y, len / 2 + 12);
+      W((ox, oy) => { g.strokeStyle = "rgba(160,140,100,0.18)"; g.beginPath(); g.moveTo(x + ox, y + oy); g.quadraticCurveTo(x + ox + len / 2, y + oy - 8 + r() * 16, x + ox + len, y + oy + (r() - 0.5) * 10); g.stroke(); }); }
+    for (let k = 0; k < 150; k++) { const x = r() * S, y = r() * S, a = r() * 6.283, L = 9 + r() * 16, hue = [24, 32, 40, 60][Math.floor(r() * 4)], lt = 22 + r() * 22; at(x, y, L * 1.3);
+      W((ox, oy) => { g.save(); g.translate(x + ox, y + oy); g.rotate(a); g.fillStyle = `hsla(${hue},${40 + r() * 20}%,${lt}%,0.85)`; g.beginPath(); g.ellipse(0, 0, L, L * 0.38, 0, 0, 6.283); g.fill();
+        g.strokeStyle = `hsla(${hue},30%,${lt + 14}%,0.6)`; g.lineWidth = 1; g.beginPath(); g.moveTo(-L, 0); g.lineTo(L * 1.2, 0); g.stroke(); g.restore(); }); }
+    for (let k = 0; k < 28; k++) { const x = r() * S, y = r() * S, a = r() * 6.283, L = 20 + r() * 50; at(x, y, L + 4);
+      W((ox, oy) => { g.strokeStyle = `rgba(${50 + r() * 20},${38 + r() * 14},${24},0.8)`; g.lineWidth = 2 + r() * 2; g.beginPath(); g.moveTo(x + ox, y + oy); g.lineTo(x + ox + Math.cos(a) * L, y + oy + Math.sin(a) * L); g.stroke(); }); }
+    for (let k = 0; k < 90; k++) { const x = r() * S, y = r() * S; at(x, y, 5); W((ox, oy) => { g.fillStyle = `rgba(40,32,20,${0.4 + r() * 0.4})`; g.beginPath(); g.arc(x + ox, y + oy, 1.5 + r() * 2.5, 0, 6.283); g.fill(); }); }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 }
 
@@ -80,7 +83,8 @@ function siltTexture(): THREE.CanvasTexture {
 let hazeScale = 1;
 export function setMurkHaze(k: number) { hazeScale = k; }
 
-export function buildWater(ctx: WorldCtx, cover: CoverFn = () => 0): MurkWater {
+export function buildWater(ctx: WorldCtx, cover: CoverFn = () => 0, scope: Scope): MurkWater {
+  const mwScope = scope.child("water");
   const nx = Math.round((X1 - X0) / STEP) + 1, nz = Math.round((Z1 - Z0) / STEP) + 1;
   const H = new Float32Array(nx * nz);
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) H[j * nx + i] = ctx.terrain.height(X0 + i * STEP, Z0 + j * STEP);
@@ -115,26 +119,28 @@ export function buildWater(ctx: WorldCtx, cover: CoverFn = () => 0): MurkWater {
   const nor = new Float32Array(pos.length); for (let i = 1; i < nor.length; i += 3) nor[i] = 1;
   g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
   g.setIndex(idx);
+  g.computeBoundingBox();
+  if (g.boundingBox) { g.boundingBox.min.y -= 0.25; g.boundingBox.max.y += 0.25; }
   g.computeBoundingSphere();
 
   const dbg = flag("murkdbg");
   const uniforms = { uTime: { value: 0 }, uDbg: { value: dbg } };
-  // SCENE GRAB: one colour + depth blit of the finished opaque scene right before the tea draws (the water area's
-  // SceneGrab, read-only reuse; ~0.03 ms at 1440p on the 4080). The tea then COMPOSITES itself: the bed, piles, roots
-  // and a wading kong's legs seen THROUGH it with per-channel tea absorption along the real view-ray thickness,
-  // a refraction wobble, screen-space reflections of the huts / trunks / canopy, and a shoreline that fades to the bank
-  // by thickness (no polygon edge). Off on the low tier / ?murknoscene (the alpha-blended fallback below).
-  const grab = ctx.quality !== "low" && !flag("murknoscene") ? new SceneGrab() : null;
-  if (grab) grab.colour = true;
+  // SCENE GRAB: share global water's SceneGrab when available so the GPU never allocates or blits two full-screen
+  // HDR + depth copies in the same frame; fall back to a dedicated grab only if water hasn't published one.
+  const sharedGrab = ctx.shared.get("waterGrab") as SceneGrab | undefined;
+  const grab = ctx.quality !== "low" && !flag("murknoscene") ? (sharedGrab ?? new SceneGrab(mwScope)) : null;
+  if (grab && !sharedGrab) grab.colour = true;
   const uMk = {
     uMkCol: { value: null as THREE.Texture | null }, uMkDepth: { value: null as THREE.Texture | null },
     uMkGrab: { value: new THREE.Vector4(1, 1, 0, 0) }, uMkNF: { value: new THREE.Vector2(0.1, 1000) }, uMkProj: { value: new THREE.Matrix4() },
   };
-  const uRefl = { value: reflMap(cover) }, uReflBox = { value: new THREE.Vector4(RM.x0, RM.z0, 1 / RM.w, 1 / RM.h) };
+  const uRefl = { value: reflMap(cover, mwScope) }, uReflBox = { value: new THREE.Vector4(RM.x0, RM.z0, 1 / RM.w, 1 / RM.h) };
   // TRANSLUCENT tea: the bed, the piles, roots and a wading kong's legs show through the shallows (opacity follows the
   // water column, ≤ MAX_DEPTH deep), and the surface turns into a mirror toward grazing angles (Fresnel → alpha).
   // The silt shelf under it is opaque and drawn first (it depth-rejects the terrain / sea beneath the pools).
   const mat = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.1, metalness: 0, transparent: true, depthWrite: true, envMapIntensity: 1.0, name: "murk:water" });
+  const mkSsrSteps = ctx.quality === "ultra" ? 12 : ctx.quality === "high" ? 9 : 6;
+  const mkSsrGrow = ctx.quality === "ultra" ? "1.5" : "1.75";
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uMurkTime = uniforms.uTime;
     sh.uniforms.uMurkDbg = uniforms.uDbg;
@@ -167,16 +173,17 @@ float mkWY(vec2 uv, float z) {
   vec3 vp = vec3(z * (ndc.x + uMkProj[2][0]) / uMkProj[0][0], z * (ndc.y + uMkProj[2][1]) / uMkProj[1][1], -z);
   return cameraPosition.y + (transpose(mat3(viewMatrix)) * vp).y;
 }
-// screen-space reflection through the grabbed depth (the water area's trace, 18 steps ×1.3 + 5-step refine)
+vec2 mkUv(vec4 c) { return clamp(c.xy / max(c.w, 1e-4) * 0.5 + 0.5, 0.0, 1.0); }
 vec4 mkSSR(vec3 P, vec3 R, float dist) {
   if (uMkGrab.w < 0.5 || R.y < 0.002) return vec4(0.0);
-  vec3 p = P; float st = 0.15 + dist * 0.01; vec2 huv = vec2(0.0); float hit = 0.0;
+  vec4 cp0 = uMkProj * (viewMatrix * vec4(P, 1.0)), cpDir = uMkProj * (viewMatrix * vec4(R, 0.0));
+  float t0 = 0.0, st = 0.15 + dist * 0.01, hit = 0.0;
   // the first sample where the ray ran BEHIND a thin object (a hull, a pile) beyond the thickness tolerance: a miss
   // that passed under something reflects that thing's shaded side, never the bright sky (no white streaks under boats)
-  vec2 ouv = vec2(-1.0);
-  for (int i = 0; i < 9; i++) {
-    vec3 q = p + R * st;
-    vec4 c = uMkProj * (viewMatrix * vec4(q, 1.0));
+  vec2 huv = vec2(0.0), ouv = vec2(-1.0);
+  for (int i = 0; i < ${mkSsrSteps}; i++) {
+    float t1 = t0 + st;
+    vec4 c = cp0 + cpDir * t1;
     if (c.w <= 0.0) break;
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
@@ -184,19 +191,20 @@ vec4 mkSSR(vec3 P, vec3 R, float dist) {
     // (things floating AT the surface — lily pads, leaves, the tea itself — are never mirror hits: their image lies
     // hidden under themselves; a ray passing over them marches on)
     bool floating = mkWY(uv, sz) < P.y + 0.08;
-    if (dz > 0.0 && dz < 3.0 && ouv.x < 0.0 && q.y - P.y < 2.5 && !floating) ouv = uv;
+    if (dz > 0.0 && dz < 3.0 && ouv.x < 0.0 && (R.y * t1) < 2.5 && !floating) ouv = uv;
     if (dz > 0.0 && dz < st * 2.0 + 0.4 && !floating) {
-      vec3 a = p, b = q;
+      float ta = t0, tb = t1;
       for (int k = 0; k < 3; k++) {
-        vec3 m = (a + b) * 0.5; vec4 cm = uMkProj * (viewMatrix * vec4(m, 1.0)); vec2 um = cm.xy / cm.w * 0.5 + 0.5;
-        if (cm.w > mkViewZ(texture2D(uMkDepth, um).r)) b = m; else a = m;
+        float tm = 0.5 * (ta + tb);
+        if ((cp0.w + cpDir.w * tm) > mkViewZ(texture2D(uMkDepth, mkUv(cp0 + cpDir * tm)).r)) tb = tm; else ta = tm;
       }
-      vec4 cb = uMkProj * (viewMatrix * vec4(b, 1.0)); huv = cb.xy / cb.w * 0.5 + 0.5; hit = 1.0; break;
+      huv = mkUv(cp0 + cpDir * tb);
+      hit = 1.0; break;
     }
-    p = q; st *= 1.75;
+    t0 = t1; st *= ${mkSsrGrow};
   }
   if (hit <= 0.0) return ouv.x >= 0.0 ? vec4(texture2D(uMkCol, ouv).rgb * 0.45, 1.0) : vec4(0.0);
-  vec2 e = smoothstep(vec2(0.0), vec2(0.08), huv) * (1.0 - smoothstep(vec2(0.9), vec2(1.0), huv));
+  vec2 e = smoothstep(vec2(0.0), vec2(0.08), huv) * (1.0 - smoothstep(vec2(0.92), vec2(1.0), huv));
   return vec4(texture2D(uMkCol, huv).rgb, hit * e.x * e.y);
 }
 vec4 mkMap(vec2 q) { return texture2D(uMurkRefl, (q - uMurkReflBox.xy) * uMurkReflBox.zw); }
@@ -254,14 +262,14 @@ vec2 mkGrad(vec2 p, float t) {
   if (uMkGrab.z > 0.5 && uMkGrab.w > 0.5) {
     // COMPOSITE: what lies behind the surface (grabbed), absorbed along the view ray through the tea, + the tea's lit
     // in-scatter, + the reflections (totalSpecular carries the Fresnel-weighted mirror)
-    vec2 suv = gl_FragCoord.xy * uMkGrab.xy;
+    vec2 suv = clamp(gl_FragCoord.xy * uMkGrab.xy, 0.0, 1.0);
     float wz = vViewPosition.z;
     float sz0 = mkViewZ(texture2D(uMkDepth, suv).r);
     float th0 = max(0.0, sz0 - wz);
     // refraction wobble from the RIPPLE only (the flat surface's own view-space normal is subtracted: the full normal
     // shifted the whole image ~40 px up-screen = a ghost copy of every lily pad / buoy / pile under itself)
     vec3 mkFlatV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-    vec2 ruv = suv + (normal - mkFlatV).xy * 0.35 * min(th0, 0.8) / max(wz * 0.08, 1.0);
+    vec2 ruv = clamp(suv + (normal - mkFlatV).xy * 0.35 * min(th0, 0.8) / max(wz * 0.08, 1.0), 0.0, 1.0);
     float sz = mkViewZ(texture2D(uMkDepth, ruv).r);
     // never refract something that stands ABOVE the surface (a pad, a hull, a pile above the tea) into the water
     if (sz < wz || mkWY(ruv, sz) > vMurkW.y - 0.02) { ruv = suv; sz = sz0; }
@@ -273,8 +281,7 @@ vec2 mkGrad(vec2 p, float t) {
     vec3 body = totalDiffuse;
     float edge = smoothstep(0.0, 0.07, path);
     vec3 col = (behind * Tr + body * (1.0 - Tr)) * (1.0 - F * edge) + totalSpecular * edge + totalEmissiveRadiance;
-    col = mix(behind, col, vMurk.y);
-    gl_FragColor = vec4(col, 1.0);
+    gl_FragColor = vec4(col, vMurk.y);
   }`)
       .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>
   {
@@ -304,23 +311,25 @@ vec2 mkGrad(vec2 p, float t) {
 #endif`)
       .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.035, 0.26, smoothstep(0.55, 0.8, mkN(vMurkW.xz * 0.06 + 3.0))) + 0.2 * smoothstep(25.0, 140.0, length(vMurkW - cameraPosition));");
   };
-  mat.customProgramCacheKey = () => "murk-water-9";
+  mat.customProgramCacheKey = () => "murk-water-10-" + ctx.quality;
+  mwScope.geometry("geo.world", g);
+  mwScope.material(mat);
   const mesh = new THREE.Mesh(g, mat);
   mesh.name = "murk:water";
   // no shadow-map lookup on the tea (its coarse cascades stair-stepped from above): the canopy's shade is the smooth
   // per-vertex cover; the bed / shelf seen through it still takes the real shadows
-  mesh.receiveShadow = false; mesh.castShadow = false;
-  mesh.userData.farShadow = false;
+  mesh.receiveShadow = mesh.castShadow = mesh.userData.farShadow = false;
+  const bindGrab = (renderer: THREE.WebGLRenderer, camera: THREE.Camera, active: boolean) => {
+    if (active) sharedGrab ? grab!.ensureCopied(renderer, 1, true) : grab!.copy(renderer);
+    uMk.uMkCol.value = grab!.texture; uMk.uMkDepth.value = grab!.depth;
+    uMk.uMkGrab.value.set(1 / grab!.size.x, 1 / grab!.size.y, active && grab!.depth ? 1 : 0, active && grab!.texture && !grab!.fromCanvas ? 1 : 0);
+    uMk.uMkNF.value.set(ctx.camera.near, ctx.camera.far);
+    uMk.uMkProj.value.copy(camera.projectionMatrix);
+  };
+  let murkNear = false;
   if (grab) {
-    const far = 260;
     mesh.onBeforeRender = (renderer, _scene, camera) => {
-      if (camera !== ctx.camera) return;
-      const c = ctx.camera.position, on = Math.hypot(c.x - CX, c.z - CZ) < far;
-      if (on) grab.copy(renderer);
-      uMk.uMkCol.value = grab.texture; uMk.uMkDepth.value = grab.depth;
-      uMk.uMkGrab.value.set(1 / grab.size.x, 1 / grab.size.y, on && grab.depth ? 1 : 0, on && grab.texture && !grab.fromCanvas ? 1 : 0);
-      uMk.uMkNF.value.set(ctx.camera.near, ctx.camera.far);
-      uMk.uMkProj.value.copy(camera.projectionMatrix);
+      if (camera === ctx.camera) bindGrab(renderer, camera, murkNear);
     };
   }
   const levelAt = (x: number, z: number) => {
@@ -354,30 +363,31 @@ vec2 mkGrad(vec2 p, float t) {
         const nt = topAt.get(`${Math.round(x + nx)},${Math.round(z + nz)}`);
         const lo = nt === undefined ? Math.max(bot, Math.min(groundAt(ax, az), groundAt(bx, bz)) - 0.1) : nt;
         if (top - lo < 0.03) continue;
-        const c = new THREE.Color().setRGB(0.82, 0.78, 0.72);
         const b0 = sp.length / 3;
         sp.push(ax, top, az, bx, top, bz, ax, lo, az, bx, lo, bz);
-        for (let i = 0; i < 4; i++) sc.push(c.r, c.g, c.b);
+        for (let i = 0; i < 4; i++) sc.push(0.82, 0.78, 0.72);
         su.push(0, top / 1.6, Math.hypot(bx - ax, bz - az) / 3.2, top / 1.6, 0, lo / 1.6, Math.hypot(bx - ax, bz - az) / 3.2, lo / 1.6);
         si.push(b0, b0 + 1, b0 + 2, b0 + 1, b0 + 3, b0 + 2);
       }
     }
   }
-  const sg = new THREE.BufferGeometry();
+  const sg = mwScope.geometry("geo.world", new THREE.BufferGeometry());
   sg.setAttribute("position", new THREE.Float32BufferAttribute(sp, 3));
   sg.setAttribute("color", new THREE.Float32BufferAttribute(sc, 3));
   sg.setAttribute("uv", new THREE.Float32BufferAttribute(su, 2));
   sg.setIndex(si); sg.computeVertexNormals(); sg.computeBoundingSphere();
-  const shelf = new THREE.Mesh(sg, new THREE.MeshStandardMaterial({ vertexColors: true, map: siltTexture(), roughness: 0.95, metalness: 0, name: "murk:silt" }));
-  shelf.name = "murk:silt"; shelf.receiveShadow = true; shelf.castShadow = false; shelf.renderOrder = -10; shelf.userData.farShadow = false;
+  const siltMat = mwScope.material(new THREE.MeshStandardMaterial({ vertexColors: true, map: siltTexture(mwScope), roughness: 0.95, metalness: 0, name: "murk:silt" }));
+  const shelf = new THREE.Mesh(sg, siltMat);
+  shelf.name = "murk:silt"; shelf.receiveShadow = true; shelf.castShadow = shelf.userData.farShadow = false; shelf.renderOrder = -10;
   // ---- THE SWAMP HAZE in normal play (not only on the staged camera):
   // one full-screen quad drawn LAST, reading the depth the tea already grabbed this frame — humid golden air thickens
   // with view distance (sky and far gaps fade into it, so blue sky never reads through the canopy), fading out as the
   // camera leaves the swamp. Drawn only where the grab is live (camera < 260 m; not on the low tier).
   let haze: THREE.Mesh | null = null;
+  let update = (_r: THREE.WebGLRenderer, _c: THREE.PerspectiveCamera) => {};
   if (grab) {
     const hz = { uHzCol: { value: new THREE.Color("#d8b066").convertSRGBToLinear().multiplyScalar(0.62) }, uHzK: { value: 0 }, uHzInvProj: { value: new THREE.Matrix4() }, uHzCam: { value: new THREE.Matrix4() } };
-    const hm = new THREE.ShaderMaterial({
+    const hm = mwScope.material(new THREE.ShaderMaterial({
       name: "murk:haze", transparent: true, depthTest: false, depthWrite: false, toneMapped: false, fog: false,
       uniforms: { ...hz, uMkDepth: uMk.uMkDepth, uMkGrab: uMk.uMkGrab, uMkNF: uMk.uMkNF },
       vertexShader: "void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }",
@@ -385,7 +395,7 @@ vec2 mkGrad(vec2 p, float t) {
 float vz(float d) { float n = uMkNF.x, f = uMkNF.y; return (2.0 * n * f) / ((f + n) - (d * 2.0 - 1.0) * (f - n)); }
 void main() {
   if (uMkGrab.z < 0.5 || uHzK <= 0.0) discard;
-  vec2 uv = gl_FragCoord.xy * uMkGrab.xy;
+  vec2 uv = clamp(gl_FragCoord.xy * uMkGrab.xy, 0.0, 1.0);
   float d = texture2D(uMkDepth, uv).r;
   float z = d >= 0.99999 ? 400.0 : vz(d);
   // (a sky dome / far land past 180 m counts as sky — nothing under the swamp canopy is that far)
@@ -399,77 +409,81 @@ void main() {
   float f = sky ? 0.86 : (1.0 - exp(-max(0.0, z - 6.0) * 0.012)) * 0.7 * low;
   gl_FragColor = vec4(uHzCol, f * uHzK);
 }`,
-    });
-    haze = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), hm);
-    haze.name = "murk:haze"; haze.frustumCulled = false; haze.renderOrder = 1000; haze.castShadow = false; haze.receiveShadow = false;
-    haze.onBeforeRender = (_r, _s, camera) => {
-      if (camera !== ctx.camera) { hz.uHzK.value = 0; return; }
-      const c = ctx.camera.position, d = Math.hypot(c.x - CX, c.z - CZ);
-      // full inside the core, gone 125 m out; thinner high above the canopy (the glider / plane view stays clear)
-      hz.uHzK.value = smooth(125, 80, d) * smooth(48, 26, c.y) * hazeScale;
+    }));
+    haze = new THREE.Mesh(mwScope.geometry("geo.world", new THREE.PlaneGeometry(2, 2)), hm);
+    haze.name = "murk:haze"; haze.renderOrder = 1000;
+    haze.frustumCulled = haze.castShadow = haze.receiveShadow = haze.visible = false;
+    let hzK = 0;
+    haze.onBeforeRender = (r, _s, camera) => {
+      hz.uHzK.value = camera === ctx.camera ? hzK : 0;
+      if (camera !== ctx.camera) return;
+      bindGrab(r, camera, true);
       hz.uHzInvProj.value.copy(ctx.camera.projectionMatrixInverse); hz.uHzCam.value.copy(ctx.camera.matrixWorld);
     };
-    // the haze needs this frame's grab: the tea must draw (and grab) whenever the haze does
-    mesh.frustumCulled = false;
+    update = (renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera) => {
+      const c = ctx.camera.position, d = Math.hypot(c.x - CX, c.z - CZ);
+      murkNear = d < 260;
+      hzK = smooth(125, 80, d) * smooth(48, 26, c.y) * hazeScale;
+      haze!.visible = hzK > 0.001;
+      hz.uHzK.value = hzK;
+      if (sharedGrab && murkNear) {
+        _mkVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        _mkFrustum.setFromProjectionMatrix(_mkVP);
+        if (hzK > 0.001 || (mesh.visible && _mkFrustum.intersectsBox(g.boundingBox!))) grab.request(renderer.info.render.frame, 1, true);
+      }
+    };
   }
-  return { mesh, shelf, haze, levelAt, uniforms };
+  return { mesh, shelf, haze, levelAt, uniforms, update };
 }
 
 /** lily pads: instanced notched leaves with a curled rim (painted canvas atlas: 4 leaves — veins, mottling, sun-bleached
  *  and rotting edges, a flower). Drawn AFTER the tea (transparent queue) so they are never in its scene grab: no
  *  refracted / reflected copy of a pad can appear under it. */
-export function buildLilies(ctx: WorldCtx, spots: Array<[number, number]>, levelAt: (x: number, z: number) => number, rng: () => number): THREE.InstancedMesh {
-  const S = 512, c = document.createElement("canvas"); c.width = c.height = S;
-  const g = c.getContext("2d")!;
-  const pad = (cx: number, cy: number, r: number, hue: number, age: number) => {
-    g.save(); g.translate(cx, cy);
-    const notch = rng() * Math.PI * 2, nw = 0.16 + rng() * 0.06;
-    // the leaf outline: a slightly wobbly circle with the V notch
-    const outline = () => {
-      g.beginPath(); g.moveTo(0, 0);
-      for (let k = 0; k <= 48; k++) { const a = notch + nw + k / 48 * (Math.PI * 2 - 2 * nw), rr = r * (0.97 + 0.03 * Math.sin(a * 7 + hue)); g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
-      g.closePath();
+export function buildLilies(ctx: WorldCtx, spots: Array<[number, number]>, levelAt: (x: number, z: number) => number, rng: () => number, scope: Scope): THREE.InstancedMesh {
+  const tex = canvasTex(scope, 512, 512, (g) => {
+    const pad = (cx: number, cy: number, r: number, hue: number, age: number) => {
+      g.save(); g.translate(cx, cy);
+      const notch = rng() * Math.PI * 2, nw = 0.16 + rng() * 0.06;
+      const outline = () => {
+        g.beginPath(); g.moveTo(0, 0);
+        for (let k = 0; k <= 48; k++) { const a = notch + nw + k / 48 * (Math.PI * 2 - 2 * nw), rr = r * (0.97 + 0.03 * Math.sin(a * 7 + hue)); g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+        g.closePath();
+      };
+      outline(); g.save(); g.clip();
+      const gr = g.createRadialGradient(0, 0, r * 0.05, 0, 0, r);
+      gr.addColorStop(0, `hsl(${hue + 8},45%,40%)`); gr.addColorStop(0.55, `hsl(${hue},50%,33%)`); gr.addColorStop(0.9, `hsl(${hue - 6},48%,27%)`); gr.addColorStop(1, `hsl(${hue - 20},40%,22%)`);
+      g.fillStyle = gr; g.fillRect(-r, -r, 2 * r, 2 * r);
+      for (let k = 0; k < 70; k++) { const a = rng() * 6.283, d = Math.sqrt(rng()) * r, s2 = 2 + rng() * 7;
+        g.fillStyle = rng() < 0.55 ? `hsla(${hue + 14},55%,48%,${0.12 + rng() * 0.12})` : `hsla(${hue - 10},45%,18%,${0.1 + rng() * 0.12})`;
+        g.beginPath(); g.ellipse(Math.cos(a) * d, Math.sin(a) * d, s2, s2 * (0.5 + rng() * 0.5), a, 0, 6.283); g.fill(); }
+      for (let k = 0; k < 6 * age; k++) { const a = rng() * 6.283, d = r * (0.4 + rng() * 0.55);
+        g.fillStyle = `hsla(${28 + rng() * 10},55%,${26 + rng() * 10}%,0.55)`; g.beginPath(); g.arc(Math.cos(a) * d, Math.sin(a) * d, 1.5 + rng() * 3.5, 0, 6.283); g.fill(); }
+      g.lineCap = "round";
+      for (let k = 0; k < 15; k++) {
+        const a = notch + nw + 0.12 + k / 14 * (Math.PI * 2 - 2 * nw - 0.24);
+        g.strokeStyle = `hsla(${hue + 18},45%,58%,0.42)`; g.lineWidth = 2.2;
+        g.beginPath(); g.moveTo(0, 0); const mx = Math.cos(a) * r * 0.55, my = Math.sin(a) * r * 0.55; g.lineTo(mx, my);
+        g.lineTo(Math.cos(a + 0.03) * r * 0.93, Math.sin(a + 0.03) * r * 0.93); g.stroke();
+        g.lineWidth = 1.1; g.strokeStyle = `hsla(${hue + 18},40%,55%,0.3)`;
+        for (const sg of [-1, 1]) { g.beginPath(); g.moveTo(mx, my); g.lineTo(Math.cos(a + sg * 0.12) * r * 0.9, Math.sin(a + sg * 0.12) * r * 0.9); g.stroke(); }
+      }
+      g.lineWidth = r * 0.09; g.strokeStyle = `hsla(${hue - 30 + 22 * age},${45 - age * 10}%,${30 + age * 6}%,0.55)`; outline(); g.stroke();
+      g.restore();
+      g.lineWidth = 2; g.strokeStyle = `hsla(${hue - 25},35%,16%,0.8)`; outline(); g.stroke();
+      g.fillStyle = `hsla(${hue + 20},40%,55%,0.6)`; g.beginPath(); g.arc(0, 0, 3, 0, 6.283); g.fill();
+      g.restore();
     };
-    outline(); g.save(); g.clip();
-    const gr = g.createRadialGradient(0, 0, r * 0.05, 0, 0, r);
-    gr.addColorStop(0, `hsl(${hue + 8},45%,40%)`); gr.addColorStop(0.55, `hsl(${hue},50%,33%)`); gr.addColorStop(0.9, `hsl(${hue - 6},48%,27%)`); gr.addColorStop(1, `hsl(${hue - 20},40%,22%)`);
-    g.fillStyle = gr; g.fillRect(-r, -r, 2 * r, 2 * r);
-    // mottling: lighter / darker dabs and a few rust spots
-    for (let k = 0; k < 70; k++) { const a = rng() * 6.283, d = Math.sqrt(rng()) * r, s2 = 2 + rng() * 7;
-      g.fillStyle = rng() < 0.55 ? `hsla(${hue + 14},55%,48%,${0.12 + rng() * 0.12})` : `hsla(${hue - 10},45%,18%,${0.1 + rng() * 0.12})`;
-      g.beginPath(); g.ellipse(Math.cos(a) * d, Math.sin(a) * d, s2, s2 * (0.5 + rng() * 0.5), a, 0, 6.283); g.fill(); }
-    for (let k = 0; k < 6 * age; k++) { const a = rng() * 6.283, d = r * (0.4 + rng() * 0.55);
-      g.fillStyle = `hsla(${28 + rng() * 10},55%,${26 + rng() * 10}%,0.55)`; g.beginPath(); g.arc(Math.cos(a) * d, Math.sin(a) * d, 1.5 + rng() * 3.5, 0, 6.283); g.fill(); }
-    // veins: main ribs from the stem point, forking toward the rim
-    g.lineCap = "round";
-    for (let k = 0; k < 15; k++) {
-      const a = notch + nw + 0.12 + k / 14 * (Math.PI * 2 - 2 * nw - 0.24);
-      g.strokeStyle = `hsla(${hue + 18},45%,58%,0.42)`; g.lineWidth = 2.2;
-      g.beginPath(); g.moveTo(0, 0); const mx = Math.cos(a) * r * 0.55, my = Math.sin(a) * r * 0.55; g.lineTo(mx, my);
-      g.lineTo(Math.cos(a + 0.03) * r * 0.93, Math.sin(a + 0.03) * r * 0.93); g.stroke();
-      g.lineWidth = 1.1; g.strokeStyle = `hsla(${hue + 18},40%,55%,0.3)`;
-      for (const sg of [-1, 1]) { g.beginPath(); g.moveTo(mx, my); g.lineTo(Math.cos(a + sg * 0.12) * r * 0.9, Math.sin(a + sg * 0.12) * r * 0.9); g.stroke(); }
+    const q = 128;
+    pad(q, q, q * 0.9, 96, 0.3); pad(3 * q, q, q * 0.86, 84, 1.0); pad(q, 3 * q, q * 0.84, 72, 1.6); pad(3 * q, 3 * q, q * 0.88, 104, 0.6);
+    for (let ring = 0; ring < 2; ring++) for (let k = 0; k < 8; k++) {
+      const a = k / 8 * Math.PI * 2 + ring * 0.39, rr = ring ? 11 : 19;
+      g.fillStyle = ring ? "#fbeef2" : "#f2d4de"; g.strokeStyle = "rgba(160,90,110,0.5)"; g.lineWidth = 1;
+      g.beginPath(); g.ellipse(3 * q + Math.cos(a) * rr, 3 * q + Math.sin(a) * rr, ring ? 10 : 14, ring ? 5 : 6.5, a, 0, Math.PI * 2); g.fill(); g.stroke();
     }
-    // the rim: a sun-bleached / browning band (the curled edge catches light) + a darker edge line
-    g.lineWidth = r * 0.09; g.strokeStyle = `hsla(${hue - 30 + 22 * age},${45 - age * 10}%,${30 + age * 6}%,0.55)`; outline(); g.stroke();
-    g.restore();
-    g.lineWidth = 2; g.strokeStyle = `hsla(${hue - 25},35%,16%,0.8)`; outline(); g.stroke();
-    // the stem dimple
-    g.fillStyle = `hsla(${hue + 20},40%,55%,0.6)`; g.beginPath(); g.arc(0, 0, 3, 0, 6.283); g.fill();
-    g.restore();
-  };
-  const q = S / 4;
-  pad(q, q, q * 0.9, 96, 0.3); pad(3 * q, q, q * 0.86, 84, 1.0); pad(q, 3 * q, q * 0.84, 72, 1.6); pad(3 * q, 3 * q, q * 0.88, 104, 0.6);
-  // a water-lily flower on the fourth leaf: white petals blushing pink, a gold heart
-  for (let ring = 0; ring < 2; ring++) for (let k = 0; k < 8; k++) {
-    const a = k / 8 * Math.PI * 2 + ring * 0.39, rr = ring ? 11 : 19;
-    g.fillStyle = ring ? "#fbeef2" : "#f2d4de"; g.strokeStyle = "rgba(160,90,110,0.5)"; g.lineWidth = 1;
-    g.beginPath(); g.ellipse(3 * q + Math.cos(a) * rr, 3 * q + Math.sin(a) * rr, ring ? 10 : 14, ring ? 5 : 6.5, a, 0, Math.PI * 2); g.fill(); g.stroke();
-  }
-  g.fillStyle = "#f2c94a"; g.beginPath(); g.arc(3 * q, 3 * q, 7, 0, Math.PI * 2); g.fill();
-  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+    g.fillStyle = "#f2c94a"; g.beginPath(); g.arc(3 * q, 3 * q, 7, 0, Math.PI * 2); g.fill();
+  });
   // curled leaf: a disc whose rim lifts ~3.5 cm (pads cup slightly at the edge), UVs planar
-  const geo = new THREE.CircleGeometry(0.5, 20, 0, Math.PI * 2);
+  const geo = scope.geometry("geo.world", new THREE.CircleGeometry(0.5, 20, 0, Math.PI * 2));
   {
     const ring = new THREE.RingGeometry(0.0001, 0.5, 20, 3); ring.rotateX(-Math.PI / 2);
     const pp = ring.attributes.position as THREE.BufferAttribute, uv = ring.attributes.uv as THREE.BufferAttribute;
@@ -477,7 +491,7 @@ export function buildLilies(ctx: WorldCtx, spots: Array<[number, number]>, level
     ring.computeVertexNormals();
     geo.copy(ring); ring.dispose();
   }
-  const mat = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, transparent: true, depthWrite: true, roughness: 0.38, metalness: 0, envMapIntensity: 0.9, side: THREE.DoubleSide, name: "murk:lily-leaf" });
+  const mat = scope.material(new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.5, transparent: true, depthWrite: true, roughness: 0.38, metalness: 0, envMapIntensity: 0.9, side: THREE.DoubleSide, name: "murk:lily-leaf" }));
   // pick one of the four pads per instance via the UV offset (instanceColor.r)
   mat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader.replace("#include <uv_vertex>", `#include <uv_vertex>
