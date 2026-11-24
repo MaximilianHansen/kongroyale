@@ -65,6 +65,7 @@ export function makeWaterMaterial(tex: WaterTextures, fields: WaterFields, obsta
     wtrField2: { value: fields.texture2 },
     wtrField3: { value: fields.texture3 },
     wtrMurkP: { value: new THREE.Vector3(...fields.masks.murk) },
+    wtrMurkOwned: { value: 0 },
     wtrHarborP: { value: new THREE.Vector4(...fields.masks.harbor) },
     wtrFieldST: { value: new THREE.Vector2(fields.scale, fields.offset) },
     wtrTile: { value: tile.tile.texture },
@@ -127,6 +128,7 @@ export function makeWaterMaterial(tex: WaterTextures, fields: WaterFields, obsta
     wtrSceneDepth: { value: null },
     wtrSceneCol: { value: null },
     wtrGrab: { value: new THREE.Vector4(1, 1, 0, 0) },
+    wtrGrabMaxV: { value: 1.0 },
     wtrCamNF: { value: new THREE.Vector2(0.1, 12000) },
     wtrProj: { value: new THREE.Matrix4() },
     wtrRefract: { value: 0.6 },
@@ -187,6 +189,21 @@ export function makeWaterMaterial(tex: WaterTextures, fields: WaterFields, obsta
     wtrReflLift: { value: 0.7 },     // reflected-sky elevation lift (0 = physical: grazing views mirror the pale horizon)
   };
 
+  const defKey = (tag: string, mat: THREE.Material) => tag + Object.keys(mat.defines ?? {}).filter((k) => mat.defines![k]).sort().join("|");
+  const patchHooks = (sh: THREE.WebGLProgramParametersWithUniforms, frag: Array<[string, string]>) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\n" + vertParsMain(atmos?.glsl))
+      .replace("#include <beginnormal_vertex>", VERT_BEGINNORMAL)
+      .replace("#include <begin_vertex>", VERT_BEGIN);
+    let fs = sh.fragmentShader.replace("#include <common>", "#include <common>\n" + FRAG_PARS);
+    for (const [a, b] of frag) fs = fs.replace(a, b);
+    sh.fragmentShader = fs
+      .replace("#include <fog_fragment>", FRAG_FOG)
+      .replace("#include <lights_fragment_maps>", FRAG_LIGHTS_INDIRECT)
+      .replace("#include <lights_fragment_end>", "");
+  };
+
   /** mode: "near" (eye level, camera < ~12 m: the air-only foam — far surf lines, the aerial whitewater band, the churn —
    *  compiled out, and the water column + reef per VERTEX on every level: dead / per-pixel code still costs registers and
    *  instruction cache on every pixel, measured −9 % + ...), "mid" (12-120 m: everything), "far" (> 120 m: no near-only
@@ -214,8 +231,10 @@ export function makeWaterMaterial(tex: WaterTextures, fields: WaterFields, obsta
     m.name = far ? "kr-water-far" : mode === "mid" ? "kr-water-mid" : "kr-water";
     m.defines = m.defines || {};
     if (mode === "near") { m.defines.WTR_NEAR = 1; m.defines.WTR_VALL = 1; }
-    // the lighter tier for Medium / Low (M1 Pro-class machines run Auto = Medium): shorter SSR march
+    // Preset SSR tiers: Low = 6+2 steps, Medium (WTR_LITE) = 9+3 steps, High = 20+3, Ultra = 24+4
+    if (quality === "low") m.defines.WTR_LOW = 1;
     if (quality === "medium" || quality === "low") m.defines.WTR_LITE = 1;
+    if (quality === "ultra") m.defines.WTR_ULTRA = 1;
     if (!far && !flag("wnoscene")) m.defines.WTR_SCENE = 1;
     // (the coral heads: per pixel from the air — the far program — per vertex near the camera, where the clipmap cells
     // are finer than the field's 2 m texels)
@@ -228,31 +247,21 @@ export function makeWaterMaterial(tex: WaterTextures, fields: WaterFields, obsta
     // the water column per vertex on the near clipmap levels (shader.ts wtrColumn): the near program only (the aerial
     // keeps its per-pixel reef edges)
     else m.defines.WTR_VCORE = 1;
-    m.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, uniforms);
-      shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\n" + vertParsMain(atmos?.glsl))
-        .replace("#include <beginnormal_vertex>", VERT_BEGINNORMAL)
-        .replace("#include <begin_vertex>", VERT_BEGIN);
-      shader.fragmentShader = shader.fragmentShader
-        // (atmos patches every lit material after us: its screen-space AO / canopy sky visibility would fetch its AO
-        // buffer on every water pixel and darken the sea's own in-scatter next to the shore — the water has its own
-        // object shading. Taking these anchors away leaves the water out of both hooks)
-        .replace("#include <aomap_fragment>", "")
-        .replace("vec3 totalDiffuse = reflectedLight.directDiffuse", "vec3 totalDiffuse = vec3( 0.0 ) + reflectedLight.directDiffuse")
-        .replace("#include <common>", "#include <common>\n" + FRAG_PARS)
-        .replace("#include <clipping_planes_pars_fragment>", "#include <clipping_planes_pars_fragment>\n" + FRAG_LATE_PARS)
-        .replace("#include <color_fragment>", FRAG_COLOR)
-        .replace("#include <roughnessmap_fragment>", FRAG_ROUGH)
-        .replace("#include <normal_fragment_maps>", FRAG_NORMAL)
-        .replace("#include <opaque_fragment>", FRAG_OPAQUE)
-        .replace("#include <fog_fragment>", FRAG_FOG)
-        .replace("#include <lights_fragment_begin>", LIGHTS_WATER)
-        .replace("#include <lights_fragment_maps>", FRAG_LIGHTS_INDIRECT)
-        .replace("#include <lights_fragment_end>", "");
-    };
+    m.onBeforeCompile = (shader) => patchHooks(shader, [
+      // (atmos patches every lit material after us: its screen-space AO / canopy sky visibility would fetch its AO
+      // buffer on every water pixel and darken the sea's own in-scatter next to the shore — the water has its own
+      // object shading. Taking these anchors away leaves the water out of both hooks)
+      ["#include <aomap_fragment>", ""],
+      ["vec3 totalDiffuse = reflectedLight.directDiffuse", "vec3 totalDiffuse = vec3( 0.0 ) + reflectedLight.directDiffuse"],
+      ["#include <clipping_planes_pars_fragment>", "#include <clipping_planes_pars_fragment>\n" + FRAG_LATE_PARS],
+      ["#include <color_fragment>", FRAG_COLOR],
+      ["#include <roughnessmap_fragment>", FRAG_ROUGH],
+      ["#include <normal_fragment_maps>", FRAG_NORMAL],
+      ["#include <opaque_fragment>", FRAG_OPAQUE],
+      ["#include <lights_fragment_begin>", LIGHTS_WATER],
+    ]);
     m.defines.WTR_OWNLIGHT = 1;
-    m.customProgramCacheKey = () => "kr-water-v8" + ["WTR_UNDER", "WTR_X_NOFOAM", "WTR_X_NOSPARK", "WTR_X_NOFINE", "WTR_X_NOATM", "WTR_X_NOSWELL", "WTR_X_MIN", "WTR_X_NOCAUS", "WTR_X_NORING", "WTR_FAR", "WTR_X_NOIBL", "WTR_DUAL_SRC", "WTR_CANVAS", "WTR_FOAMMAIN", "WTR_X_NOREEF", "WTR_X_NOTILE", "WTR_X_NOLIGHT", "WTR_X_COLCONST", "WTR_X_NONET", "WTR_X_NOSHADOW", "WTR_X_NOSKY", "WTR_X_COLA", "WTR_X_COLB", "WTR_X_VTRIV", "WTR_X_NOVATM", "WTR_X_FOAMGATE", "WTR_X_CAUSGATE", "WTR_X_NOSWASH", "WTR_X_NOSURF", "WTR_X_NOFR", "WTR_OWNLIGHT", "WTR_X_THREELIGHT", "WTR_X_TLOD", "WTR_VCORE", "WTR_X_CUTA", "WTR_X_CUTB", "WTR_X_CUTC", "WTR_DEBUG", "WTR_NEAR", "WTR_VALL", "WTR_VSHADOW", "WTR_SCENE", "WTR_LITE"].map((d) => (m.defines?.[d] ? d : "")).join("|");
+    m.customProgramCacheKey = () => defKey("kr-water-v8", m);
     return m;
   };
   // near + far programs of the main pass (index.ts shows one): the far one (camera high above the sea: the aerial, the
@@ -300,24 +309,15 @@ export function makeWaterMaterial(tex: WaterTextures, fields: WaterFields, obsta
     foam.defines = { WTR_FOAMPASS: 1, WTR_SKYIRR: 1 };
     if (atmos) foam.defines.WTR_VATM = 1;
     if (far) foam.defines.WTR_FAR = 1;
-    foam.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, uniforms);
-      shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\n" + vertParsMain(atmos?.glsl))
-        .replace("#include <beginnormal_vertex>", VERT_BEGINNORMAL)
-        .replace("#include <begin_vertex>", VERT_BEGIN);
-      shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\n" + FRAG_PARS)
-        .replace("#include <color_fragment>", FRAG_FOAM)
-        .replace("#include <roughnessmap_fragment>", FRAG_ROUGH_FOAM)
-        .replace("#include <normal_fragment_maps>", FRAG_NORMAL_FOAM)
-        .replace("#include <opaque_fragment>", FRAG_OPAQUE_FOAM)
-        .replace("#include <fog_fragment>", FRAG_FOG)
-        .replace("#include <lights_fragment_begin>", LIGHTS_SUN_ONLY)
-        .replace("#include <lights_fragment_maps>", FRAG_LIGHTS_INDIRECT)
-        .replace("#include <lights_fragment_end>", "");
-    };
-    foam.customProgramCacheKey = () => "kr-water-foam-v3" + ["WTR_X_NOCULL", "WTR_X_NOFOAM", "WTR_FAR"].map((d) => (foam.defines?.[d] ? d : "")).join("|");
+    if (!far && !flag("wnoscene")) foam.defines.WTR_SCENE = 1;
+    foam.onBeforeCompile = (shader) => patchHooks(shader, [
+      ["#include <color_fragment>", FRAG_FOAM],
+      ["#include <roughnessmap_fragment>", FRAG_ROUGH_FOAM],
+      ["#include <normal_fragment_maps>", FRAG_NORMAL_FOAM],
+      ["#include <opaque_fragment>", FRAG_OPAQUE_FOAM],
+      ["#include <lights_fragment_begin>", LIGHTS_SUN_ONLY],
+    ]);
+    foam.customProgramCacheKey = () => defKey("kr-water-foam-v4", foam);
     return foam;
   };
   const foam = makeFoam(false), foamFar = makeFoam(true);

@@ -5,6 +5,7 @@
 // channel to the foam. Cost: 1–2 full-screen passes on a 256² target per frame (≈ 0.02 ms).
 //   RT texel = (h now, h previous, foam, 0)
 import * as THREE from "three";
+import type { Scope } from "../../engine/res/scope";
 
 export const SIM_SIZE = 48;       // metres covered
 const N = 256;                    // cells per side
@@ -50,7 +51,7 @@ interface Drop { x: number; z: number; r: number; s: number; foam: number }
 
 export class InteractiveRipples {
   /** current state texture (h, h_prev, foam) — sample with origin/scale below */
-  get texture(): THREE.Texture { return this.rts[this.cur].texture; }
+  get texture(): THREE.Texture { return this.#rts[this.#cur].texture; }
   /** world xz of the window's min corner */
   readonly origin = new THREE.Vector2();
   readonly size = SIM_SIZE;
@@ -58,21 +59,22 @@ export class InteractiveRipples {
   /** wave speed (m/s) and damping per second */
   speed = 1.35;
   damping = 0.9;
-  private rts: THREE.WebGLRenderTarget[];
-  private cur = 0;
-  private mat: THREE.ShaderMaterial;
-  private scene = new THREE.Scene();
-  private cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  private drops: Drop[] = [];
-  private acc = 0;
-  private started = false;
+  #rts: THREE.WebGLRenderTarget[];
+  #cur = 0;
+  #mat: THREE.ShaderMaterial;
+  #scene = new THREE.Scene();
+  #cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  #drops: Drop[] = [];
+  #acc = 0;
+  #started = false;
   active = 1e9; // frames since the last disturbance (the sim sleeps — and the shader skips it — when nothing moves)
 
-  constructor() {
+  constructor(parentScope: Scope) {
+    const ripScope = parentScope.child("ripples");
     const opts: THREE.RenderTargetOptions = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false, generateMipmaps: false };
-    this.rts = [new THREE.WebGLRenderTarget(N, N, opts), new THREE.WebGLRenderTarget(N, N, opts)];
-    this.rts.forEach((r, i) => (r.texture.name = `water-interact-${i}`));
-    this.mat = new THREE.ShaderMaterial({
+    this.#rts = [ripScope.target(new THREE.WebGLRenderTarget(N, N, opts)), ripScope.target(new THREE.WebGLRenderTarget(N, N, opts))];
+    this.#rts.forEach((r, i) => (r.texture.name = `water-interact-${i}`));
+    this.#mat = ripScope.material(new THREE.ShaderMaterial({
       uniforms: {
         uPrev: { value: null }, uShift: { value: new THREE.Vector2() },
         uDrops: { value: Array.from({ length: MAX_DROPS }, () => new THREE.Vector4()) },
@@ -80,50 +82,50 @@ export class InteractiveRipples {
         uN: { value: 0 }, uC2: { value: 0 }, uDamp: { value: 1 }, uFoamDecay: { value: 0.99 },
       },
       vertexShader: VS, fragmentShader: FS, depthTest: false, depthWrite: false,
-    });
-    const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.mat);
+    }));
+    const q = new THREE.Mesh(ripScope.geometry("geo.world", new THREE.PlaneGeometry(2, 2)), this.#mat);
     q.frustumCulled = false;
-    this.scene.add(q);
+    this.#scene.add(q);
   }
 
   /** push the surface at (x, z): radius r (m), strength s (m, ~0.02 wading … 0.3 rocket), foam 0..1 */
   disturb(x: number, z: number, r: number, s: number, foam = 0.4) {
-    if (this.drops.length >= 64) this.drops.shift();
-    this.drops.push({ x, z, r: Math.max(r, DX * 1.5), s, foam });
+    if (this.#drops.length >= 64) this.#drops.shift();
+    this.#drops.push({ x, z, r: Math.max(r, DX * 1.5), s, foam });
     this.active = 0;
   }
 
   update(renderer: THREE.WebGLRenderer, dt: number, camX: number, camZ: number) {
     // window follows the camera in whole cells
     const ox = Math.round((camX - SIM_SIZE / 2) / DX) * DX, oz = Math.round((camZ - SIM_SIZE / 2) / DX) * DX;
-    if (!this.started) { this.origin.set(ox, oz); this.started = true; }
-    if (this.active > 600 && !this.drops.length) { this.origin.set(ox, oz); return; } // asleep (10 s of calm)
-    this.acc = Math.min(this.acc + dt, STEP * 3);
-    if (this.acc < STEP && !this.drops.length) return;
+    if (!this.#started) { this.origin.set(ox, oz); this.#started = true; }
+    if (this.active > 600 && !this.#drops.length) { this.origin.set(ox, oz); return; } // asleep (10 s of calm)
+    this.#acc = Math.min(this.#acc + dt, STEP * 3);
+    if (this.#acc < STEP && !this.#drops.length) return;
     const prevRT = renderer.getRenderTarget(), prevXR = renderer.xr.enabled; renderer.xr.enabled = false;
-    const u = this.mat.uniforms;
+    const u = this.#mat.uniforms;
     const c = (this.speed * STEP) / DX;
     u.uC2.value = Math.min(0.45, c * c);
     u.uDamp.value = Math.exp(-this.damping * STEP * 0.5);
     u.uFoamDecay.value = Math.exp(-STEP / 1.6);
     let steps = 0;
-    while (this.acc >= STEP || (steps === 0 && this.drops.length)) {
-      this.acc = Math.max(0, this.acc - STEP);
+    while (this.#acc >= STEP || (steps === 0 && this.#drops.length)) {
+      this.#acc = Math.max(0, this.#acc - STEP);
       (u.uShift.value as THREE.Vector2).set((ox - this.origin.x) / SIM_SIZE, (oz - this.origin.y) / SIM_SIZE);
       this.origin.set(ox, oz);
-      const n = Math.min(this.drops.length, MAX_DROPS);
+      const n = Math.min(this.#drops.length, MAX_DROPS);
       const dv = u.uDrops.value as THREE.Vector4[], df = u.uDropFoam.value as number[];
       for (let i = 0; i < n; i++) {
-        const d = this.drops[i];
+        const d = this.#drops[i];
         dv[i].set((d.x - ox) / SIM_SIZE, (d.z - oz) / SIM_SIZE, d.r / SIM_SIZE, d.s * 0.35);
         df[i] = d.foam;
       }
       u.uN.value = n;
-      this.drops.splice(0, n);
-      u.uPrev.value = this.rts[this.cur].texture;
-      this.cur ^= 1;
-      renderer.setRenderTarget(this.rts[this.cur]);
-      renderer.render(this.scene, this.cam);
+      this.#drops.splice(0, n);
+      u.uPrev.value = this.#rts[this.#cur].texture;
+      this.#cur ^= 1;
+      renderer.setRenderTarget(this.#rts[this.#cur]);
+      renderer.render(this.#scene, this.#cam);
       if (++steps >= 3) break;
     }
     renderer.setRenderTarget(prevRT); renderer.xr.enabled = prevXR;

@@ -9,13 +9,18 @@
 // materials (leaf cards would bake as solid blobs). Re-baked when the mesh count changes (async POI loads).
 import * as THREE from "three";
 import { contextEpoch, onRestore } from "../../engine/res/restore";
+import type { Scope } from "../../engine/res/scope";
 
 /** proximity reach of the rings, in texels of the bake (4096² over the 2.4 km island → 0.586 m: 7 → 4.1 m) */
 const R = 7;
 /** the wide proximity's reach in 2.34 m cells (6 → ≈ 16 m) */
 const RW = 6;
+/** minimum ms between automatic incremental re-bakes to avoid back-to-back frame hitches */
+const MIN_REBAKE_MS = 500;
+const dropScope = (s: Scope | null) => { if (s && !s.isDisposed) s.dispose(); return null; };
 const _c = new THREE.Vector3();
 const _boundA = new THREE.Vector3(), _boundB = new THREE.Vector3();
+const _ortho = new THREE.Matrix4(), _shear = new THREE.Matrix4(), _base = new THREE.Matrix4();
 /** A BatchedMesh's backing geometry is allocated for its MAX vertex count: computing its bounding sphere just for the
  *  tiny-prop rejection scanned the whole padded array (a 65 ms freeze during the drop / landing). Any two used vertices
  *  farther apart than twice the threshold prove that every enclosing sphere exceeds it, so a fixed number is sampled —
@@ -54,49 +59,60 @@ export class ObstacleBake {
   readonly texture: THREE.Texture;
   /** uv = (x * scale + 0.5, 0.5 - z * scale) */
   readonly scale: number;
-  private rtA: THREE.WebGLRenderTarget;
-  private rtP: THREE.WebGLRenderTarget;
-  private pierceMat: THREE.ShaderMaterial;
-  private rtB: THREE.WebGLRenderTarget;
-  private rtC: THREE.WebGLRenderTarget;
+  readonly #scope: Scope;
+  readonly #size: number;
+  readonly #blurSize: number;
+  readonly #wideSize: number;
+  readonly #rtOpts: THREE.RenderTargetOptions;
+  readonly #renderer: THREE.WebGLRenderer;
+  readonly #scene: THREE.Scene;
+  #accumScope: Scope | null = null;
+  #wideScope: Scope | null = null;
+  #rtA: THREE.WebGLRenderTarget | null = null;
+  #pierceMat: THREE.ShaderMaterial;
+  #rtC: THREE.WebGLRenderTarget;
   /** the WIDE proximity (G of the result): 1024², 2.34 m texels, reach ≈ 16 m — the foam churn seen from the air around
    *  hulls, quay walls, sea stacks and big rocks (the target art's aerial harbor has 5-20 m of white water there; the
    *  4.7 m ring is ~2 px from 2 km) */
-  private rtW1: THREE.WebGLRenderTarget;
-  private rtW2: THREE.WebGLRenderTarget;
-  private wideDown: THREE.ShaderMaterial;
-  private wideEdt: THREE.ShaderMaterial;
-  private cam: THREE.OrthographicCamera;
-  private override: THREE.ShaderMaterial;
-  private blurMat: THREE.ShaderMaterial;
-  private quad: THREE.Mesh;
-  private quadScene = new THREE.Scene();
-  private quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  private mask: THREE.Texture | null = null;
+  #rtW2: THREE.WebGLRenderTarget | null = null;
+  #wideDown: THREE.ShaderMaterial;
+  #wideEdt: THREE.ShaderMaterial;
+  #cam: THREE.OrthographicCamera;
+  #override: THREE.ShaderMaterial;
+  #blurMat: THREE.ShaderMaterial;
+  #quad: THREE.Mesh;
+  #quadScene = new THREE.Scene();
+  #quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  #mask: THREE.Texture | null = null;
+  #unregRestore: () => void;
+  #lastBakeMs = -1e9;
   bakes = 0;
 
-  constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene, half: number, size = 4096, blurSize = 2048) {
+  constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, half: number, size: number, blurSize: number, parentScope: Scope) {
+    this.#renderer = renderer; this.#scene = scene;
+    const scope = this.#scope = parentScope.child("obstacles");
+    this.#size = size;
+    this.#blurSize = blurSize;
+    this.#wideSize = Math.max(256, size >> 2);
     this.scale = 1 / (2 * half);
     const opts: THREE.RenderTargetOptions = { format: THREE.RedFormat, type: THREE.UnsignedByteType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false, generateMipmaps: false };
-    this.rtA = new THREE.WebGLRenderTarget(size, size, { ...opts, format: THREE.RGFormat });
-    this.rtP = new THREE.WebGLRenderTarget(size, size, opts);
-    this.rtP.texture.name = "water-obstacle-pierce";
-    this.rtB = new THREE.WebGLRenderTarget(blurSize, blurSize, opts);
-    this.rtC = new THREE.WebGLRenderTarget(blurSize, blurSize, { ...opts, format: THREE.RGFormat });
-    const WS = Math.max(256, size >> 2);
-    this.rtW1 = new THREE.WebGLRenderTarget(WS, WS, opts);
-    this.rtW2 = new THREE.WebGLRenderTarget(WS, WS, opts);
-    this.rtA.texture.name = "water-obstacle-raw"; this.rtC.texture.name = "water-obstacle";
-    this.texture = this.rtC.texture;
+    this.#rtOpts = opts;
+    // Keep only the final sampled target permanent; raw/pierce/blur/wide targets are allocated lazily per bake and freed
+    this.#rtC = scope.target(new THREE.WebGLRenderTarget(blurSize, blurSize, { ...opts, format: THREE.RGFormat }));
+    this.#rtC.texture.name = "water-obstacle";
+    this.texture = this.#rtC.texture;
+    // Scale ring filter radius proportionally with blurSize so world-space ring reach (~4.7 m) stays constant
+    const blurR = Math.max(3, Math.round((R + 1) * (blurSize / 4096)) - 1);
+    const coverCut = blurSize < size ? 0.16 : 0.22;
     // looking straight down; screen-right = +x, screen-up = -z (north). near/far clip the world to the waterline slab.
     // slab y ∈ [-0.15, 1.1]: only what pierces the surface (a rock whose top stays a hand under the water gets no ring:
     // its whole top baked as "contact" and printed a white square on the sea from the air)
-    this.cam = new THREE.OrthographicCamera(-half, half, half, -half, 40 - 1.1, 40 + 0.15);
-    this.cam.position.set(0, 40, 0); this.cam.up.set(0, 0, -1); this.cam.lookAt(0, 0, 0); this.cam.updateMatrixWorld(true);
+    this.#cam = new THREE.OrthographicCamera(-half, half, half, -half, 40 - 1.1, 40 + 0.15);
+    this.#cam.position.set(0, 40, 0); this.#cam.up.set(0, 0, -1); this.#cam.lookAt(0, 0, 0); this.#cam.updateMatrixWorld(true);
     // max-blended, no depth test: every fragment inside the slab counts (occlusion does not matter for a coverage mask)
     // (a MINIMAL coverage shader — position through three's instancing / batching chunks, a flat colour out. The
     // full MeshBasicMaterial program took 25-45 ms to compile per object-kind variant on ANGLE: one > 50 ms task)
-    this.override = new THREE.ShaderMaterial({
+    this.#override = scope.material(new THREE.ShaderMaterial({
       name: "water-obstacle-cov",
       uniforms: { uCol: { value: new THREE.Color(1, 1, 1) } },
       vertexShader: /* glsl */ `
@@ -110,35 +126,44 @@ export class ObstacleBake {
       fragmentShader: /* glsl */ `uniform vec3 uCol; void main() { gl_FragColor = vec4(uCol, 1.0); }`,
       side: THREE.DoubleSide, fog: false, toneMapped: false, depthTest: false, depthWrite: false, lights: false,
       blending: THREE.CustomBlending, blendEquation: THREE.MaxEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
-    });
-    this.override.customProgramCacheKey = () => "kr-water-obstacle-cov2";
-    this.blurMat = new THREE.ShaderMaterial({
-      uniforms: { uTex: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uMask: { value: null }, uWide: { value: this.rtW2.texture }, uUseMask: { value: 0 }, uPass: { value: 0 } },
-      vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-      fragmentShader: /* glsl */ `
-        uniform sampler2D uTex; uniform sampler2D uMask; uniform sampler2D uWide; uniform float uUseMask; uniform float uPass; uniform vec2 uDir; varying vec2 vUv;
-        // PROXIMITY = a separable EUCLIDEAN distance transform within ${R + 1} texels (≈ 4.7 m): pass X stores the distance to
+    }));
+    this.#override.customProgramCacheKey = () => "kr-water-obstacle-cov2";
+    const VS_QUAD = "varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.0,1.0);}";
+    const mkQuadMat = (uniforms: Record<string, THREE.IUniform>, fragmentShader: string) =>
+      scope.material(new THREE.ShaderMaterial({ uniforms, vertexShader: VS_QUAD, fragmentShader, depthTest: false, depthWrite: false }));
+    this.#blurMat = mkQuadMat(
+      { uTex: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uMask: { value: null }, uWide: { value: null }, uPrev: { value: null }, uUseMask: { value: 0 }, uHasPrev: { value: 0 }, uPass: { value: 0 } },
+      /* glsl */ `
+        uniform sampler2D uTex; uniform sampler2D uMask; uniform sampler2D uWide; uniform sampler2D uPrev; uniform float uUseMask; uniform float uHasPrev; uniform float uPass; uniform vec2 uDir; varying vec2 vUv;
+        // PROXIMITY = a separable EUCLIDEAN distance transform within ${blurR + 1} texels (≈ 4.7 m): pass X stores the distance to
         // the nearest covered texel along the row, pass Y combines the rows (min over j of dx² + j²). The ring then
         // follows the object's silhouette with round ends (a separable max filter draws rounded SQUARES around
         // rocks and sea stacks). Partial coverage (anti-aliased edges) shifts the distance by up to half a texel.
-        const float RR = ${(R + 1).toFixed(1)};
+        const float RR = ${(blurR + 1).toFixed(1)};
         void main(){
-          float best = RR;
+          if (uPass > 2.5) { gl_FragColor = texture2D(uPrev, vUv); return; }
           if (uPass < 0.5) {
-            for (int i = -${R}; i <= ${R}; i++) {
+            float best = RR;
+            for (int i = -${blurR}; i <= ${blurR}; i++) {
               float c = texture2D(uTex, vUv + uDir * float(i)).r;
               // (only solidly covered texels count: faint partial coverage inflated every small rock's ring by a texel)
-              if (c > 0.22) best = min(best, max(abs(float(i)) + 0.5 - c, 0.0));
+              if (c > ${coverCut.toFixed(2)}) best = min(best, max(abs(float(i)) + 0.5 - c, 0.0));
             }
             gl_FragColor = vec4(vec3(best / RR), 1.0);
             return;
           }
-          float b2 = RR * RR;
-          for (int j = -${R}; j <= ${R}; j++) {
-            float dx = texture2D(uTex, vUv + uDir * float(j)).r * RR;
-            b2 = min(b2, dx * dx + float(j * j));
+          vec2 prev = (uHasPrev > 0.5 || uPass > 1.5) ? texture2D(uPrev, vUv).rg : vec2(0.0);
+          float s = prev.r, wide = prev.g;
+          if (uPass < 1.5) {
+            float b2 = RR * RR;
+            for (int j = -${blurR}; j <= ${blurR}; j++) {
+              float dx = texture2D(uTex, vUv + uDir * float(j)).r * RR;
+              b2 = min(b2, dx * dx + float(j * j));
+            }
+            s = 1.0 - min(sqrt(b2), RR) / RR;
+            wide = texture2D(uWide, vUv).r;
+            if (uHasPrev > 0.5) { s = max(s, prev.r); wide = max(wide, prev.g); }
           }
-          float s = 1.0 - min(sqrt(b2), RR) / RR;
           // the registered foam shapes (WaterApi.registerFoam*) live in the same texture: max() on the final pass.
           // mask uv = (x, z) mapped like the obstacle view (screen-up = north = -z)
           // registered shapes only count NEAR real waterline geometry (the bake): a shape registered in the wrong frame
@@ -148,30 +173,20 @@ export class ObstacleBake {
           // with foam: "fried eggs" and flat white pads. The bake of the real waterline geometry draws the
           // contact line and the wash)
           if (uUseMask > 0.5) s = max(s, texture2D(uMask, vec2(vUv.x, 1.0 - vUv.y)).r * 0.45 * smoothstep(0.004, 0.05, s));
-          gl_FragColor = vec4(s, texture2D(uWide, vUv).r, 0.0, 1.0);
-        }`,
-      depthTest: false, depthWrite: false,
-    });
+          gl_FragColor = vec4(s, wide, 0.0, 1.0);
+        }`);
     // PIERCE pass (full bake resolution): coverage = above-slab footprint × (below-slab geometry within ±1 texel — the
     // shear puts a wall's above / below parts on opposite sides of it)
-    this.pierceMat = new THREE.ShaderMaterial({
-      uniforms: { uTex: { value: null }, uTexel: { value: 1 / size } },
-      vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-      fragmentShader: /* glsl */ `
+    this.#pierceMat = mkQuadMat({ uTex: { value: null }, uTexel: { value: 1 / size } }, /* glsl */ `
         uniform sampler2D uTex; uniform float uTexel; varying vec2 vUv;
         void main(){
           float a = texture2D(uTex, vUv).r, b = 0.0;
           for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) b = max(b, texture2D(uTex, vUv + vec2(float(i), float(j)) * uTexel).g);
           gl_FragColor = vec4(vec3(a * smoothstep(0.1, 0.4, b)), 1.0);
-        }`,
-      depthTest: false, depthWrite: false,
-    });
+        }`);
     // WIDE proximity: (1) the pierce coverage averaged over 4×4 texels (2.34 m cells) — only objects ≳ 1.5 m across
     // count, so small rocks and posts never print 16 m foam discs from the air — (2) a separable EDT of ±RW cells
-    this.wideDown = new THREE.ShaderMaterial({
-      uniforms: { uTex: { value: null }, uTexel: { value: 1 / size }, uMode: { value: 0 } },
-      vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-      fragmentShader: /* glsl */ `
+    this.#wideDown = mkQuadMat({ uTex: { value: null }, uTexel: { value: 1 / size }, uMode: { value: 0 } }, /* glsl */ `
         uniform sampler2D uTex; uniform float uTexel; varying vec2 vUv;
         uniform float uMode;
         void main(){
@@ -187,13 +202,8 @@ export class ObstacleBake {
           float a = 0.0;
           for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) a = max(a, texture2D(uTex, vUv + (vec2(float(i), float(j)) - 1.5) * uTexel).r);
           gl_FragColor = vec4(vec3(step(0.3, a)), 1.0);
-        }`,
-      depthTest: false, depthWrite: false,
-    });
-    this.wideEdt = new THREE.ShaderMaterial({
-      uniforms: { uTex: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uPass: { value: 0 } },
-      vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-      fragmentShader: /* glsl */ `
+        }`);
+    this.#wideEdt = mkQuadMat({ uTex: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uPass: { value: 0 } }, /* glsl */ `
         uniform sampler2D uTex; uniform vec2 uDir; uniform float uPass; varying vec2 vUv;
         const float RR = ${(RW + 1).toFixed(1)};
         void main(){
@@ -206,42 +216,77 @@ export class ObstacleBake {
           float b2 = RR * RR;
           for (int j = -${RW}; j <= ${RW}; j++) { float dx = texture2D(uTex, vUv + uDir * float(j)).r * RR; b2 = min(b2, dx * dx + float(j * j)); }
           gl_FragColor = vec4(vec3(1.0 - min(sqrt(b2), RR) / RR), 1.0);
-        }`,
-      depthTest: false, depthWrite: false,
-    });
-    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blurMat);
-    this.quad.frustumCulled = false;
-    this.quadScene.add(this.quad);
-    onRestore("bake", () => {
-      this.baked = new WeakMap(); this.batchedIds = new WeakMap(); this.cleared = false;
+        }`);
+    const quadGeo = this.#scope.geometry("geo.world", new THREE.PlaneGeometry(2, 2));
+    this.#quad = new THREE.Mesh(quadGeo, this.#blurMat);
+    this.#quad.frustumCulled = false;
+    this.#quadScene.add(this.#quad);
+    this.#unregRestore = onRestore("bake", () => {
+      if (this.#scope.isDisposed) return;
+      this.releaseScratch(false);
+      this.#baked = new WeakMap(); this.#batchedIds = new WeakMap(); this.#cleared = false;
       if (this.bakes > 0) this.bake(true);
     });
+    this.#scope.defer(() => {
+      this.#unregRestore();
+      this.#accumScope = null;
+      this.#wideScope = null;
+      this.#rtA = this.#rtW2 = null;
+    });
+  }
+
+  #rt(rtScope: Scope, s: number, name?: string, format: THREE.PixelFormat = THREE.RGBAFormat): THREE.WebGLRenderTarget {
+    const t = rtScope.target(new THREE.WebGLRenderTarget(s, s, format === THREE.RGBAFormat ? this.#rtOpts : { ...this.#rtOpts, format }));
+    if (name) t.texture.name = name;
+    return t;
+  }
+
+  #renderQuad(mat: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget) {
+    this.#quad.material = mat;
+    this.#renderer.setRenderTarget(target);
+    this.#renderer.render(this.#quadScene, this.#quadCam);
+  }
+
+  releaseScratch(keepWide = false) {
+    this.#accumScope = dropScope(this.#accumScope);
+    this.#rtA = null;
+    if (!keepWide) this.releaseWide();
+  }
+
+  releaseWide() {
+    this.#wideScope = dropScope(this.#wideScope);
+    this.#rtW2 = null;
+  }
+
+  dispose() {
+    if (!this.#scope.isDisposed) this.#scope.dispose();
   }
 
   /** the WIDE proximity read back to the CPU (RGBA8 rows, 1024² → 4 MB; R = proximity, ≈ 1 at a big object → 0 at ~16 m),
    *  once per bake — spray.ts picks its spawn points on the windward faces of sea stacks and big rocks from it */
-  wideCells(): { cells: Uint8Array; size: number } | null {
-    if (this.bakes === 0) return null;
-    const r = this.renderer, gl = r.getContext() as WebGL2RenderingContext;
-    const size = this.rtW2.width, cells = new Uint8Array(size * size * 4);
+  wideCells(releaseAfter = false): { cells: Uint8Array; size: number } | null {
+    if (this.#scope.isDisposed || !this.bakes || !this.#rtW2) return null;
+    const r = this.#renderer, gl = r.getContext() as WebGL2RenderingContext;
+    const size = this.#rtW2.width, cells = new Uint8Array(size * size * 4);
     const prev = r.getRenderTarget();
-    r.setRenderTarget(this.rtW2);
+    r.setRenderTarget(this.#rtW2);
     gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, cells);
     r.setRenderTarget(prev);
+    if (releaseAfter) this.releaseWide();
     return { cells, size };
   }
 
   /** wideCells without the GPU stall (no main-thread task > 50 ms): the read goes into a pixel-pack buffer behind a
    *  fence and is collected a few frames later, once the GPU has finished the bake */
-  async wideCellsAsync(): Promise<{ cells: Uint8Array; size: number } | null> {
-    if (this.bakes === 0) return null;
-    const r = this.renderer, gl = r.getContext() as WebGL2RenderingContext;
-    if (typeof gl.fenceSync !== "function") return this.wideCells();
-    const size = this.rtW2.width, n = size * size * 4;
+  async wideCellsAsync(releaseAfter = true): Promise<{ cells: Uint8Array; size: number } | null> {
+    if (this.#scope.isDisposed || !this.bakes || !this.#rtW2) return null;
+    const r = this.#renderer, gl = r.getContext() as WebGL2RenderingContext;
+    if (typeof gl.fenceSync !== "function") return this.wideCells(releaseAfter);
+    const size = this.#rtW2.width, n = size * size * 4;
     const buf = gl.createBuffer(), epoch = contextEpoch();
-    if (!buf) return this.wideCells();
+    if (!buf) return this.wideCells(releaseAfter);
     const prev = r.getRenderTarget();
-    r.setRenderTarget(this.rtW2);
+    r.setRenderTarget(this.#rtW2);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
     gl.bufferData(gl.PIXEL_PACK_BUFFER, n, gl.STREAM_READ);
     gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, 0);
@@ -250,48 +295,73 @@ export class ObstacleBake {
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush();
     const t0 = performance.now();
-    while (sync && epoch === contextEpoch() && gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED && performance.now() - t0 < 5000) await new Promise((res) => setTimeout(res, 8));
-    if (gl.isContextLost() || epoch !== contextEpoch()) return null;
-    if (sync) gl.deleteSync(sync);
+    while (sync && epoch === contextEpoch() && !this.#scope.isDisposed && gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED && performance.now() - t0 < 5000) await new Promise((res) => setTimeout(res, 8));
+    const aborted = gl.isContextLost() || epoch !== contextEpoch() || this.#scope.isDisposed;
+    if (sync && !gl.isContextLost()) gl.deleteSync(sync);
+    if (aborted) { if (!gl.isContextLost()) gl.deleteBuffer(buf); return null; }
     const cells = new Uint8Array(n);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
     gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, cells);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.deleteBuffer(buf);
+    if (releaseAfter) this.releaseWide();
     return { cells, size };
   }
 
   /** the registered-foam mask to composite into the result (see FoamMask) */
-  setMask(t: THREE.Texture) { this.mask = t; }
+  setMask(t: THREE.Texture) { this.#mask = t; }
+
+  #accum(): THREE.WebGLRenderTarget {
+    return this.#rtA ?? (this.#rtA = this.#rt(this.#accumScope ?? (this.#accumScope = this.#scope.child("accum")), this.#size, "water-obstacle-raw", THREE.RGFormat));
+  }
+
+  #copyPrev(scope: Scope): THREE.WebGLRenderTarget {
+    const prevRt = this.#rt(scope, this.#blurSize, undefined, THREE.RGFormat);
+    const bu = this.#blurMat.uniforms;
+    bu.uPrev.value = this.#rtC.texture; bu.uPass.value = 3;
+    this.#renderQuad(this.#blurMat, prevRt);
+    bu.uPrev.value = null; bu.uPass.value = 0;
+    return prevRt;
+  }
 
   /** re-run only the final (mask-compositing) pass — after registered foam shapes changed */
   recomposite() {
-    if (this.bakes === 0) return;
-    const r = this.renderer, prevRT = r.getRenderTarget();
-    this.finalPass();
-    r.setRenderTarget(prevRT);
+    if (this.#scope.isDisposed || this.bakes === 0) return;
+    const r = this.#renderer, prevRT = r.getRenderTarget();
+    const recompScope = this.#scope.child("recomp"), bu = this.#blurMat.uniforms;
+    try {
+      const prevRt = this.#copyPrev(recompScope);
+      bu.uPrev.value = prevRt.texture; bu.uMask.value = this.#mask; bu.uUseMask.value = this.#mask ? 1 : 0; bu.uPass.value = 2;
+      this.#renderQuad(this.#blurMat, this.#rtC);
+      bu.uPrev.value = bu.uMask.value = null; bu.uUseMask.value = bu.uPass.value = 0;
+    } finally {
+      dropScope(recompScope);
+      r.setRenderTarget(prevRT);
+    }
   }
 
-  private finalPass() {
-    const r = this.renderer;
-    this.blurMat.uniforms.uTex.value = this.rtB.texture; this.blurMat.uniforms.uDir.value.set(0, 1 / this.rtB.width);
-    this.blurMat.uniforms.uMask.value = this.mask; this.blurMat.uniforms.uUseMask.value = this.mask ? 1 : 0;
-    this.blurMat.uniforms.uPass.value = 1;
-    r.setRenderTarget(this.rtC); r.render(this.quadScene, this.quadCam);
-    this.blurMat.uniforms.uUseMask.value = 0;
+  #finalPass(rtB: THREE.WebGLRenderTarget, rtW2: THREE.WebGLRenderTarget, prevTex: THREE.Texture | null) {
+    const bu = this.#blurMat.uniforms;
+    bu.uTex.value = rtB.texture; bu.uDir.value.set(0, 1 / rtB.width);
+    bu.uWide.value = rtW2.texture;
+    bu.uMask.value = this.#mask; bu.uUseMask.value = this.#mask ? 1 : 0;
+    bu.uPrev.value = prevTex; bu.uHasPrev.value = prevTex ? 1 : 0;
+    bu.uPass.value = 1;
+    this.#renderQuad(this.#blurMat, this.#rtC);
+    bu.uUseMask.value = bu.uHasPrev.value = 0; bu.uPrev.value = bu.uMask.value = bu.uTex.value = bu.uWide.value = null;
   }
 
   /** what has been baked: object → instance count at its bake (the bake ACCUMULATES: other areas distance-cull and
    *  LOD-switch their props every frame, so whatever was visible at one bake may be hidden at the next — every static
    *  prop that is ever drawn gets baked once and keeps its ring) */
-  private baked = new WeakMap<THREE.Object3D, number>();
-  private cleared = false;
-  private skip = new WeakSet<THREE.Object3D>();
+  #baked = new WeakMap<THREE.Object3D, number>();
+  #cleared = false;
+  #skip = new WeakSet<THREE.Object3D>();
   /** re-bakes each already-baked object has triggered (dynamic objects stop triggering after 2) */
-  private trig = new WeakMap<THREE.Object3D, number>();
+  #trig = new WeakMap<THREE.Object3D, number>();
 
   /** a mesh the bake should render: not terrain/water/sky, opaque, not skinned (kongs move), in the waterline slab */
-  private relevant(o: THREE.Object3D): boolean {
+  #relevant(o: THREE.Object3D): boolean {
     const m = o as THREE.Mesh;
     const inst = (o as THREE.InstancedMesh).isInstancedMesh || (o as THREE.BatchedMesh).isBatchedMesh;
     if (!(m.isMesh || inst) || (o as THREE.SkinnedMesh).isSkinnedMesh) return false;
@@ -320,17 +390,17 @@ export class ObstacleBake {
     }
     return true;
   }
-  private countOf(o: THREE.Object3D) { return (o as THREE.InstancedMesh).isInstancedMesh ? (o as THREE.InstancedMesh).count : 1; }
+  #countOf(o: THREE.Object3D) { return (o as THREE.InstancedMesh).isInstancedMesh ? (o as THREE.InstancedMesh).count : 1; }
   /** BatchedMesh (TownLod & co. switch LOD tiers per INSTANCE by camera distance): which instance ids have been baked.
    *  A batch counts as fresh while any currently visible instance was never baked (the near tier of a building the
    *  camera walks up to after the first bake) */
-  private batchedIds = new WeakMap<THREE.Object3D, Uint8Array>();
-  private batchedFresh(o: THREE.Object3D, mark: boolean): boolean {
+  #batchedIds = new WeakMap<THREE.Object3D, Uint8Array>();
+  #batchedFresh(o: THREE.Object3D, mark: boolean): boolean {
     const bm = o as THREE.BatchedMesh & { instanceCount?: number; maxInstanceCount?: number; _instanceInfo?: Array<{ visible: boolean; active: boolean }> };
     const info = bm._instanceInfo;
     if (!Array.isArray(info)) return false;
-    let ids = this.batchedIds.get(o);
-    if (!ids || ids.length < info.length) { const n = new Uint8Array(info.length); if (ids) n.set(ids); ids = n; this.batchedIds.set(o, ids); }
+    let ids = this.#batchedIds.get(o);
+    if (!ids || ids.length < info.length) { const n = new Uint8Array(info.length); if (ids) n.set(ids); ids = n; this.#batchedIds.set(o, ids); }
     let fresh = false;
     for (let i = 0; i < info.length; i++) {
       const e = info[i];
@@ -343,46 +413,50 @@ export class ObstacleBake {
 
   /** bake if any relevant visible prop was never baked (late async loads, LOD switches, distance-culled groups coming
    *  into view) — or always when force (then from scratch). Cheap check: one traverse of the visible scene */
-  maybeBake(force = false) {
+  maybeBake(force = false, keepWide = false) {
+    if (this.#scope.isDisposed) return false;
     if (!force) {
+      if (this.bakes > 0 && performance.now() - this.#lastBakeMs < MIN_REBAKE_MS) return false;
       let fresh = false, culprit: THREE.Object3D | null = null;
-      this.scene.traverseVisible((o) => {
-        if (fresh || this.skip.has(o)) return;
-        if ((o as THREE.BatchedMesh).isBatchedMesh && this.baked.has(o)) { if (this.batchedFresh(o, false)) fresh = true; return; }
-        if ((this.baked.get(o) ?? -1) >= this.countOf(o)) return;
-        if (this.relevant(o)) { fresh = true; culprit = o; } else this.skip.add(o);   // (static props: irrelevant once, irrelevant always)
+      this.#scene.traverseVisible((o) => {
+        if (fresh || this.#skip.has(o)) return;
+        if ((o as THREE.BatchedMesh).isBatchedMesh && this.#baked.has(o)) { if (this.#batchedFresh(o, false)) fresh = true; return; }
+        if ((this.#baked.get(o) ?? -1) >= this.#countOf(o)) return;
+        if (this.#relevant(o)) { fresh = true; culprit = o; } else this.#skip.add(o);   // (static props: irrelevant once, irrelevant always)
       });
       if (!fresh) return false;
       // (a live match re-baked ~1×/s — 7 ms bakes, 20-50 ms frames contended. An object
       //  that was baked before and whose drawn count grew AGAIN is dynamic (instanced FX, loot, debris): after its 2nd
       //  re-trigger it never triggers a bake again. Every static prop is still baked once when it first shows up)
       const c = culprit as THREE.Object3D | null;
-      if (c && this.baked.has(c)) {
-        const n = (this.trig.get(c) ?? 0) + 1;
-        this.trig.set(c, n);
-        if (n > 2) { this.skip.add(c); return false; }
+      if (c && this.#baked.has(c)) {
+        const n = (this.#trig.get(c) ?? 0) + 1;
+        this.#trig.set(c, n);
+        if (n > 2) { this.#skip.add(c); return false; }
       }
     }
-    this.bake(force);
+    this.bake(force, undefined, false, keepWide);
     return true;
   }
 
   /** the first bake compiles the override program once per object kind (mesh / instanced / batched): ~30 ms each
    *  on ANGLE — together one 100+ ms task. Warm them one kind per frame (a throw-away bake of only that kind) first */
   async warm(nextFrame: () => Promise<void>) {
+    if (this.#scope.isDisposed) return;
     // (the first render of each object with the override program sets up its binding state — hundreds of meshes in
     // one frame were a 50-130 ms task: warm them in chunks of ~60 objects, one chunk per frame)
     const list: THREE.Object3D[] = [];
-    this.scene.traverseVisible((o) => { if (((o as THREE.Mesh).isMesh || (o as THREE.BatchedMesh).isBatchedMesh) && this.relevant(o)) list.push(o); });
+    this.#scene.traverseVisible((o) => { if (((o as THREE.Mesh).isMesh || (o as THREE.BatchedMesh).isBatchedMesh) && this.#relevant(o)) list.push(o); });
     const kinds: Array<(o: THREE.Object3D) => boolean> = [];
     for (let i = 0; i < list.length; i += 60) { const set = new Set(list.slice(i, i + 60)); kinds.push((o) => set.has(o)); }
     const ms: number[] = [];
-    for (const k of kinds) { const t = performance.now(); this.bake(true, k, true); ms.push(Math.round(performance.now() - t)); await nextFrame(); }
+    for (const k of kinds) { if (this.#scope.isDisposed) return; const t = performance.now(); this.bake(true, k, true); ms.push(Math.round(performance.now() - t)); await nextFrame(); }
     (window as unknown as { __krWaterWarm?: number[] }).__krWaterWarm = ms;
   }
 
-  bake(fromScratch = true, only?: (o: THREE.Object3D) => boolean, warmOnly = false) {
-    const r = this.renderer, scene = this.scene;
+  bake(fromScratch = true, only?: (o: THREE.Object3D) => boolean, warmOnly = false, keepWide = false) {
+    if (this.#scope.isDisposed) return;
+    const r = this.#renderer, scene = this.#scene;
     const hidden: THREE.Object3D[] = [], drawn: THREE.Object3D[] = [];
     scene.updateMatrixWorld();
     scene.traverse((o) => {
@@ -390,82 +464,76 @@ export class ObstacleBake {
       const m = o as THREE.Mesh;
       const isMesh = m.isMesh || (o as THREE.InstancedMesh).isInstancedMesh || (o as THREE.BatchedMesh).isBatchedMesh;
       if (!isMesh) return;
-      if (this.relevant(o) && (!only || only(o))) drawn.push(o); else { o.visible = false; hidden.push(o); }
+      if (this.#relevant(o) && (!only || only(o))) drawn.push(o); else { o.visible = false; hidden.push(o); }
     });
     // (warm-up: the programs only — one slab, one shear; nothing is marked baked)
-    if (warmOnly) {
-      const prevRT = r.getRenderTarget(), prevOverride = scene.overrideMaterial, prevBg = scene.background, prevEnv = scene.environment;
-      const prevShadow = r.shadowMap.enabled, prevAuto = r.shadowMap.autoUpdate;
-      scene.overrideMaterial = this.override; scene.background = null; scene.environment = null;
-      r.shadowMap.enabled = false; r.shadowMap.autoUpdate = false;
-      r.setRenderTarget(this.rtA);
-      if (drawn.length) r.render(scene, this.cam);
-      scene.overrideMaterial = prevOverride; scene.background = prevBg; scene.environment = prevEnv;
-      r.shadowMap.enabled = prevShadow; r.shadowMap.autoUpdate = prevAuto;
-      r.setRenderTarget(prevRT);
-      for (const o of hidden) o.visible = true;
-      this.cleared = false;
-      return;
-    }
-    const prevRT = r.getRenderTarget(), prevOverride = scene.overrideMaterial, prevBg = scene.background, prevEnv = scene.environment;
-    const prevShadow = r.shadowMap.enabled, prevAuto = r.shadowMap.autoUpdate, prevXR = r.xr.enabled;
-    scene.overrideMaterial = this.override; scene.background = null; scene.environment = null;
-    r.shadowMap.enabled = false; r.shadowMap.autoUpdate = false; r.xr.enabled = false;
-    r.setRenderTarget(this.rtA);
-    if (fromScratch || !this.cleared) { r.setClearColor(0x000000, 1); r.clear(true, false, false); this.cleared = true; }
-    const prevAutoClear = r.autoClear; r.autoClear = false;
-    // two sheared projections: view x/y += k·(world y) along two diagonals (k = 1 → a 1.45 m slab gives 1.45 m)
-    const base = this.cam.projectionMatrix.clone();
-    // (shear 0.3: a vertical wall still gets ~0.4 m ≈ ⅔ texel of footprint, while a rock or sea stack no longer smears
-    // into a 4-armed X or an inflated blob — the white "stars", squares and saucers around small rocks)
-    const K = 0.3;
-    const half = this.cam.right;
-    for (const [slab, col] of [[ABOVE, 0xff0000], [BELOW, 0x00ff00]] as const) {
-      // orthographic slab y ∈ [lo, hi] (camera at y = 40 looking down); the colour channel says which slab
-      const ortho = new THREE.Matrix4().makeOrthographic(-half, half, half, -half, 40 - slab[1], 40 - slab[0]);
-      (this.override.uniforms.uCol.value as THREE.Color).setHex(col);
-      for (const [kx, ky] of [[K, K], [K, -K]]) {
-        const S = new THREE.Matrix4().set(1, 0, kx, 40 * kx, 0, 1, ky, 40 * ky, 0, 0, 1, 0, 0, 0, 0, 1);
-        this.cam.projectionMatrix.multiplyMatrices(ortho, S);
-        this.cam.projectionMatrixInverse.copy(this.cam.projectionMatrix).invert();
-        r.render(scene, this.cam);
+    const prevRT = r.getRenderTarget(), prevOv = scene.overrideMaterial, prevBg = scene.background, prevEnv = scene.environment;
+    const prevSh = r.shadowMap.enabled, prevSa = r.shadowMap.autoUpdate, prevXr = r.xr.enabled, prevAc = r.autoClear;
+    scene.background = scene.environment = null; r.shadowMap.enabled = r.shadowMap.autoUpdate = r.xr.enabled = false;
+    let passScope: Scope | null = null;
+    try {
+      if (warmOnly) {
+        scene.overrideMaterial = this.#override;
+        r.setRenderTarget(this.#accum());
+        if (drawn.length) r.render(scene, this.#cam);
+        return;
       }
+      passScope = this.#scope.child("bake-pass");
+      const rtPrev = !fromScratch && this.bakes > 0 && !this.#rtA ? this.#copyPrev(passScope) : null;
+      const rtA = this.#accum();
+      const rtP = this.#rt(passScope, this.#size, "water-obstacle-pierce");
+      const rtB = this.#rt(passScope, this.#blurSize);
+      const rtW1 = this.#rt(passScope, this.#wideSize);
+      const rtW2 = this.#rtW2 ?? (this.#rtW2 = this.#rt(this.#wideScope ?? (this.#wideScope = this.#scope.child("wide")), this.#wideSize));
+      scene.overrideMaterial = this.#override;
+      r.setRenderTarget(rtA);
+      if (fromScratch || !this.#cleared) { r.setClearColor(0x000000, 1); r.clear(true, false, false); this.#cleared = true; }
+      r.autoClear = false;
+      // two sheared projections: view x/y += k·(world y) along two diagonals (k = 1 → a 1.45 m slab gives 1.45 m)
+      _base.copy(this.#cam.projectionMatrix);
+      // (shear 0.3: a vertical wall still gets ~0.4 m ≈ ⅔ texel of footprint, while a rock or sea stack no longer smears
+      // into a 4-armed X or an inflated blob — the white "stars", squares and saucers around small rocks)
+      const K = 0.3, half = this.#cam.right;
+      for (const [slab, col] of [[ABOVE, 0xff0000], [BELOW, 0x00ff00]] as const) {
+        // orthographic slab y ∈ [lo, hi] (camera at y = 40 looking down); the colour channel says which slab
+        _ortho.makeOrthographic(-half, half, half, -half, 40 - slab[1], 40 - slab[0]);
+        (this.#override.uniforms.uCol.value as THREE.Color).setHex(col);
+        for (const [kx, ky] of [[K, K], [K, -K]]) {
+          _shear.set(1, 0, kx, 40 * kx, 0, 1, ky, 40 * ky, 0, 0, 1, 0, 0, 0, 0, 1);
+          this.#cam.projectionMatrix.multiplyMatrices(_ortho, _shear);
+          this.#cam.projectionMatrixInverse.copy(this.#cam.projectionMatrix).invert();
+          r.render(scene, this.#cam);
+        }
+      }
+      (this.#override.uniforms.uCol.value as THREE.Color).setHex(0xffffff);
+      this.#cam.projectionMatrix.copy(_base); this.#cam.projectionMatrixInverse.copy(_base).invert();
+      scene.overrideMaterial = null; r.autoClear = prevAc;
+      // (anything that was hidden by an ancestor is simply not marked: it gets its turn when it shows up)
+      for (const o of drawn) {
+        let vis = true; o.traverseAncestors((a) => { if (!a.visible) vis = false; });
+        if (!vis) continue;
+        this.#baked.set(o, this.#countOf(o));
+        if ((o as THREE.BatchedMesh).isBatchedMesh) { if (fromScratch) this.#batchedIds.delete(o); this.#batchedFresh(o, true); }
+      }
+      // pierce A → P, then the wide & separable distance transforms P → W1/W2, P → B → C
+      const wd = this.#wideDown.uniforms, we = this.#wideEdt.uniforms, bu = this.#blurMat.uniforms;
+      const run = (m: THREE.ShaderMaterial, t: THREE.Texture, dst: THREE.WebGLRenderTarget) => { m.uniforms.uTex.value = t; this.#renderQuad(m, dst); };
+      run(this.#pierceMat, rtA.texture, rtP); this.#pierceMat.uniforms.uTex.value = null;
+      wd.uTexel.value = 1 / rtP.width; wd.uMode.value = 0; run(this.#wideDown, rtP.texture, rtW1);
+      wd.uTexel.value = 1 / rtW1.width; wd.uMode.value = 1; run(this.#wideDown, rtW1.texture, rtW2); wd.uTex.value = null;
+      we.uDir.value.set(1 / rtW1.width, 0); we.uPass.value = 0; run(this.#wideEdt, rtW2.texture, rtW1);
+      we.uDir.value.set(0, 1 / rtW1.width); we.uPass.value = 1; run(this.#wideEdt, rtW1.texture, rtW2); we.uTex.value = null;
+      bu.uDir.value.set(1 / rtB.width, 0); bu.uPass.value = 0; run(this.#blurMat, rtP.texture, rtB);
+      this.#finalPass(rtB, rtW2, rtPrev ? rtPrev.texture : null);
+      this.#lastBakeMs = performance.now();
+      this.bakes++;
+    } finally {
+      r.autoClear = prevAc; scene.overrideMaterial = prevOv; scene.background = prevBg; scene.environment = prevEnv;
+      r.shadowMap.enabled = prevSh; r.shadowMap.autoUpdate = prevSa; r.xr.enabled = prevXr; r.setRenderTarget(prevRT);
+      for (const o of hidden) o.visible = true;
+      dropScope(passScope);
+      this.#cleared = false;
+      if (!warmOnly) this.releaseScratch(keepWide);
     }
-    (this.override.uniforms.uCol.value as THREE.Color).setHex(0xffffff);
-    this.cam.projectionMatrix.copy(base); this.cam.projectionMatrixInverse.copy(base).invert();
-    r.autoClear = prevAutoClear;
-    scene.overrideMaterial = prevOverride; scene.background = prevBg; scene.environment = prevEnv;
-    r.shadowMap.enabled = prevShadow; r.shadowMap.autoUpdate = prevAuto; r.xr.enabled = prevXR;
-    for (const o of hidden) o.visible = true;
-    // (anything that was hidden by an ancestor is simply not marked: it gets its turn when it shows up)
-    for (const o of drawn) {
-      let vis = true; o.traverseAncestors((a) => { if (!a.visible) vis = false; });
-      if (!vis) continue;
-      this.baked.set(o, this.countOf(o));
-      if ((o as THREE.BatchedMesh).isBatchedMesh) { if (fromScratch) this.batchedIds.delete(o); this.batchedFresh(o, true); }
-    }
-    // pierce A → P, then the separable distance transform P → B → C
-    this.quad.material = this.pierceMat;
-    this.pierceMat.uniforms.uTex.value = this.rtA.texture;
-    r.setRenderTarget(this.rtP); r.render(this.quadScene, this.quadCam);
-    // the wide proximity P → W1 (4×4 max) → W2 (size filter) → W1 (EDT x) → W2 (EDT y) = the result
-    const wd = this.wideDown.uniforms;
-    this.quad.material = this.wideDown; wd.uTex.value = this.rtP.texture; wd.uTexel.value = 1 / this.rtP.width; wd.uMode.value = 0;
-    r.setRenderTarget(this.rtW1); r.render(this.quadScene, this.quadCam);
-    wd.uTex.value = this.rtW1.texture; wd.uTexel.value = 1 / this.rtW1.width; wd.uMode.value = 1;
-    r.setRenderTarget(this.rtW2); r.render(this.quadScene, this.quadCam);
-    this.quad.material = this.wideEdt;
-    this.wideEdt.uniforms.uTex.value = this.rtW2.texture; this.wideEdt.uniforms.uDir.value.set(1 / this.rtW1.width, 0); this.wideEdt.uniforms.uPass.value = 0;
-    r.setRenderTarget(this.rtW1); r.render(this.quadScene, this.quadCam);
-    this.wideEdt.uniforms.uTex.value = this.rtW1.texture; this.wideEdt.uniforms.uDir.value.set(0, 1 / this.rtW1.width); this.wideEdt.uniforms.uPass.value = 1;
-    r.setRenderTarget(this.rtW2); r.render(this.quadScene, this.quadCam);
-    this.quad.material = this.blurMat;
-    const texel = 1 / this.rtB.width;
-    this.blurMat.uniforms.uTex.value = this.rtP.texture; this.blurMat.uniforms.uDir.value.set(texel, 0);
-    this.blurMat.uniforms.uPass.value = 0;
-    r.setRenderTarget(this.rtB); r.render(this.quadScene, this.quadCam);
-    this.finalPass();
-    r.setRenderTarget(prevRT);
-    this.bakes++;
   }
 }
