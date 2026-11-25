@@ -1081,7 +1081,7 @@ export class GameRender implements EventSink {
     const want = preferences.value.reducedMotion ? 0 : p.st === PS.Freefall ? Math.min(1, Math.max(0, (sp3 - 20) / 45)) : p.st === PS.Glide ? Math.min(0.35, sp3 / 90) : 0;
     const su = this.streakU; su.uAmt.value += (want - su.uAmt.value) * Math.min(1, dt * 4);
     this.streaks.visible = su.uAmt.value > 0.01;
-    if (this.streaks.visible) { su.uCam.value.copy(cam.position); su.uVel.value.set(p.vx, p.vy, p.vz); su.uTime.value = t; }
+    if (this.streaks.visible) { this.streaks.renderOrder = 11; su.uCam.value.copy(cam.position); su.uVel.value.set(p.vx, p.vy, p.vz); su.uTime.value = t; }
     this.syncViewModel();
     // (treading water with the gun up: no walk bob, no airborne sag — the camera rides the water instead)
     this.kits.viewModel.update(dt, casterHands ?? { speed: p.st === PS.Ride || p.swim ? 0 : Math.hypot(p.vx, p.vz), grounded: p.grounded || p.swim, sprint: p.sprint && !p.swim, crouch: p.crouch, lookDX: this.input.dx, lookDY: this.input.dy });
@@ -2189,7 +2189,7 @@ export class GameRender implements EventSink {
       fragmentShader: /* glsl */ `varying float vA; varying float vU; varying float vS;
         void main() { float k = vA * (1.0 - vU) * (1.0 - vS * vS); gl_FragColor = vec4(vec3(0.86, 0.93, 1.0) * k * 0.55, k); }`,
     });
-    const m = new THREE.Mesh(g, mat); m.name = "drop-wind"; m.frustumCulled = false; m.renderOrder = 5; m.visible = false;
+    const m = new THREE.Mesh(g, mat); m.name = "drop-wind"; m.frustumCulled = false; m.renderOrder = 11; m.visible = false;
     this.engine.scene.add(m); this.windMesh = m;
     return m;
   }
@@ -2818,7 +2818,7 @@ function buildStreaks(n: number, u: Record<string, THREE.IUniform>): THREE.Mesh 
       }`,
     fragmentShader: /* glsl */ `varying float vA; void main() { gl_FragColor = vec4(vec3(0.92, 0.95, 1.0) * vA * 0.55, vA * 0.55); }`,
   });
-  const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = 5; mesh.visible = false; mesh.name = "wind-streaks";
+  const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = 11; mesh.visible = false; mesh.name = "wind-streaks";
   return mesh;
 }
 export type { Player };

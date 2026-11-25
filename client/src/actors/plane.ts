@@ -656,7 +656,7 @@ function buildEngine(cowlM: THREE.Material, nacM: THREE.Material, darkM: THREE.M
   const hubC = new THREE.CylinderGeometry(0.36, 0.4, 0.3, 20); hubC.rotateX(Math.PI / 2);
   const colorAttr = new Float32Array(hubC.attributes.position.count * 3).fill(0.12); hubC.setAttribute("color", new THREE.BufferAttribute(colorAttr, 3));
   const bladeMesh = new THREE.Mesh(merge([...blades, hubC], true), bladeM); bladeMesh.castShadow = true;
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(PROP_R + 0.03, 64), discM); disc.renderOrder = 2;
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(PROP_R + 0.03, 64), discM); disc.renderOrder = 9.5;
   prop.add(bladeMesh, disc);
   // brown cowling lip ring (reads from behind as the outline of the cowl mouth around the prop disc)
   const lip = new THREE.TorusGeometry(0.97, 0.075, 10, 56); lip.translate(0, 0, 0.07);

@@ -528,8 +528,10 @@ export class Clouds {
       mesh.rotation.y = spec.rot;
       mesh.scale.setScalar(spec.w);
       // AFTER the water (renderOrder 0, written opaque in the transparent pass — it used to paint over every cloud in
-      // front of the sea), BEFORE every other transparent (≥ 1: FX, storm wall, glass, beams)
-      mesh.renderOrder = 0.5;
+      // front of the sea); distant horizon clouds stay at 0.5 (before storm 0.7 and island FX 1..8), while aerial puffs
+      // over the island sort at 8.5 (after island rivers/falls/mist 1..8, before markers 9 / plane prop 9.5 / wind 11)
+      const initOrder = spec.tag === "aerial" ? 8.5 : 0.5;
+      mesh.renderOrder = initOrder;
       mesh.castShadow = false; mesh.receiveShadow = false;
       mesh.userData.castShadow = false; mesh.userData.receiveShadow = false;
       mesh.frustumCulled = true;
@@ -553,7 +555,7 @@ export class Clouds {
       const bb = new THREE.Mesh(BB_GEO, bbMat);
       bb.name = `cloud-imp-${spec.kind}`;
       bb.matrixAutoUpdate = false;
-      bb.renderOrder = 0.5;
+      bb.renderOrder = initOrder;
       bb.castShadow = false; bb.receiveShadow = false;
       bb.userData.castShadow = false; bb.userData.receiveShadow = false;
       bb.visible = false;
@@ -704,6 +706,9 @@ export class Clouds {
       // render needs it)
       const cr0 = Math.cos(inst.spec.rot), sr0 = Math.sin(inst.spec.rot), w0 = inst.spec.w, cl = inst.cLocal;
       const C = inst.C.set(px + (cr0 * cl.x + sr0 * cl.z) * w0, inst.spec.y + cl.y * w0, pz + (-sr0 * cl.x + cr0 * cl.z) * w0);
+      const ro = inst.spec.tag === "aerial" || (cam.position.y > C.y + 10 && C.x * C.x + C.z * C.z < 1800 * 1800) ? 8.5 : 0.5;
+      m.renderOrder = ro;
+      inst.bb.renderOrder = ro;
       const R = 0.5 * inst.vol.bmin.distanceTo(inst.vol.bmax) * inst.spec.w;
       const dx = cam.position.x - m.position.x, dy = cam.position.y - m.position.y, dz = cam.position.z - m.position.z;
       const cr = Math.cos(inst.spec.rot), sr = Math.sin(inst.spec.rot), iw = 1 / inst.spec.w;

@@ -102,7 +102,7 @@ function dress(scene: THREE.Group, burnt: Map<THREE.Material, THREE.Material>, g
     const m = o as THREE.Mesh; if (!m.isMesh) return;
     const at = ++mesh;
     m.castShadow = true; m.receiveShadow = true; m.userData.farShadow = false;
-    if (m.name === "glass" || (m.material as THREE.Material).name === "glass") { m.material = glass; m.castShadow = false; m.renderOrder = 3; return; }
+    if (m.name === "glass" || (m.material as THREE.Material).name === "glass") { m.material = glass; m.castShadow = false; m.renderOrder = 9.3; return; }
     const src = m.material as THREE.MeshStandardMaterial;
     for (const slot of SLOTS) { const t = src[slot]; if (t && !resources.ownerOf(t)) resources.root.texture("tex.actor", releaseAfterUpload(t, () => sourceAgain(url, at, slot))); }
     if (src.name === "fin_decal") {
@@ -111,7 +111,7 @@ function dress(scene: THREE.Group, burnt: Map<THREE.Material, THREE.Material>, g
       src.transparent = true; src.depthWrite = false; src.side = THREE.FrontSide;   // (one-sided: the far side's logo must not show through the thin fin)
       if (src.map) src.map.anisotropy = 8;
       src.roughness = 0.55; src.envMapIntensity = 0.6;
-      m.castShadow = false; m.renderOrder = 1;
+      m.castShadow = false; m.renderOrder = 9.1;
       // one normal for the whole sticker (the fin is a plane; per-vertex normals showed its triangles in reflections)
       const n = m.geometry.attributes.normal;
       if (n) { const a = new THREE.Vector3(), t = new THREE.Vector3(); for (let i = 0; i < n.count; i++) a.add(t.fromBufferAttribute(n, i)); a.normalize(); for (let i = 0; i < n.count; i++) n.setXYZ(i, a.x, a.y, a.z); n.needsUpdate = true; }
@@ -221,7 +221,7 @@ export function createHeli(late?: (o: THREE.Object3D) => void): TukView & { muzz
   const blur = new THREE.Mesh(new THREE.CircleGeometry(1, 48), undefined as unknown as THREE.Material);
   const tailBlur = new THREE.Mesh(new THREE.CircleGeometry(1, 32), undefined as unknown as THREE.Material);
   const flash = new THREE.Sprite(); flash.visible = false;
-  for (const m of [blur, tailBlur]) { m.castShadow = false; m.receiveShadow = false; m.renderOrder = 2; m.userData.farShadow = false; m.visible = false; }
+  for (const m of [blur, tailBlur]) { m.castShadow = false; m.receiveShadow = false; m.renderOrder = 9.2; m.userData.farShadow = false; m.visible = false; }
   /** I = the near model (marks, the gunner's view), F = the far one (when its file loaded) */
   let I: Inst | null = null, F: Inst | null = null, wreck = false, far = false;
   /** the local door gunner's view: the gun held under the camera (gunnerView), and when that was last asked for */
