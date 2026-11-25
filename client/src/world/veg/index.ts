@@ -286,7 +286,7 @@ class VegSystem implements VegApi {
     this.impostors.underFar = 330 * q.dist;
     if (this.splatsSmall) this.splatsSmall.underFar = this.impostors.underFar;
     // splats per px² of a plant's screen size by tier (the far tier's GPU cost; low / medium switch to splats nearer)
-    { const d = { epic: 1, high: 1, medium: 0.75, low: 0.5 }[q.tier] ?? 1; this.splats?.setDensityK(d); this.splatsSmall?.setDensityK(d); }
+    { const d = { epic: 1, high: 1, medium: 0.85, low: 0.72 }[q.tier] ?? 1; this.splats?.setDensityK(d); this.splatsSmall?.setDensityK(d); }
     // shadow casters: every veg mesh that casts at build keeps its flag in baseCast
     const TREES = /^veg:(jungle-tree|palm|palm-leaning|mangrove|bamboo)[:|]/;
     this.ctx.scene.traverse((o) => {

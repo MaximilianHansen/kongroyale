@@ -306,7 +306,12 @@ float splNoise( vec2 p, float k ) {
 }
 `;
 
-/** the gaussian + its stochastic coverage + the level / mesh dissolves */
+/**
+ * the gaussian + its stochastic coverage + the level / mesh dissolves.
+ * Stochastic transparency uses a per-splat offset to decorrelate overlapping splats (union, not max).
+ * Without TAA (Low preset / FXAA / AA off), a flat 0.4 coverage cut turns large nearby splats into crisp geometric discs,
+ * so we perturb the contour with zero-mean multi-lobe angular harmonics scaled by screen size (far trees stay shimmer-free).
+ */
 const F_ALPHA = /* glsl */ `
 {
   vec2 dp = ( gl_PointCoord - 0.5 ) * vSplPs;
@@ -317,9 +322,16 @@ const F_ALPHA = /* glsl */ `
 #ifdef SPL_SHADOW
   if ( alpha < 0.45 ) discard;
 #else
-  // stochastic transparency: a per-splat offset decorrelates overlapping splats (their union, not their max)
-  // (no TAA — the Low preset's FXAA: a plain 0.4 coverage cut, no stipple)
-  float thr = uSplTune.w > 0.5 && uVegTemporal.x > 0.5 ? fract( splNoise( gl_FragCoord.xy, 0.0 ) + vSplRank ) : 0.4;
+  float thr;
+  if ( uSplTune.w > 0.5 && uVegTemporal.x > 0.5 ) {
+    thr = fract( splNoise( gl_FragCoord.xy, 0.0 ) + vSplRank );
+  } else {
+    float big = smoothstep( 3.5, 11.0, vSplPs );
+    float ang = atan( dp.y, dp.x );
+    float ph = vSplRank * 6.2831853;
+    float lobe = 0.45 * sin( ang * 3.0 + ph ) + 0.35 * cos( ang * 5.0 - ph * 1.7 ) + 0.20 * sin( ang * 7.0 + ph * 2.9 );
+    thr = clamp( 0.41 + lobe * 0.21 * big, 0.16, 0.72 );
+  }
   if ( alpha < thr ) discard;
   // level dissolve: [tUp, tLow) of an independent noise
   float nl = splNoise( gl_FragCoord.xy + vec2( 31.0, 7.0 ), 1.0 );
