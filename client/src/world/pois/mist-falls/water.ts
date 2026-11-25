@@ -154,6 +154,9 @@ export function buildSand(ctx: WorldCtx, root: THREE.Group, R: FallsResolved) {
   const uP = patches.map((q) => new THREE.Vector4(q.cx, q.cz, 1 / q.rx, 1 / q.rz)), uQ = patches.map((q) => new THREE.Vector4(Math.cos(q.yaw), Math.sin(q.yaw), q.maxY, q.bar ? 1 : 0));
   const mk = (mound: boolean) => {
     const mat = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.95, vertexColors: true, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    // the terrain-grid sand relies on its custom per-fragment ellipse mask (and deepUnder cuts out the channel center),
+    // so baking it without that shader turns the river valley into a jagged white ribbon with a dark hole down the middle
+    if (!mound) mat.userData.farSkip = true;
     mat.color.setRGB(1.0, 0.98, 0.95);   // the island's cream beach sand (warm cream sandbars)
     sand.then((s) => { mat.map = s.map; mat.normalMap = s.normalMap; mat.roughnessMap = s.roughnessMap; mat.normalScale.setScalar(0.7); mat.map.repeat.set(1 / 4.6, 1 / 4.6); mat.needsUpdate = true; });
     mat.onBeforeCompile = (sh) => {

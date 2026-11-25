@@ -124,6 +124,18 @@ export function waterMaterial(o: WaterOpts = {}): THREE.MeshStandardMaterial {
   };
   o.bed?.map.then((b) => { uniforms.uBed.value = b.map; });
   m.userData.water = uniforms;
+  const shallowC = o.bed ? new THREE.Color("#5ee2dc") : (o.shallow ? new THREE.Color(o.shallow) : WATER.shallow);
+  const midC = o.bed ? new THREE.Color(o.scatter ?? "#00829c").lerp(WATER.mid, 0.52) : (o.mid ? new THREE.Color(o.mid) : WATER.mid);
+  const deepC = o.bed ? new THREE.Color(o.scatter ?? "#00829c").lerp(WATER.deep, 0.45) : (o.deep ? new THREE.Color(o.deep) : WATER.deep);
+  m.userData.farWater = {
+    kind: "surface",
+    shallow: [shallowC.r, shallowC.g, shallowC.b],
+    mid: [midC.r, midC.g, midC.b],
+    deep: [deepC.r, deepC.g, deepC.b],
+    foam: [0.92, 0.98, 1.0],
+    clarity: o.clarity ?? 1,
+    foamScale: o.foamScale ?? 1,
+  };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.defines = sh.defines || {};
@@ -429,7 +441,7 @@ export function streakTex(): THREE.CanvasTexture {
 }
 
 export function fallsMaterial(opacity = 1): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+  const m = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
     uniforms: { uTime: waterTime, uSun: waterSun, uStreak: { value: streakTex() }, uThin: { value: new THREE.Color("#5fb8cf") }, uGlass: { value: new THREE.Color("#2e9e9a") }, uOpacity: { value: opacity } },
     vertexShader: /* glsl */ `
@@ -480,6 +492,11 @@ export function fallsMaterial(opacity = 1): THREE.ShaderMaterial {
         #include <colorspace_fragment>
       }`,
   });
+  if (opacity >= 0.8) {
+    const gC = new THREE.Color("#2e9e9a"), mC = new THREE.Color("#7ecce0"), fC = new THREE.Color("#eef8fc");
+    m.userData.farWater = { kind: "falls", glass: [gC.r, gC.g, gC.b], mid: [mC.r, mC.g, mC.b], foam: [fC.r, fC.g, fC.b] };
+  }
+  return m;
 }
 
 /**

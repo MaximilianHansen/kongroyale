@@ -32,9 +32,10 @@ interface Soup { pos: number[]; col: number[]; idx: number[]; tris: number; srcT
 function extract(a: { id: string; plants: Record<string, [y: number, r: number, rgb: number[]]>; fieldMin: number }): Extracted {
   const kr = (window as unknown as { __kr: { moduleRoots(id: string): unknown[] } }).__kr;
   type M = { isMesh?: boolean; isInstancedMesh?: boolean; isBatchedMesh?: boolean; isSkinnedMesh?: boolean; visible: boolean; parent: M | null; children: M[]; layers: { mask: number }; matrixWorld: { elements: number[] }; geometry?: G; material?: Mat | Mat[]; count?: number; instanceMatrix?: { array: Float32Array }; instanceColor?: { array: Float32Array } | null; getGeometryIdAt?(i: number): number; getGeometryRangeAt?(g: number): { vertexStart: number; vertexCount: number; indexStart: number; indexCount: number }; getVisibleAt?(i: number): boolean; _instanceInfo?: Array<{ active: boolean }>; _matricesTexture?: { image: { data: Float32Array } }; _colorsTexture?: { image: { data: Float32Array } } | null; updateMatrixWorld(force: boolean): void };
-  type A = { count: number; itemSize: number; getX(i: number): number; getY(i: number): number; getZ(i: number): number; array: ArrayLike<number> | null };
+  type A = { count: number; itemSize: number; getX(i: number): number; getY(i: number): number; getZ(i: number): number; getW(i: number): number; array: ArrayLike<number> | null };
   type G = { attributes: Record<string, A>; index: A | null; drawRange: { start: number; count: number } };
-  type Mat = { visible: boolean; transparent: boolean; opacity: number; depthWrite: boolean; colorWrite: boolean; alphaTest: number; color?: { r: number; g: number; b: number }; map?: { uuid: string; image?: unknown } | null; vertexColors?: boolean; isShaderMaterial?: boolean; type: string; userData: { farColor?: number[]; jungleUniforms?: { uMoss: { value: number }; uMossCover: { value: number }; uMossColor: { value: { r: number; g: number; b: number } | number }; uMossMap: { value: { uuid: string; image?: unknown } | null }; uJNoise?: { value?: { image?: { data?: ArrayLike<number> } } } } } };
+  type FarWater = { kind: "surface" | "falls"; shallow?: number[]; mid?: number[]; deep?: number[]; glass?: number[]; foam: number[]; clarity?: number; foamScale?: number };
+  type Mat = { visible: boolean; transparent: boolean; opacity: number; depthWrite: boolean; colorWrite: boolean; alphaTest: number; color?: { r: number; g: number; b: number }; map?: { uuid: string; image?: unknown } | null; vertexColors?: boolean; isShaderMaterial?: boolean; type: string; userData: { farColor?: number[]; farSkip?: boolean; farWater?: FarWater; jungleUniforms?: { uMoss: { value: number }; uMossCover: { value: number }; uMossColor: { value: { r: number; g: number; b: number } | number }; uMossMap: { value: { uuid: string; image?: unknown } | null }; uJNoise?: { value?: { image?: { data?: ArrayLike<number> } } } } } };
   const skipped: Record<string, number> = {};
   const skip = (why: string) => { skipped[why] = (skipped[why] ?? 0) + 1; };
   const texMean = new Map<string, number[]>();
@@ -79,7 +80,7 @@ function extract(a: { id: string; plants: Record<string, [y: number, r: number, 
     let s = 0; for (let i = 0; i < noise.length; i += 4) s += smooth(a, b, noise[i] / 255);
     steps.set(key, s / (noise.length / 4)); return s / (noise.length / 4);
   };
-  const add = (g: G, m: number[], rgb: number[], tint: ArrayLike<number>, vColor: boolean, vStart: number, vCount: number, iStart: number, iCount: number) => {
+  const add = (g: G, m: number[], rgb: number[], tint: ArrayLike<number>, vColor: boolean, vStart: number, vCount: number, iStart: number, iCount: number, alphaCut = 0) => {
     const P = g.attributes.position, C = vColor ? g.attributes.color : undefined, N = moss ? g.attributes.normal : undefined, base = pos.length / 3;
     if (!P || !P.array) { skip("no-position"); return; }
     for (let i = vStart; i < vStart + vCount; i++) {
@@ -95,8 +96,56 @@ function extract(a: { id: string; plants: Record<string, [y: number, r: number, 
       if (C) { c[0] *= C.getX(i); c[1] *= C.getY(i); c[2] *= C.getZ(i); }
       col.push(c[0] * tint[0], c[1] * tint[1], c[2] * tint[2]);
     }
-    if (g.index) for (let i = iStart; i < iStart + iCount; i++) idx.push(base + g.index.getX(i) - vStart);
-    else for (let i = 0; i < vCount; i++) idx.push(base + i);
+    const cut = alphaCut > 0 && C && C.itemSize === 4 ? alphaCut * 0.5 : 0;
+    if (g.index) {
+      for (let i = iStart; i < iStart + iCount; i += 3) {
+        const a = g.index.getX(i), b = g.index.getX(i + 1), c = g.index.getX(i + 2);
+        if (cut > 0 && C!.getW(a) < cut && C!.getW(b) < cut && C!.getW(c) < cut) continue;
+        idx.push(base + a - vStart, base + b - vStart, base + c - vStart);
+      }
+    } else for (let i = 0; i < vCount; i++) idx.push(base + i);
+  };
+  const addWater = (g: G, m: number[], fw: FarWater, vCount: number, iCount: number) => {
+    const P = g.attributes.position;
+    if (!P || !P.array) { skip("no-position"); return; }
+    const D = g.attributes.depth, F = g.attributes.foam, WF = g.attributes.wfade, FL = g.attributes.fall, UV = g.attributes.uv;
+    const lerp3 = (a: number[], b: number[], t: number, out: number[]) => { out[0] = a[0] + (b[0] - a[0]) * t; out[1] = a[1] + (b[1] - a[1]) * t; out[2] = a[2] + (b[2] - a[2]) * t; };
+    const remap = new Int32Array(vCount).fill(-1), tmpC = [0, 0, 0];
+    const emit = (vi: number) => {
+      let out = remap[vi];
+      if (out >= 0) return out;
+      out = pos.length / 3;
+      remap[vi] = out;
+      const x = P.getX(vi), y = P.getY(vi), z = P.getZ(vi);
+      pos.push(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]);
+      if (fw.kind === "surface") {
+        const d = Math.max(0, D ? D.getX(vi) : 1), cl = fw.clarity ?? 1;
+        lerp3(fw.shallow!, fw.mid!, smooth(0.05, 1.3 * cl, d), tmpC);
+        lerp3(tmpC, fw.deep!, smooth(1.5 * cl, 5.5 * cl, d), tmpC);
+        if (F) lerp3(tmpC, fw.foam, smooth(0.2, 0.95, F.getX(vi) * (fw.foamScale ?? 1)) * 0.85, tmpC);
+      } else {
+        const f = Math.max(0, Math.min(1, FL ? FL.getX(vi) : 0.7));
+        lerp3(fw.glass!, fw.mid!, smooth(0.0, 0.18, f), tmpC);
+        lerp3(tmpC, fw.foam, smooth(0.15, 0.72, f), tmpC);
+      }
+      col.push(tmpC[0], tmpC[1], tmpC[2]);
+      return out;
+    };
+    const triN = g.index ? iCount : vCount;
+    for (let i = 0; i + 2 < triN; i += 3) {
+      const a = g.index ? g.index.getX(i) : i, b = g.index ? g.index.getX(i + 1) : i + 1, c = g.index ? g.index.getX(i + 2) : i + 2;
+      if (fw.kind === "surface") {
+        if (D) {
+          const d0 = D.getX(a), d1 = D.getX(b), d2 = D.getX(c);
+          if (Math.min(d0, d1, d2) < -50 || Math.max(d0, d1, d2) <= 0.02) continue;
+        }
+        if (WF && Math.max(WF.getX(a), WF.getX(b), WF.getX(c)) < 0.15) continue;
+      } else {
+        if (FL && Math.max(FL.getX(a), FL.getX(b), FL.getX(c)) < -0.45) continue;
+        if (UV && Math.min(UV.getY(a), UV.getY(b), UV.getY(c)) > 0.94) continue;
+      }
+      idx.push(emit(a), emit(b), emit(c));
+    }
   };
   let jungleNoise: ArrayLike<number> | undefined;
   const findNoise = (o: M) => { for (const x of [o.material ?? []].flat()) jungleNoise ??= x.userData.jungleUniforms?.uJNoise?.value?.image?.data; o.children.forEach(findNoise); };
@@ -118,9 +167,17 @@ function extract(a: { id: string; plants: Record<string, [y: number, r: number, 
       // a depth-only prepass (the Murk's crowns) carves the shape and the pass that shades the same geometry gives the colour
       const mat = own.colorWrite === false ? shades.get(o.geometry!) : own;
       if (!mat) { skip("depth-only"); return; }
-      // blended surfaces (water, glass, glows) stay out; an alpha-tested one is a solid cutout even when flagged transparent
-      // (the Murk's lagoon water is transparent at opacity 1 and baked as a white sheet)
-      if (own.colorWrite !== false && (!own.depthWrite || (own.transparent && !(own.alphaTest > 0)))) { skip("transparent"); return; }
+      if (mat.userData.farSkip) { skip("far-skip"); return; }
+      const fw = mat.userData.farWater;
+      // blended surfaces (glass, glows, mist) stay out; jungle water & falls opt in via farWater (filtered by depth/fall);
+      // an alpha-tested one is a solid cutout even when flagged transparent (the Murk's lagoon water is transparent at
+      // opacity 1 and baked as a white sheet)
+      if (own.colorWrite !== false && !fw && (!own.depthWrite || (own.transparent && !(own.alphaTest > 0)))) { skip("transparent"); return; }
+      const g = o.geometry, P = g.attributes.position;
+      if (!P) { skip("no-position"); return; }
+      const mw = o.matrixWorld.elements;
+      const vAll = P.count, iAll = g.index ? Math.min(g.index.count, g.drawRange.count) : 0;
+      if (fw) { addWater(g, mw, fw, vAll, iAll); return; }
       const far = mat.userData.farColor;
       if (mat.isShaderMaterial && !mat.color && !far) { skip("shader"); return; }
       const rgb = far ? far.slice(0, 3) : [mat.color?.r ?? 0.6, mat.color?.g ?? 0.6, mat.color?.b ?? 0.6];
@@ -133,11 +190,7 @@ function extract(a: { id: string; plants: Record<string, [y: number, r: number, 
         if (!noise) { skip("moss-without-noise"); moss = null; } else
         moss = { top: ju.uMoss.value * meanStep(noise, 0.62 - cover * 0.6, 0.92 - cover * 0.6), side: ju.uMoss.value * 0.35 * meanStep(noise, 0.55, 0.8), c: [mc.r * mm[0] * MOSS_GAIN, mc.g * mm[1] * MOSS_GAIN, mc.b * mm[2] * MOSS_GAIN] };
       } else moss = null;
-      const g = o.geometry, P = g.attributes.position;
-      if (!P) { skip("no-position"); return; }
       const vColor = !far && !!mat.vertexColors && !!g.attributes.color;
-      const mw = o.matrixWorld.elements;
-      const vAll = P.count, iAll = g.index ? Math.min(g.index.count, g.drawRange.count) : 0;
       if (o.isBatchedMesh) {
         const info = o._instanceInfo ?? [];
         for (let i = 0; i < info.length; i++) {
@@ -146,19 +199,19 @@ function extract(a: { id: string; plants: Record<string, [y: number, r: number, 
           const md = o._matricesTexture!.image.data;
           for (let k = 0; k < 16; k++) im16.elements[k] = md[i * 16 + k];
           const cd = o._colorsTexture?.image.data;
-          add(g, mul(mw, im16.elements, tmp.slice()), rgb, cd ? [cd[i * 4], cd[i * 4 + 1], cd[i * 4 + 2]] : WHITE, vColor, gr.vertexStart, gr.vertexCount, gr.indexStart, gr.indexCount);
+          add(g, mul(mw, im16.elements, tmp.slice()), rgb, cd ? [cd[i * 4], cd[i * 4 + 1], cd[i * 4 + 2]] : WHITE, vColor, gr.vertexStart, gr.vertexCount, gr.indexStart, gr.indexCount, own.alphaTest || 0);
         }
         return;
       }
       if (o.isInstancedMesh) {
         const n = o.count ?? 0, arr = o.instanceMatrix!.array, ic = o.instanceColor?.array, start = idx.length;
         for (let i = 0; i < n; i++) {
-          add(g, mul(mw, Array.prototype.slice.call(arr, i * 16, i * 16 + 16), tmp.slice()), rgb, ic ? [ic[i * 3], ic[i * 3 + 1], ic[i * 3 + 2]] : WHITE, vColor, 0, vAll, 0, iAll);
+          add(g, mul(mw, Array.prototype.slice.call(arr, i * 16, i * 16 + 16), tmp.slice()), rgb, ic ? [ic[i * 3], ic[i * 3 + 1], ic[i * 3 + 2]] : WHITE, vColor, 0, vAll, 0, iAll, own.alphaTest || 0);
         }
         if (n >= a.fieldMin) field.push(start, idx.length);
         return;
       }
-      add(g, mw, rgb, WHITE, vColor, 0, vAll, 0, iAll);
+      add(g, mw, rgb, WHITE, vColor, 0, vAll, 0, iAll, own.alphaTest || 0);
     };
     walk(r);
   }
@@ -235,7 +288,8 @@ function encode(s: Soup): Buffer {
 const indexPath = path.join(root, FAR_INDEX);
 const index: FarIndex = fs.existsSync(indexPath) ? JSON.parse(fs.readFileSync(indexPath, "utf8")) : { version: 1, pois: {} };
 fs.mkdirSync(path.join(root, FAR_DIR), { recursive: true });
-const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+const executablePath = arg("--executable") ?? process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+const browser = await chromium.launch({ executablePath, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
 let failed = 0;
 for (const id of ids) {
   const p = POIS.find((q) => q.id === id)!;
