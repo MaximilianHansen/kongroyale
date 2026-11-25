@@ -147,7 +147,8 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   // (economy) the Banana Stand buy menu: a purchase is a request (INV.Buy); the server decides
   const shop = createShop();
   ui.appendChild(shop.el);
-  shop.onBuy = (offer) => { if (cm && shop.stand >= 0 && cm.inventoryOp(INV.Buy, shop.stand, offer)) audio.play("pickup:weapon", { volume: 0.7 }); };
+  shop.onBuy = (offer) => { if (cm && shop.stand >= 0 && cm.inventoryOp(INV.Buy, shop.stand, offer)) { audio.play("pickup:weapon", { volume: 0.7 }); gamepads.rumble(0.18, 0.35, 70); } };
+  shop.onDeny = () => { audio.play("ui:click", { volume: 0.3, rate: 0.7 }); gamepads.rumble(0.12, 0.08, 45); };
   ui.appendChild(results.el);
 
   // ---- lobby state
@@ -557,7 +558,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     if (open) { hud.setMapOpen(false); setInvOpen(false); }
     shop.setOpen(open, stand); input.clearHeld();
     if (open && cm && render) shop.update(render.shopView());
-    if (open) { input.unlock(); audio.play("chest:open", { volume: 0.35 }); } else if (inMatch && !paused && !resultsOpen && !hud.mapOpen && !inv.open) void input.lock();
+    if (open) { input.unlock(); audio.play("chest:open", { volume: 0.35 }); } else if (inMatch && !device.pad && !paused && !resultsOpen && !hud.mapOpen && !inv.open) void input.lock();
   }
   /** the map needs the cursor (click to pin): open frees the pointer, close takes it back */
   function setMapOpen(open: boolean) {
@@ -687,6 +688,16 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     if (inMatch) {
       if (resultsOpen) return { root: results.el, back: () => {}, noBack: true };
       if (paused) return { root: pause, first: () => menu.first(), button: (b) => { if (b !== PB.MENU) return false; escapeLayer(); return true; } };
+      if (shop.open) return {
+        root: shop.el,
+        back: () => setShopOpen(false),
+        hideHints: true,
+        button: (b) => {
+          if (b === PB.MENU) { setShopOpen(false); return true; }
+          if (b !== PB.A && preferences.value.pad.binds.interact.includes(b)) { setShopOpen(false); return true; }
+          return false;
+        },
+      };
       return null;
     }
     return {
@@ -712,9 +723,14 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     if (gamepads.anyPressed()) padUnlockAudio();
     const layer = padLayer();
     padnav.update(layer, dt);
-    if (layer || !inMatch || !gamepads.connected) return;
+    if (layer) {
+      // swallow closing-button edges so leaving a menu / shop never leaks B (crouch) or X (reopen stand) into input.frame() on this frame
+      if (!padLayer()) gamepads.pressed.fill(false);
+      return;
+    }
+    if (!inMatch || !gamepads.connected) return;
     const g = gamepads;
-    if (g.pressed[PB.MENU]) { if (!resultsOpen) escapeLayer(); return; }
+    if (g.pressed[PB.MENU]) { if (!resultsOpen) escapeLayer(); g.pressed.fill(false); return; }
     if (resultsOpen || paused) return;
     // spectating on the controller: d-pad / bumpers cycle, the inventory button opens the list
     // (B closes it), the right stick looks around
@@ -729,21 +745,14 @@ export async function startGame(engine: Engine, boot: GameBoot) {
       return;
     }
     if (hud.mapOpen) {
-      if (g.pressed[PB.B] || padTook("map")) { setMapOpen(false); return; }
+      if (g.pressed[PB.B] || padTook("map")) { setMapOpen(false); g.pressed.fill(false); return; }
       const pad = preferences.value.pad, move = pad.swapSticks ? g.right : g.left, look = pad.swapSticks ? g.left : g.right;
       hud.mapPad?.(dt, { mx: move.x, my: move.y, px: look.x, py: look.y, zoom: g.rt - g.lt, place: g.pressed[PB.A], clear: g.pressed[PB.X] || g.pressed[PB.Y] });
       return;
     }
-    if (shop.open) {
-      if (g.pressed[PB.B] || padTook("interact")) { setShopOpen(false); return; }
-      if (g.pressed[PB.LEFT]) shop.padMove(-1, 0); if (g.pressed[PB.RIGHT]) shop.padMove(1, 0);
-      if (g.pressed[PB.UP]) shop.padMove(0, -1); if (g.pressed[PB.DOWN]) shop.padMove(0, 1);
-      if (g.pressed[PB.A]) shop.padSelect();
-      return;
-    }
     if (inv.open) {
-      if (g.pressed[PB.B]) { if (!inv.padCancel()) setInvOpen(false); return; }
-      if (padTook("inventory")) { setInvOpen(false); return; }
+      if (g.pressed[PB.B]) { if (!inv.padCancel()) { setInvOpen(false); g.pressed.fill(false); } return; }
+      if (padTook("inventory")) { setInvOpen(false); g.pressed.fill(false); return; }
       if (g.pressed[PB.LEFT] || g.pressed[PB.LB]) inv.padMove(-1);
       if (g.pressed[PB.RIGHT] || g.pressed[PB.RB]) inv.padMove(1);
       if (g.pressed[PB.A]) inv.padSelect();
@@ -763,7 +772,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   gamepads.onConnect = (name, family) => padnav.toast(`<b>${family === "playstation" ? "PLAYSTATION" : family === "nintendo" ? "NINTENDO" : "XBOX"}</b> CONTROLLER CONNECTED · ${name.toUpperCase().replace(/[&<>"]/g, "")}`);
   gamepads.onDisconnect = (_name, was) => {
     padnav.toast("CONTROLLER DISCONNECTED");
-    if (was && inMatch && !paused && !resultsOpen) { if (inv.open) setInvOpen(false); if (hud.mapOpen) setMapOpen(false); paused = true; input.clearHeld(); showPause(); }
+    if (was && inMatch && !paused && !resultsOpen) { if (shop.open) setShopOpen(false); if (inv.open) setInvOpen(false); if (hud.mapOpen) setMapOpen(false); paused = true; input.clearHeld(); showPause(); }
   };
   // keyboard & mouse picked up mid-match with the cursor still free: one click takes it (the game keeps running)
   const clickHint = document.createElement("div"); clickHint.className = "kr-clickhint"; clickHint.textContent = "CLICK TO AIM WITH THE MOUSE";

@@ -23,6 +23,8 @@ export interface PadLayer {
   button?: (b: number) => boolean;
   /** B does nothing here (the hint bar leaves BACK out) */
   noBack?: boolean;
+  /** this screen draws its own controller footer hints (hide the floating corner bar) */
+  hideHints?: boolean;
 }
 
 const FOCUSABLE = "button, [href], input, select, summary, [tabindex]:not([tabindex='-1'])";
@@ -150,7 +152,7 @@ export function createPadNav(pads: Gamepads) {
   return {
     /** once per frame after gamepads.poll(): drive `layer` (null = no menu is up: the game has the pad) */
     update(layer: PadLayer | null, dt: number) {
-      hintBar.classList.toggle("on", !!layer && device.pad);
+      hintBar.classList.toggle("on", !!layer && !layer.hideHints && device.pad);
       // (the game builds its layer object every frame: the root says whether it is the same screen)
       if ((layer?.root ?? null) !== lastRoot) { lastRoot = layer?.root ?? null; held = direction(); heldT = 0; nextRepeat = REPEAT_DELAY; if (!layer) setFocus(null); }
       if (!layer) { hintSig = ""; return; }

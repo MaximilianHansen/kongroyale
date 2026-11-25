@@ -1,14 +1,18 @@
 // The BANANA STAND buy menu: your wallet, the offers as cards (icon,
 // name, what it does, price), each one either ready (yellow price tag), too dear (red tag: how many Bucks short) or not
-// available right now (the reason in place of the description). Mouse click, keys 1-7, controller d-pad + A to buy, B / E
-// / Esc to leave. DOM only, rebuilt only when a value changes; the server decides every purchase (the game sends INV.Buy).
+// available right now (the reason in place of the description). Mouse click, keys 1-7, controller stick / d-pad / LB-RB
+// + A to buy, B / interact / Esc to leave. DOM only, rebuilt only when a value changes; the server decides every
+// purchase (the game sends INV.Buy).
 // Dressed as the kiosk itself: the striped awning
 // with its scallops, a coconut-wood board, the stand's little monkey shopkeeper (the same one behind the 3D counter) with
 // his line in the free slot, fruit-crate cards with price tags, and the BANANA BUCKS coin wherever money shows (ui/bucks.ts).
 import { itemIconUrl, svgGlyph } from "./icons";
 import { injectStyles, UI } from "./styles";
 import { bucksHtml, coinHtml, injectBucksCss, moneyHtml } from "./bucks";
-import { bindingText } from "../settings/labels";
+import { backText, bindingText, glyphFamily, onLabelsChange, padText } from "../settings/labels";
+import { device } from "../settings/device";
+import { glyph, PB, stickGlyph } from "../settings/pad";
+import type { PadOwner } from "./padnav";
 
 export interface ShopOffer { id: number; name: string; desc: string; price: number; icon: string; ok: boolean; why?: string }
 export interface ShopView { cash: number; title: string; sub: string; offers: ShopOffer[] }
@@ -18,6 +22,8 @@ export interface ShopScreen {
   update(v: ShopView): void;
   /** a purchase was asked for (the menu flashes the card; the wallet updates when the server says so) */
   onBuy: (offer: number) => void;
+  /** a locked or unaffordable card was pressed (subtle denied cue) */
+  onDeny: () => void;
   padMove(dx: number, dy: number): void; padSelect(): void;
   /** keyboard: the n-th card (1-based) */
   key(n: number): void;
@@ -77,12 +83,17 @@ const CSS = `
   background: repeating-linear-gradient(180deg, transparent 0 ${u(64)}, rgba(45,22,6,0.5) ${u(64)} ${u(67)}), linear-gradient(180deg, #a06a36, #7c4c23);
   box-shadow: inset 0 0 0 ${u(4)} #5b3415, inset 0 0 0 ${u(6)} rgba(255,220,160,0.18), 0 ${u(6)} ${u(12)} rgba(0,0,0,0.35);
   transition: transform .09s ease-out, box-shadow .12s; }
-.kr-shop .card:hover, .kr-shop .card.sel { transform: translateY(${u(-4)}); box-shadow: inset 0 0 0 ${u(4)} ${UI.yellow}, inset 0 0 0 ${u(7)} rgba(255,240,170,0.35), 0 0 ${u(22)} rgba(255,212,0,0.55), 0 ${u(12)} ${u(20)} rgba(0,0,0,0.45); }
+html:not(.kr-pad) .kr-shop .card:hover, .kr-shop .card.sel { transform: translateY(${u(-4)}); box-shadow: inset 0 0 0 ${u(4)} ${UI.yellow}, inset 0 0 0 ${u(7)} rgba(255,240,170,0.35), 0 0 ${u(22)} rgba(255,212,0,0.55), 0 ${u(12)} ${u(20)} rgba(0,0,0,0.45); }
 .kr-shop .card.off { cursor: default; filter: saturate(.25) brightness(.8); }
 .kr-shop .card.flash { animation: krShopFlash .5s ease-out; }
+.kr-shop .card.deny { animation: krShopDeny .26s ease-out; }
 @keyframes krShopFlash { 0% { box-shadow: inset 0 0 0 ${u(6)} #fff, 0 0 ${u(44)} ${UI.yellow}; transform: translateY(${u(-4)}) scale(1.03); } 100% { transform: translateY(${u(-4)}); } }
-.kr-shop .card .k { position: absolute; left: ${u(12)}; top: ${u(10)}; width: ${u(32)}; height: ${u(32)}; border-radius: ${u(7)}; display: grid; place-items: center;
+@keyframes krShopDeny { 0%, 100% { transform: translateY(${u(-4)}); } 25% { transform: translateY(${u(-4)}) translateX(${u(-7)}); } 65% { transform: translateY(${u(-4)}) translateX(${u(6)}); } }
+.kr-shop .card .k { position: absolute; left: ${u(12)}; top: ${u(10)}; min-width: ${u(32)}; height: ${u(32)}; padding: 0 ${u(6)}; border-radius: ${u(7)}; display: grid; place-items: center;
   font: 900 ${u(20)} ${UI.cond}; color: #2a1606; background: rgba(255,236,190,0.85); box-shadow: 0 ${u(2)} 0 rgba(60,30,8,0.6); }
+html.kr-pad .kr-shop .card .k { opacity: 0; transform: scale(.85); transition: opacity .1s, transform .1s; padding: 0 ${u(9)}; }
+html.kr-pad .kr-shop .card.sel .k { opacity: 1; transform: none; background: ${UI.yellow}; color: #2a1606; box-shadow: 0 ${u(2)} 0 #8a4f00, 0 0 ${u(12)} rgba(255,212,0,0.5); }
+html.kr-pad .kr-shop .card.sel.off .k, html.kr-pad .kr-shop .card.sel.poor .k { background: rgba(255,236,190,0.45); box-shadow: 0 ${u(2)} 0 rgba(60,30,8,0.4); }
 .kr-shop .card .ic { height: ${u(100)}; display: grid; place-items: center; margin-top: ${u(2)}; background: radial-gradient(closest-side, rgba(255,236,180,0.55), rgba(255,236,180,0) 85%); }
 .kr-shop .card .ic img { width: ${u(98)}; height: ${u(98)}; object-fit: contain; filter: drop-shadow(0 ${u(5)} ${u(4)} rgba(30,12,0,0.55)); }
 .kr-shop .card .ic svg { width: ${u(66)}; height: ${u(66)}; color: #fff1c4; filter: drop-shadow(0 ${u(3)} ${u(2)} rgba(30,12,0,0.6)); }
@@ -117,9 +128,11 @@ const CSS = `
 .kr-shop .foot kbd { display: inline-grid; place-items: center; min-width: ${u(30)}; height: ${u(30)}; padding: 0 ${u(7)}; margin-right: ${u(6)}; border-radius: ${u(6)};
   font: 900 ${u(18)} ${UI.cond}; color: #2a1606; background: #fff1c9; box-shadow: 0 ${u(3)} 0 #a07a45; }
 .kr-shop .foot .sp { flex: 1; }
+.kr-shop .foot .sep { opacity: .45; margin: 0 ${u(8)}; }
 .kr-shop .foot .warn { color: #ffb08a; }
 `;
 let styled = false;
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]!));
 const GLYPH: Record<string, "person" | "skull" | "bullet"> = { buyback: "person", bounty: "skull", ammo: "bullet" };
 /** what the shopkeeper says: welcome / short of Bucks / thanks (after a purchase) */
 const LINES = { hi: "WHAT'LL IT BE, KONG?", broke: "NO BUCKS, NO BANANAS! LOOT SOME CASH.", thanks: "PLEASURE DOING BUSINESS!" };
@@ -131,26 +144,61 @@ export function createShop(): ShopScreen {
     <div class="head"><div class="badge">${MONKEY_SVG}</div><div><div class="ttl">BANANA STAND</div><div class="sub"></div></div>
       <div class="wallet"><small>BANANA BUCKS</small><span class="cash">${bucksHtml(0)}</span></div></div>
     <div class="grid"></div>
-    <div class="foot"><span><kbd>1</kbd>–<kbd>7</kbd> OR CLICK TO BUY</span><span class="sp"></span><span class="warn">TAKING DAMAGE CLOSES THE STAND</span><span class="leave"></span></div></div></div>`;
-  const grid = el.querySelector<HTMLElement>(".grid")!, cashEl = el.querySelector<HTMLElement>(".cash")!, subEl = el.querySelector<HTMLElement>(".sub")!, leaveEl = el.querySelector<HTMLElement>(".leave")!;
-  let cards: Array<{ el: HTMLElement; nm: HTMLElement; ds: HTMLElement; tag: HTMLElement; id: number; ok: boolean; icon: string }> = [];
+    <div class="foot"><span class="buy-hint"></span><span class="sp"></span><span class="warn">TAKING DAMAGE CLOSES THE STAND</span><span class="leave"></span></div></div></div>`;
+  const grid = el.querySelector<HTMLElement>(".grid")!, cashEl = el.querySelector<HTMLElement>(".cash")!, subEl = el.querySelector<HTMLElement>(".sub")!, buyHintEl = el.querySelector<HTMLElement>(".buy-hint")!, leaveEl = el.querySelector<HTMLElement>(".leave")!;
+  let cards: Array<{ el: HTMLElement; k: HTMLElement; nm: HTMLElement; ds: HTMLElement; tag: HTMLElement; id: number; ok: boolean; icon: string }> = [];
   let talk: { bubble: HTMLElement; face: HTMLElement } | null = null;
-  let open = false, stand = -1, sel = 0, lastSig = "", view: ShopView | null = null, thanksUntil = 0;
+  let open = false, stand = -1, sel = 0, fresh = false, lastSig = "", view: ShopView | null = null, thanksUntil = 0, denyUntil = 0, denyLine = "";
   const say = () => {
     if (!talk || !view) return;
-    const cheapest = Math.min(...view.offers.filter((o) => !o.why).map((o) => o.price));
-    const line = performance.now() < thanksUntil ? LINES.thanks : view.cash < cheapest ? LINES.broke : LINES.hi;
+    const now = performance.now();
+    const avail = view.offers.filter((o) => !o.why).map((o) => o.price);
+    const cheapest = avail.length ? Math.min(...avail) : Infinity;
+    const line = now < thanksUntil ? LINES.thanks : now < denyUntil && denyLine ? denyLine : view.cash < cheapest ? LINES.broke : LINES.hi;
     if (talk.bubble.dataset.line !== line) { talk.bubble.dataset.line = line; talk.bubble.textContent = line; }
   };
+  const paintHints = () => {
+    if (device.pad) {
+      const f = glyphFamily(), a = glyph(PB.A, f), st = stickGlyph("left", f), lb = glyph(PB.LB, f), rb = glyph(PB.RB, f);
+      const inter = padText("interact", 0), b = backText();
+      buyHintEl.innerHTML = `<kbd>${esc(st)}</kbd><kbd>D-PAD</kbd>MOVE<span class="sep">·</span><kbd>${esc(lb)}</kbd><kbd>${esc(rb)}</kbd>CYCLE<span class="sep">·</span><kbd>${esc(a)}</kbd>BUY`;
+      leaveEl.innerHTML = `${inter && inter !== b ? `<kbd>${esc(inter)}</kbd>` : ""}<kbd>${esc(b)}</kbd>LEAVE`;
+      cards.forEach((c) => { c.k.textContent = a; });
+    } else {
+      buyHintEl.innerHTML = `<kbd>1</kbd>–<kbd>${cards.length || 7}</kbd> OR CLICK TO BUY`;
+      leaveEl.innerHTML = `<kbd>${esc(bindingText("use", 0).toUpperCase() || "E")}</kbd><kbd>ESC</kbd>LEAVE`;
+      cards.forEach((c, i) => { c.k.textContent = String(i + 1); });
+    }
+  };
   const buy = (i: number) => {
-    const c = cards[i], o = view?.offers[i]; if (!c || !o || !o.ok) return;
+    const c = cards[i], o = view?.offers[i]; if (!c || !o) return;
+    if (!o.ok) {
+      c.el.classList.remove("deny"); void c.el.offsetWidth; c.el.classList.add("deny");
+      denyLine = o.why ?? (view ? `NEED ${(o.price - view.cash).toLocaleString("en-US")} MORE BUCKS!` : LINES.broke);
+      denyUntil = performance.now() + 1800; say();
+      setTimeout(say, 1900);
+      scr.onDeny();
+      return;
+    }
     c.el.classList.remove("flash"); void c.el.offsetWidth; c.el.classList.add("flash");
-    thanksUntil = performance.now() + 2200; say();
+    thanksUntil = performance.now() + 2200; denyUntil = 0; say();
     if (talk) { talk.face.classList.remove("wave"); void talk.face.getBoundingClientRect(); talk.face.classList.add("wave"); }
     setTimeout(say, 2300);
     scr.onBuy(o.id);
   };
-  const select = (i: number) => { sel = Math.max(0, Math.min(cards.length - 1, i)); cards.forEach((c, k) => c.el.classList.toggle("sel", k === sel)); };
+  const select = (i: number) => {
+    if (!cards.length) { sel = 0; return; }
+    sel = Math.max(0, Math.min(cards.length - 1, i));
+    cards.forEach((c, k) => c.el.classList.toggle("sel", k === sel));
+  };
+  const moveGrid = (dx: number, dy: number) => {
+    const n = cards.length; if (!n) return;
+    if (dx !== 0) select((sel + dx + n) % n);
+    if (dy > 0) {
+      if (sel + 4 < n) select(sel + 4);
+      else if (Math.floor(sel / 4) < Math.floor((n - 1) / 4)) select(n - 1);
+    } else if (dy < 0 && sel >= 4) select(sel - 4);
+  };
   const build = (v: ShopView) => {
     grid.textContent = ""; cards = []; talk = null;
     v.offers.forEach((o, i) => {
@@ -159,9 +207,9 @@ export function createShop(): ShopScreen {
       const ic = card.querySelector<HTMLElement>(".ic")!;
       if (GLYPH[o.icon]) ic.appendChild(svgGlyph(GLYPH[o.icon])); else { const im = document.createElement("img"); im.src = itemIconUrl(o.icon); im.alt = ""; ic.appendChild(im); }
       card.addEventListener("click", () => { select(i); buy(i); });
-      card.addEventListener("mouseenter", () => select(i));
+      card.addEventListener("mouseenter", () => { if (!device.pad) select(i); });
       grid.appendChild(card);
-      cards.push({ el: card, nm: card.querySelector(".nm")!, ds: card.querySelector(".ds")!, tag: card.querySelector(".tag")!, id: o.id, ok: o.ok, icon: o.icon });
+      cards.push({ el: card, k: card.querySelector(".k")!, nm: card.querySelector(".nm")!, ds: card.querySelector(".ds")!, tag: card.querySelector(".tag")!, id: o.id, ok: o.ok, icon: o.icon });
     });
     // the free slot(s) of the last row: the shopkeeper
     if (v.offers.length % 4) {
@@ -169,18 +217,41 @@ export function createShop(): ShopScreen {
       t.innerHTML = `<div class="bubble"></div><div class="face">${MONKEY_SVG}</div>`;
       grid.appendChild(t); talk = { bubble: t.querySelector(".bubble")!, face: t.querySelector(".face")! };
     }
+    paintHints();
     select(sel);
+  };
+  onLabelsChange(paintHints);
+  (el as HTMLElement & { krPad?: PadOwner }).krPad = {
+    move(dir) {
+      if (dir === "left") moveGrid(-1, 0);
+      else if (dir === "right") moveGrid(1, 0);
+      else if (dir === "up") moveGrid(0, -1);
+      else moveGrid(0, 1);
+      return true;
+    },
+    button(b) {
+      if (b === PB.A) { buy(sel); return true; }
+      if (b === PB.LB) { moveGrid(-1, 0); return true; }
+      if (b === PB.RB) { moveGrid(1, 0); return true; }
+      return false;
+    },
   };
   const scr: ShopScreen = {
     el, get open() { return open; }, get stand() { return stand; },
     setOpen(o, s = -1) {
       open = o; stand = o ? s : -1; el.classList.toggle("on", o);
-      if (o) { sel = 0; lastSig = ""; thanksUntil = 0; leaveEl.innerHTML = `<kbd>${bindingText("use", 0).toUpperCase() || "E"}</kbd><kbd>ESC</kbd>LEAVE`; }
+      if (o) { fresh = true; lastSig = ""; thanksUntil = 0; denyUntil = 0; denyLine = ""; select(0); paintHints(); }
     },
     update(v) {
       view = v;
       const shape = v.offers.map((o) => o.id + o.icon).join(",");
       if (shape !== (cards.map((c) => c.id + c.icon).join(","))) build(v);
+      if (fresh) {
+        fresh = false;
+        let idx = v.offers.findIndex((o) => o.ok);
+        if (idx < 0) idx = v.offers.findIndex((o) => !o.why);
+        select(idx >= 0 ? idx : 0);
+      }
       say();
       const sig = `${v.cash}|${v.sub}|` + v.offers.map((o) => `${o.name}${o.price}${o.ok ? 1 : 0}${o.why ?? ""}`).join("|");
       if (sig === lastSig) return; lastSig = sig;
@@ -194,7 +265,8 @@ export function createShop(): ShopScreen {
       });
     },
     onBuy: () => {},
-    padMove(dx, dy) { if (!cards.length) return; select(sel + dx + dy * 4); },
+    onDeny: () => {},
+    padMove(dx, dy) { moveGrid(dx, dy); },
     padSelect() { buy(sel); },
     key(n) { if (n >= 1 && n <= cards.length) { select(n - 1); buy(n - 1); } },
   };
