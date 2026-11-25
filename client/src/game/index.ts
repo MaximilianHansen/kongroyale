@@ -773,12 +773,43 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   const syncClickHint = () => { const on = inMatch && !device.pad && !input.locked && !input.capturing && input.gameplayAllowed(); if (on !== clickHintOn) { clickHintOn = on; clickHint.style.display = on ? "block" : "none"; } };
 
   // ---- frame loop
+  const MATCH_WEATHERS = ["midday", "dawn", "night", "rain"] as const;
+  type MatchWeather = (typeof MATCH_WEATHERS)[number];
+  const weatherForSeed = (seed: number): MatchWeather => {
+    let h = (seed | 0) ^ 0x9e3779b9;
+    h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+    return MATCH_WEATHERS[((h ^ (h >>> 16)) >>> 0) % MATCH_WEATHERS.length];
+  };
+  let appliedWeatherSeed: number | null = null, lastOfflineWeather: MatchWeather | null = null;
+  const syncMatchWeather = () => {
+    const atmos = engine.shared.get("atmos") as { setPreset?(id: MatchWeather): void } | undefined;
+    if (!atmos?.setPreset) return;
+    if (inMatch && cm && !cm.range) {
+      if (appliedWeatherSeed === cm.seed) return;
+      appliedWeatherSeed = cm.seed;
+      let w = weatherForSeed(cm.seed);
+      // offline practice without a pinned ?seed=: avoid rolling the same weather twice in a row
+      if (link?.offline && !flag("seed") && w === lastOfflineWeather) {
+        const i = MATCH_WEATHERS.indexOf(w);
+        w = MATCH_WEATHERS[(i + 1 + (((cm.seed >>> 4) & 0x7fffffff) % (MATCH_WEATHERS.length - 1))) % MATCH_WEATHERS.length];
+      }
+      if (link?.offline) lastOfflineWeather = w;
+      atmos.setPreset(w);
+      return;
+    }
+    if (appliedWeatherSeed !== null) {
+      appliedWeatherSeed = null;
+      atmos.setPreset("midday");
+    }
+  };
   let wasWatching = false;
   engine.onUpdate((dt, t) => {
     link?.pump?.();
     if (caster && !caster.active) caster.update(dt, t);   // (its link's pump + lobby; the title keeps drawing)
     gamepads.poll();
     routePad(dt);
+    syncMatchWeather();
     blimp.update(dt, t);
     if (caster?.active) caster.update(dt, t);
     else if (inMatch && cm && render) {

@@ -467,10 +467,13 @@ export class Clouds {
   }
 
   build(specs: CloudSpec[]) {
+    const oldGeos = new Set<THREE.BufferGeometry>();
     for (const i of this.insts) {
       this.group.remove(i.mesh); this.group.remove(i.bb);
+      oldGeos.add(i.mesh.geometry);
       i.mat.dispose(); i.matNear.dispose(); i.matTile.dispose(); i.bbMat.dispose(); i.tile?.dispose();
     }
+    for (const g of oldGeos) g.dispose();
     this.insts = [];
     const geoCache = new Map<CloudVolume, THREE.BufferGeometry>();
     for (const spec of specs) {

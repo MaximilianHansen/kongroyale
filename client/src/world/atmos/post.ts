@@ -1276,8 +1276,8 @@ void main() {
       c += rainbowCol(clamp(t, 0.0, 1.0)) * env * uRain.y * hz * (0.18 + 0.5 * l);
       c *= 1.0 + hz * uRain.y * (0.07 * (1.0 - smoothstep(38.0, 40.5, th)) - 0.05 * smoothstep(42.5, 44.0, th) * (1.0 - smoothstep(49.0, 51.0, th)));
     }
-    // ---- rain streaks (sunlit, a touch brighter toward the sun)
-    if (uRain.x > 0.0) {
+    // ---- rain streaks (sunlit, a touch brighter toward the sun; off underwater)
+    if (uRain.x > 0.0 && uAtmCamPos.y > 0.0) {
       float st = rainStreaks(gl_FragCoord.xy, zs, uRain.w);
       float sunward = pow(max(dot(rdw, uAtmSunDir), 0.0), 3.0);
       c += vec3(0.85, 0.9, 1.0) * st * uRain.x * (0.5 + 0.8 * sunward + 0.4 * dot(c, LUMA));
@@ -1839,7 +1839,7 @@ export class AtmosPost implements PostPipeline {
     u.uAerialLC.value = p.aerialLC ?? 1;
     this.composite!.glare = atmosFlags().has("noglare") ? 0 : p.glare ?? 0;
     this.composite!.shaft.set(p.shaftOpen ?? 0, p.shaftCanopy ?? 0, p.shaftMist ?? 0, p.shaftDist ?? 120);
-    (u.uRain.value as THREE.Vector4).set(p.rainStreaks ?? 0, p.rainbow ?? 0, p.puddles ?? 0, 0);
+    (u.uRain.value as THREE.Vector4).set(p.rainStreaks ?? 0, p.rainbow ?? 0, this.quality === "low" ? 0 : (p.puddles ?? 0), 0);
     (u.uRainSky.value as THREE.Color).copy(this.u.uAtmMid.value); (u.uRainSkyLow.value as THREE.Color).copy(this.u.uAtmHorizon.value);
     const gp = this.u.uAtmGIParams.value;
     gp.y = atmosFlags().has("nobounce") ? 0 : p.gi ?? 0; gp.z = atmosFlags().has("nointerior") ? 0 : p.interiorLoss ?? 0;
@@ -1848,6 +1848,7 @@ export class AtmosPost implements PostPipeline {
     (u.uGlareColor.value as THREE.Color).set(p.glowColor).lerp(new THREE.Color(1, 1, 1), p.glareWhite ?? 0.6);
     this.ao?.tune(p.aoBias, p.aoRadius, p.aoIntensity !== undefined ? p.aoIntensity * (p.ao ?? 1) : undefined);
     this.composite?.setGrade(gradeParams(p));
+    if (this.composite) this.composite.reset = true;
   }
 
   render(dt: number) {
