@@ -27,7 +27,7 @@ import type { Rarity, WeaponId } from "../../../shared/world/map";
 import { heldMuzzle, HELD_SCALE } from "../weapons/held";
 import { UNBOUNCE_GLSL } from "./look";
 import { gunSpec } from "../weapons/guns/index";
-import { loadAccessories, type AccPiece, type Outfit } from "./outfits";
+import { HAT_IDS, loadAccessories, type AccPiece, type Outfit } from "./outfits";
 import { flag } from "../flags";
 
 /** socket-local foregrip of a two-handed gun (GunSpec.foreAnchor − gripAnchor, × HELD_SCALE), null for one-handed */
@@ -509,7 +509,7 @@ class KongManager {
       // draws when a visible kong of its tier wears it
       if (acc) [...acc.hats, ...acc.tops].forEach((a, i) => {
         const material = this.patchKong(a.mat, "acc" as MatKey);
-        const id = i < acc.hats.length ? i : 3 + i - acc.hats.length;
+        const id = i < acc.hats.length ? i : HAT_IDS.length + i - acc.hats.length;
         // all three tiers (else the far tier drops the hat + top at ~26 m): the min tier draws the lo pieces
         for (const tier of [0, 1, 2] as const) {
           const geo = a.tiers[Math.min(tier, 1)];
@@ -542,7 +542,7 @@ class KongManager {
     // the batches no frame before ready draws (the lo tier, every dither twin, the hats and tops; the min tier's solid
     // batch draws in the boot warm frames): ?deferkong=1 compiles them after ready (game/index.ts prewarmMatch) instead
     // of in the boot compile and the title's warm-up
-    for (const b of this.batches) if (typeof b.tier === "number" && (b.tier === 1 || b.fade || b.acc !== undefined)) b.mesh.userData.krMatchOnly = true;
+    for (const b of this.batches) if (typeof b.tier === "number" && (b.tier === 1 || b.fade || (b.acc !== undefined && b.tier !== 0))) b.mesh.userData.krMatchOnly = true;
     ctx.scene.add(this.group);
     ctx.onUpdate((dt) => this.frame(dt));
     // body motion vectors: every colour batch (solid + dither twins) shares its geometry with a velocity mesh
@@ -967,7 +967,7 @@ class KongManager {
       let n = 0;
       const arr = b.slotFade.array as Float32Array;
       if (b.list) for (const [s, f] of b.list) { arr[n * 2] = s.idx; arr[n * 2 + 1] = f; n++; }
-      else if (typeof b.tier === "number") { const fade = !!b.fade, acc = b.acc; for (const [s, f] of this.tierList[b.tier]) if ((f < 1.5) === fade && (acc === undefined || (acc < 3 ? s.hat === acc && !seated(s) : s.top === acc - 3))) { arr[n * 2] = s.idx; arr[n * 2 + 1] = f; n++; } }
+      else if (typeof b.tier === "number") { const fade = !!b.fade, acc = b.acc, hn = HAT_IDS.length; for (const [s, f] of this.tierList[b.tier]) if ((f < 1.5) === fade && (acc === undefined || (acc < hn ? s.hat === acc && !seated(s) : s.top === acc - hn))) { arr[n * 2] = s.idx; arr[n * 2 + 1] = f; n++; } }
       else for (const s of this.shadowList[b.tier === "shadow-lo" ? 0 : 1]) { arr[n * 2] = s.idx; arr[n * 2 + 1] = 2; n++; }
       b.n = n; b.geo.instanceCount = n; b.mesh.visible = n > 0;
       if (n) { b.slotFade.needsUpdate = true; b.slotFade.clearUpdateRanges(); b.slotFade.addUpdateRange(0, n * 2); }

@@ -191,6 +191,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   // the game's own full screen is asked for ON the PLAY / FIRING RANGE / CREATE / JOIN click (a user
   // gesture lasts ~5 s: asked again at match start, after the island prepared or the host pressed START, it was refused)
   const fsOnPlay = () => input.autoFullscreen();
+  let titleRef: ReturnType<typeof createTitleScene> | null = null;
   const actions: LobbyActions = {
     skipCoach() { coach.skip(); },
     replayCoach() { coach.replay(); coachObserver.reset(); },
@@ -204,6 +205,10 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     range() { fsOnPlay(); offline("solo", true); },
     leave() { leaveAll(); },
     pickTeam(team) { link?.sendJSON({ t: "team", team }); },
+    setOutfit(o) { titleRef?.setOutfit(o); },
+    spinHero(d) { titleRef?.spin(d); },
+    resetHeroSpin() { titleRef?.resetSpin(); },
+    emoteHero() { titleRef?.triggerEmote(); audio.play("ui:click", { volume: 0.45 }); },
   };
   const lobby = eventCode !== null ? createEventLobby(actions, eventCode) : createLobby(actions);
   ui.appendChild(lobby.el);
@@ -213,6 +218,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
   // on the right third, the island + volcano beyond, the BANANA CO. plane crossing the sky with gliders peeling off.
   gameStage("kits:title", 0.19);
   const title = createTitleScene(engine, plane, kits);
+  titleRef = title;
   gameStage("kits:wire", 0.2);
   // the BANANA CO. blimp: drifts round the island in the title, the warm-up and every match
   const blimp = createBlimp(); engine.scene.add(blimp.object);

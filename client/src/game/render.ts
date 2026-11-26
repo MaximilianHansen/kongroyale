@@ -36,7 +36,7 @@ import type { Surface } from "../../../shared/world/colliders";
 import type { Terrain } from "../../../shared/world/terrain";
 import { releasePlanePaint, restorePlanePaint, type PlaneProps } from "../actors/plane";
 import type { GliderProps } from "../actors/glider";
-import { outfitFor } from "../actors/outfit-pick";
+import { markVictoryUnlocked, outfitForPlayer } from "../actors/outfit-pick";
 import { fullKongMaps } from "../actors/kong-asset";
 import type { LightBalancer } from "./lights";
 import { AmmoBoxes } from "./ammobox";
@@ -697,7 +697,7 @@ export class GameRender implements EventSink {
         if (this.deadAt >= 0 && this.resCountdown != null && !this.range && this.cm.phase !== 0) this.resCountdown = null;
         break;
       }
-      case ANN.Victory: { const win = a === this.cm.pred.team; if (win) { this.announce("KONG ROYALE VICTORY", "#1", "victory"); this.sfx("ui:victory"); this.placement = 1; this.victoryAt = performance.now(); void fullKongMaps(); this.onVictory?.(); } else if (this.deadAt < 0) { this.placement = 2; this.onEliminated?.(); } else if (this.spec.active(this.cm)) this.spectatorVictory(a); break; }
+      case ANN.Victory: { const win = a === this.cm.pred.team; if (win) { const unlockedCrown = markVictoryUnlocked(); this.announce("KONG ROYALE VICTORY", unlockedCrown ? "#1 · VICTORY CROWN UNLOCKED IN WARDROBE!" : "#1", "victory"); this.sfx("ui:victory"); this.placement = 1; this.victoryAt = performance.now(); void fullKongMaps(); this.onVictory?.(); } else if (this.deadAt < 0) { this.placement = 2; this.onEliminated?.(); } else if (this.spec.active(this.cm)) this.spectatorVictory(a); break; }
       // (economy) bounties and buy-backs: a / b carry teams (or kong ids) — this squad's news only
       case ANN_ECON.Bounty: { const t = this.cm.pred.team; if (a === (t & 0xff)) { this.announce("BOUNTY CONTRACT ACTIVE", "the marked squad is on your map — 90 s", "kill"); this.sfx("ui:countdown"); } else if (b === (t & 0xff)) { this.announce("YOU HAVE A BOUNTY", "a squad is hunting you — survive 90 s for $500", "warn"); this.sfx("storm:shrink"); } break; }
       case ANN_ECON.BountyDone: { const t = this.cm.pred.team; if (a === (t & 0xff)) { this.announce("BOUNTY COMPLETE", "+$1,500 each · the reward dropped where they fell", "victory"); this.sfx("ui:victory"); } else if (b === (t & 0xff)) this.announce("YOUR BOUNTY WAS CLAIMED", "the hunters got one of you", "warn"); break; }
@@ -1009,7 +1009,7 @@ export class GameRender implements EventSink {
     this.dropCamera(dt, inPlane || dead || victory || !!spec || !!myVeh || !!this.caster);
     // actors: my own kong in first person while falling /
     // gliding — arms in frame in freefall, fists on the bar + legs below under the glider
-    if (inPlane && !this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
+    if (inPlane && !this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitForPlayer(cm.me, cm.seed, true)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
     if (inPlane) this.ensureMyGlider();
     this.windStreaks(dt, inPlane || dead || victory || !!spec);
     // (and drawn once off-screen while riding: programs, buffers and textures are warm before the exit / deploy frame)
@@ -1018,11 +1018,11 @@ export class GameRender implements EventSink {
       void this.engine.compileObjects(roots).then(() => { if (this.cm.pred.st === PS.Plane) this.engine.warmDraw(roots); });
     }
     if (!victory && !spec && !dead && (p.st === PS.Freefall || p.st === PS.Glide)) {
-      if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
+      if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitForPlayer(cm.me, cm.seed, true)); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
       if (this.meActor?.pov) { const mp = this.mePose; this.dropBody(V3); mp.x = V3.x; mp.y = V3.y; mp.z = V3.z; mp.yaw = this.input.yaw; mp.pitch = this.input.pitch; mp.vx = p.vx; mp.vy = p.vy; mp.vz = p.vz; mp.state = p.st === PS.Glide ? "glide" : "freefall"; mp.weapon = null; mp.team = p.team; mp.friendly = true; this.meActor.setVisible(true); cam.updateMatrixWorld(); this.meActor.pov(cam, mp, dt); }
     } else if (myVeh && p.seat === 0 && this.rideThird) {
       // at the bars, seen from behind: my own kong drives
-      if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
+      if (!this.meActor && !this.meActorPending) { this.meActorPending = true; void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitForPlayer(cm.me, cm.seed, true)); a.setVisible(false); this.engine.scene.add(a.object); patchTree(this.engine, a.object); }); }
       if (this.meActor) { const mp = this.mePose; this.seatPose(mp, myVeh, 0, myVeh.yaw + myVeh.oyaw, 0); mp.weapon = null; mp.team = p.team; mp.friendly = true; mp.crouch = false; mp.sprint = false; this.meActor.setVisible(true); this.meActor.apply(mp, dt); }
     } else if (this.meActor && !victory) this.meActor.setVisible(false);
     // scope (the only zoom in the game)
@@ -1579,7 +1579,7 @@ export class GameRender implements EventSink {
     V3.set(this.vsX, this.vsY, this.vsZ);
     if (!this.meActor && !this.meActorPending) {
       this.meActorPending = true;
-      void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitFor(cm.me, cm.seed)); this.engine.scene.add(a.object); patchTree(this.engine, a.object); });
+      void this.kits.createKong(this.engine, { variant: Math.max(0, cm.me) % 6 }).then((a) => { this.meActor = a; a.setOutfit?.(outfitForPlayer(cm.me, cm.seed, true)); this.engine.scene.add(a.object); patchTree(this.engine, a.object); });
     }
     const k = (performance.now() - this.victoryAt) / 1000;
     // the kong faces the SUN (face and chest lit) and the camera stands in front of it, low, looking up —
@@ -2059,7 +2059,7 @@ export class GameRender implements EventSink {
     const pending = this.actorPending.get(id); if (pending) { await pending; return this.actors.get(id) ?? null; }
     const pr = (async () => {
       const actor = await this.kits.createKong(this.engine, { variant: id % 6 });
-      actor.setOutfit?.(outfitFor(id, this.cm.seed));   // same look on every client (id + match seed)
+      actor.setOutfit?.(outfitForPlayer(id, this.cm.seed, id === this.cm.me));   // same look on every client (id + match seed), local kong wears wardrobe
       this.engine.scene.add(actor.object); patchTree(this.engine, actor.object);
       const slot: ActorSlot = { actor, pose: makePose(team), glider: null, id, lastFire: 0, lastReload: 0, stepAcc: 0, wasGrounded: true, swimEvt: 0 };
       this.actors.set(id, slot); this.actorPending.delete(id);
@@ -2077,7 +2077,7 @@ export class GameRender implements EventSink {
     // the watched kong on foot is drawn on the spectate camera's smoothed follow point (specSmooth)
     const so = this.specSm, sid = so.id >= 0 && so.veh < 0 ? so.id : -1;
     // a new match seed (PLAY AGAIN, a reconnect into another match) re-dresses every kong for it
-    if (cm.seed !== this.dressedSeed) { this.dressedSeed = cm.seed; for (const a of this.actors.values()) a.actor.setOutfit?.(outfitFor(a.id, cm.seed)); this.meActor?.setOutfit?.(outfitFor(me, cm.seed)); }
+    if (cm.seed !== this.dressedSeed) { this.dressedSeed = cm.seed; for (const a of this.actors.values()) a.actor.setOutfit?.(outfitForPlayer(a.id, cm.seed, a.id === me)); this.meActor?.setOutfit?.(outfitForPlayer(me, cm.seed, true)); }
     const cx = this.engine.camera.position.x, cy = this.engine.camera.position.y, cz = this.engine.camera.position.z;
     for (const r of cm.remotes) {
       if (r.id === me) continue;

@@ -23,4 +23,12 @@ export const ICON = {
   arrow: svg("0 0 30 22", `<path fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" d="M2.5 8.2h14.2V3l11 8-11 8v-5.2H2.5z"/>`, "arrow"),
   /** a thin "→" for the Training tiles */
   chevron: svg("0 0 26 16", `<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M1.5 8h22M17 2l6.5 6-6.5 6"/>`, "chev"),
+  /** locked cosmetic padlock */
+  lock: svg("0 0 20 22", `<g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="9.5" width="13" height="10" rx="2"/><path d="M6.5 9.5V6.5a3.5 3.5 0 0 1 7 0v3"/></g>`),
+  /** rotate 3D preview */
+  rotate: svg("0 0 24 24", `<g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 2.3 5.7"/><path d="M4 19v-5h5"/></g>`),
+  /** randomize dice */
+  dice: svg("0 0 24 24", `<g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"/></g>`),
+  /** emote sparkle */
+  sparkle: svg("0 0 24 24", `<path fill="currentColor" d="M12 2l2.3 6.7L21 11l-6.7 2.3L12 20l-2.3-6.7L3 11l6.7-2.3z"/>`),
 } as const;

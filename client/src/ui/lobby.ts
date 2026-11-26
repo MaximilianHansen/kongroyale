@@ -20,6 +20,10 @@ import { matchSeats } from "../../../shared/sim/const";
 import { bindingText, glyphFamily, lookText, onLabelsChange, pauseText } from "../settings/labels";
 import { glyph, PB } from "../settings/pad";
 import { device } from "../settings/device";
+import {
+  CROWN_HAT_INDEX, HAT_OPTIONS, SHORTS_PALETTE, TOP_OPTIONS,
+  hasVictoryCrown, loadPlayerOutfit, outfitFor, savePlayerOutfit, type PlayerOutfitPref,
+} from "../actors/outfit-pick";
 
 const NAME_KEY = "kr-callsign", MODE_KEY = "kr-mode", DIFF_KEY = "kr-bot-difficulty";
 const NAME_MAX = 14;
@@ -27,7 +31,7 @@ const NAME_MAX = 14;
 const NAME_OK = /^[A-Z0-9 _.!?'-]+$/;
 const store = { get(k: string) { try { return localStorage.getItem(k); } catch { return null; } }, set(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private */ } } };
 
-type Tab = "play" | "training";
+type Tab = "play" | "wardrobe" | "training";
 type Ui = "home" | "invite" | "room";
 
 /** the callsign as the server will keep it, or why it can't be one */
@@ -53,8 +57,9 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
   brand.src = TOON_LOGO.lockup; brand.alt = "Kong Royale"; brand.draggable = false;
   const nav = h("nav", "tn-play-nav", root); nav.setAttribute("aria-label", "Lobby");
   const navBtn = (label: string) => { const b = h("button", "tn-pill", nav); b.type = "button"; b.textContent = label; return b; };
-  const navPlay = navBtn("Play"), navTraining = navBtn("Training"), navSettings = navBtn("Settings");
+  const navPlay = navBtn("Play"), navWardrobe = navBtn("Wardrobe"), navTraining = navBtn("Training"), navSettings = navBtn("Settings");
   navPlay.addEventListener("click", () => setTab("play"));
+  navWardrobe.addEventListener("click", () => setTab("wardrobe"));
   navTraining.addEventListener("click", () => setTab("training"));
   navSettings.addEventListener("click", () => openSettings());
 
@@ -137,6 +142,89 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
   const leaveBar = h("div", "tn-play-leavebar", links);
   const btnLeave = h("button", "tn-play-link kr-btn", leaveBar); btnLeave.type = "button"; btnLeave.innerHTML = `${ICON.leave}<span>Leave lobby</span>`;
 
+  // WARDROBE tab (live 3D preview on the hero Kong)
+  const wardrobe = h("section", "tn-play-sec-wardrobe", main);
+  const wEyebrow = h("div", "tn-eyebrow tn-play-eyebrow", wardrobe); wEyebrow.textContent = "Wardrobe";
+  h("h1", "tn-lobby-display tn-play-display", wardrobe).innerHTML = "Dress your<br>Kong.";
+  const wdGroups = h("div", "tn-wd-groups", wardrobe);
+
+  const hatGroup = h("div", "tn-wd-group", wdGroups);
+  const hatHead = h("h2", "tn-wd-head", hatGroup); hatHead.textContent = "Headgear";
+  const hatNote = h("small", "", hatHead);
+  const hatRow = h("div", "tn-wd-grid", hatGroup); hatRow.setAttribute("role", "radiogroup"); hatRow.setAttribute("aria-label", "Headgear");
+  const hatBtns = new Map<number, HTMLButtonElement>();
+  for (const opt of HAT_OPTIONS) {
+    const b = h("button", "tn-wd-chip", hatRow); b.type = "button"; b.setAttribute("role", "radio");
+    b.dataset.idx = String(opt.idx);
+    b.addEventListener("click", () => {
+      if (opt.idx === CROWN_HAT_INDEX && !hasVictoryCrown()) { showToast("Win 1 match to unlock Victory Crown"); return; }
+      setOutfitPref({ ...outfitPref, mode: "custom", hat: opt.idx });
+    });
+    hatBtns.set(opt.idx, b);
+  }
+
+  const topGroup = h("div", "tn-wd-group", wdGroups);
+  h("h2", "tn-wd-head", topGroup).textContent = "Top";
+  const topRow = h("div", "tn-wd-grid", topGroup); topRow.setAttribute("role", "radiogroup"); topRow.setAttribute("aria-label", "Top");
+  const topBtns = new Map<number, HTMLButtonElement>();
+  for (const opt of TOP_OPTIONS) {
+    const b = h("button", "tn-wd-chip", topRow); b.type = "button"; b.setAttribute("role", "radio");
+    b.textContent = opt.label;
+    b.addEventListener("click", () => setOutfitPref({ ...outfitPref, mode: "custom", top: opt.idx }));
+    topBtns.set(opt.idx, b);
+  }
+
+  const shortGroup = h("div", "tn-wd-group", wdGroups);
+  const shortHead = h("h2", "tn-wd-head", shortGroup); shortHead.textContent = "Shorts";
+  const shortName = h("small", "", shortHead);
+  const shortRow = h("div", "tn-wd-swatches", shortGroup); shortRow.setAttribute("role", "radiogroup"); shortRow.setAttribute("aria-label", "Shorts colour");
+  const shortBtns: Array<{ btn: HTMLButtonElement; color: string | null; label: string }> = [];
+  for (const opt of SHORTS_PALETTE) {
+    const b = h("button", "tn-wd-swatch", shortRow); b.type = "button"; b.setAttribute("role", "radio");
+    b.setAttribute("aria-label", opt.label);
+    b.style.setProperty("--sw", opt.swatch);
+    b.addEventListener("click", () => setOutfitPref({ ...outfitPref, mode: "custom", shorts: opt.color }));
+    shortBtns.push({ btn: b, color: opt.color, label: opt.label });
+  }
+
+  const wdActions = h("div", "tn-wd-actions", wdGroups);
+  const btnRandLook = h("button", "tn-play-link tn-play-link--sm", wdActions); btnRandLook.type = "button"; btnRandLook.innerHTML = `${ICON.dice}<span>Randomize</span>`;
+  const btnEmote = h("button", "tn-play-link tn-play-link--sm", wdActions); btnEmote.type = "button"; btnEmote.innerHTML = `${ICON.sparkle}<span>Emote</span>`;
+  const btnSpinL = h("button", "tn-play-link tn-play-link--sm", wdActions); btnSpinL.type = "button"; btnSpinL.setAttribute("aria-label", "Rotate Kong left"); btnSpinL.innerHTML = `${ICON.rotate}<span>Turn</span>`;
+  btnRandLook.addEventListener("click", () => {
+    const crownOk = hasVictoryCrown();
+    const hatPool = crownOk ? [-1, 0, 1, 2, 3, 4, 5] : [-1, 0, 1, 2, 3, 4];
+    const hat = hatPool[Math.floor(Math.random() * hatPool.length)];
+    const top = [-1, 0, 1, 2][Math.floor(Math.random() * 4)];
+    const shorts = SHORTS_PALETTE[Math.floor(Math.random() * SHORTS_PALETTE.length)].color;
+    setOutfitPref({ mode: "custom", hat, top, shorts });
+    actions.emoteHero?.();
+  });
+  btnEmote.addEventListener("click", () => actions.emoteHero?.());
+  btnSpinL.addEventListener("click", () => actions.spinHero?.(Math.PI / 2));
+
+  // drag zone over the live 3D Kong (right half of the lobby) while on Wardrobe
+  const wdStage = h("div", "tn-wd-stage", root);
+  h("div", "tn-wd-draghint", wdStage).textContent = "DRAG TO ROTATE KONG";
+  let wdDrag: { id: number; x: number } | null = null;
+  wdStage.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    wdDrag = { id: ev.pointerId, x: ev.clientX };
+    wdStage.classList.add("is-drag");
+    wdStage.setPointerCapture(ev.pointerId);
+  });
+  wdStage.addEventListener("pointermove", (ev) => {
+    if (!wdDrag || ev.pointerId !== wdDrag.id) return;
+    const dx = ev.clientX - wdDrag.x; wdDrag.x = ev.clientX;
+    actions.spinHero?.(dx * 0.011);
+  });
+  const endWdDrag = (ev: PointerEvent) => {
+    if (!wdDrag || ev.pointerId !== wdDrag.id) return;
+    wdDrag = null; wdStage.classList.remove("is-drag");
+  };
+  wdStage.addEventListener("pointerup", endWdDrag);
+  wdStage.addEventListener("pointercancel", endWdDrag);
+
   // TRAINING tab
   const training = h("section", "tn-play-sec-training", main);
   const tEyebrow = h("div", "tn-eyebrow tn-play-eyebrow", training); tEyebrow.textContent = "Training";
@@ -175,14 +263,56 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
   // ---------------- settings: the gear ui/settings.ts mounts into the lobby root (hidden here: the nav pill is its face)
   function openSettings() { closePops(); root.querySelector<HTMLButtonElement>(".kr-video-gear")?.click(); }
 
+  // ---------------- wardrobe state
+  let outfitPref: PlayerOutfitPref = loadPlayerOutfit();
+  function paintWardrobe() {
+    const crownOk = hasVictoryCrown();
+    if (outfitPref.hat === CROWN_HAT_INDEX && !crownOk) outfitPref = { ...outfitPref, hat: -1 };
+    hatNote.textContent = crownOk ? "Victory Crown unlocked!" : "Win 1 match for Crown";
+    for (const opt of HAT_OPTIONS) {
+      const b = hatBtns.get(opt.idx)!;
+      const locked = opt.idx === CROWN_HAT_INDEX && !crownOk;
+      const on = outfitPref.mode === "custom" && outfitPref.hat === opt.idx;
+      b.setAttribute("aria-checked", String(on));
+      b.setAttribute("aria-disabled", locked ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+      b.innerHTML = locked ? `${ICON.lock}<span>${opt.label}</span>` : opt.idx === CROWN_HAT_INDEX ? `${ICON.crown}<span>${opt.label}</span>` : `<span>${opt.label}</span>`;
+    }
+    for (const opt of TOP_OPTIONS) {
+      const b = topBtns.get(opt.idx)!;
+      const on = outfitPref.mode === "custom" && outfitPref.top === opt.idx;
+      b.setAttribute("aria-checked", String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    let activeShortLabel = "Brick Red";
+    for (const s of shortBtns) {
+      const on = outfitPref.mode === "custom" && outfitPref.shorts === s.color;
+      s.btn.setAttribute("aria-checked", String(on));
+      s.btn.tabIndex = on ? 0 : -1;
+      if (on) activeShortLabel = s.label;
+    }
+    shortName.textContent = activeShortLabel;
+  }
+  function setOutfitPref(next: PlayerOutfitPref) {
+    outfitPref = next;
+    savePlayerOutfit(next);
+    paintWardrobe();
+    actions.setOutfit?.(next.mode === "custom" ? { hat: next.hat, top: next.top, shorts: next.shorts } : outfitFor(0, 77));
+  }
+  paintWardrobe();
+
   // ---------------- tabs
   function setTab(t: Tab, quiet = false) {
     if (t === "training" && ui === "room") return;   // (the range would leave the private lobby)
     const changed = t !== tab;
     tab = t; root.dataset.tab = t;
-    navPlay.classList.toggle("is-on", t === "play"); navTraining.classList.toggle("is-on", t === "training");
-    navPlay.setAttribute("aria-current", String(t === "play")); navTraining.setAttribute("aria-current", String(t === "training"));
-    if (changed && !quiet) swap(t === "play" ? play : training);
+    navPlay.classList.toggle("is-on", t === "play"); navWardrobe.classList.toggle("is-on", t === "wardrobe"); navTraining.classList.toggle("is-on", t === "training");
+    navPlay.setAttribute("aria-current", t === "play" ? "page" : "false");
+    navWardrobe.setAttribute("aria-current", t === "wardrobe" ? "page" : "false");
+    navTraining.setAttribute("aria-current", t === "training" ? "page" : "false");
+    if (t !== "wardrobe") actions.resetHeroSpin?.();
+    if (t === "wardrobe") paintWardrobe();
+    if (changed && !quiet) swap(t === "play" ? play : t === "wardrobe" ? wardrobe : training);
     paintHints();
   }
   const swap = (el: HTMLElement) => { el.classList.remove("tn-play-swap"); void el.offsetWidth; el.classList.add("tn-play-swap"); };
@@ -200,7 +330,7 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
   function paintDifficulty() { diffBtns.forEach((b, d) => { const on = d === difficulty; b.classList.toggle("is-on", on); b.setAttribute("aria-checked", String(on)); b.tabIndex = on ? 0 : -1; }); }
   function setDifficulty(d: BotDifficulty) { difficulty = d; store.set(DIFF_KEY, d); paintDifficulty(); actions.setDifficulty?.(d); }
   // radio groups: arrows move the choice (Tab enters / leaves the group on its chosen pill)
-  for (const g of [modes, seg]) g.addEventListener("keydown", (ev) => {
+  for (const g of [modes, seg, hatRow, topRow, shortRow]) g.addEventListener("keydown", (ev) => {
     const dir = ev.key === "ArrowRight" || ev.key === "ArrowDown" ? 1 : ev.key === "ArrowLeft" || ev.key === "ArrowUp" ? -1 : 0;
     if (!dir) return;
     const list = [...g.querySelectorAll<HTMLButtonElement>("button:not([disabled])")], i = list.indexOf(document.activeElement as HTMLButtonElement);
@@ -458,9 +588,11 @@ export function createLobby(actions: LobbyActions): LobbyScreen {
       root.classList.toggle("kr-hide", !v);
       if (v) {
         if (!was) { setTab("play", true); swap(main); }
+        paintWardrobe();
+        actions.setOutfit?.(outfitPref.mode === "custom" ? { hat: outfitPref.hat, top: outfitPref.top, shorts: outfitPref.shorts } : outfitFor(0, 77));
         btnGuide.querySelector("span")!.textContent = "Learn controls";
         server.start();
-      } else { closePops(); server.stop(); }
+      } else { closePops(); actions.resetHeroSpin?.(); server.stop(); }
     },
     get name() { return callsign(); },
   };

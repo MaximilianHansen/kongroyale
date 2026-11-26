@@ -12,13 +12,28 @@
 // The menu's left-to-right navy fade is the lobby's CSS (ui/lobby-styles.ts .tn-play-shade) over the canvas.
 import * as THREE from "three";
 import type { Engine } from "../engine/engine";
-import type { KongActor, KongPose } from "../actors/api";
+import type { KongActor, KongOutfit, KongPose } from "../actors/api";
+import { loadPlayerOutfit, outfitFor } from "../actors/outfit-pick";
 import type { GliderProps } from "../actors/glider";
 import type { PlaneProps } from "../actors/plane";
 import { resources } from "../engine/res/scope";
 import { flag } from "../flags";
 
-export interface TitleScene { update(dt: number, t: number): void; setVisible(v: boolean): void; group: THREE.Group; /** prewarm owns the camera */ freeze: boolean }
+export interface TitleScene {
+  update(dt: number, t: number): void;
+  setVisible(v: boolean): void;
+  group: THREE.Group;
+  /** prewarm owns the camera */
+  freeze: boolean;
+  /** live 3D wardrobe preview on the hero kong */
+  setOutfit(o: KongOutfit | null): void;
+  /** rotate the hero kong around Y (rad) while previewing in the Wardrobe */
+  spin(deltaRad: number): void;
+  /** ease the hero kong smoothly back to its default front pose */
+  resetSpin(): void;
+  /** play the hero's celebration emote on demand */
+  triggerEmote(): void;
+}
 export interface TitleKits {
   createKong: (ctx: Engine, o?: { variant?: number; lod?: "hi" | "lo" }) => Promise<KongActor>;
   createGlider: (ctx: Engine) => Promise<GliderProps>;
@@ -42,12 +57,18 @@ export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleK
   const T = engine.terrain;
   const F = { ...FRAME, ...((globalThis as { __krTitle?: Partial<typeof FRAME> }).__krTitle ?? {}) };
   let hero: KongActor | null = null;
+  let pendingOutfit: KongOutfit | null = (() => {
+    const p = loadPlayerOutfit();
+    return p.mode === "custom" ? { hat: p.hat, top: p.top, shorts: p.shorts } : outfitFor(0, 77);
+  })();
+  let spinTarget = 0, spinCur = 0, emoteUntil = -1;
   const heroPose: KongPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, vz: 0, state: "idle", crouch: false, sprint: false, weapon: "ar", fired: false, reloading: false, hurt: false, team: 0, friendly: false };
   void kits.createKong(engine, { variant: 0, lod: "hi" }).then((a) => {
     hero = a; group.add(a.object);
     // a warm studio key from the camera keeps the face lit; the sunset in the art sits behind its right shoulder
     const ex = a as KongActor & { setLook?(o: { key?: number }): void; animator?: { overlay: ((o: { R(b: "head", x: number): void }) => void) | null } };
     ex.setLook?.({ key: 0.5 });
+    a.setOutfit?.(pendingOutfit);
     if (ex.animator) ex.animator.overlay = (o) => { if (heroPose.state === "emote") o.R("head", 0.2); };
   });
 
@@ -141,12 +162,18 @@ export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleK
     get freeze() { return frozen; },
     set freeze(v: boolean) { frozen = v; hero?.setVisible(!v); },
     setVisible(v: boolean) { visible = v; group.visible = v; if (!v) { plane.object.visible = false; setDraw(false); } },
+    setOutfit(o: KongOutfit | null) { pendingOutfit = o; hero?.setOutfit?.(o); layerTick = 0; },
+    spin(deltaRad: number) { spinTarget += deltaRad; },
+    resetSpin() { spinTarget = 0; },
+    triggerEmote() { emoteUntil = t0 + 3.2; },
     update(dt: number) {
       if (!visible || this.freeze) { setDraw(false); return; }
       // (before the game is ready the boot prewarm draws the real scene from this camera: the override waits for ready)
       if (gameReady()) warmUp();
       setDraw(gameReady() && warm === "yes");
       t0 += dt;
+      spinCur += (spinTarget - spinCur) * Math.min(1, dt * 10);
+      if (Math.abs(spinTarget - spinCur) < 1e-4) spinCur = spinTarget;
       const cam = engine.camera;
       // the main camera: a slow 70 s ping-pong along the beach (the island streams in around the islet)
       const k = 0.5 - 0.5 * Math.cos(t0 * (Math.PI / 70));
@@ -159,10 +186,10 @@ export function createTitleScene(engine: Engine, plane: PlaneProps, kits: TitleK
       if (hero) {
         const hx = CAM.x + FWD.x * F.dist + RIGHT.x * F.right, hz = CAM.z + FWD.z * F.dist + RIGHT.z * F.right;
         heroPose.x = hx; heroPose.z = hz; heroPose.y = gy(hx, hz);
-        // face the camera, turned a touch toward the menu (the kong's forward is −Z of its yaw)
-        heroPose.yaw = Math.atan2(-(CAM.x - hx), -(CAM.z - hz)) + F.turn + Math.sin(t0 * 0.3) * 0.04;
+        // face the camera, turned a touch toward the menu (the kong's forward is −Z of its yaw) + wardrobe spin
+        heroPose.yaw = Math.atan2(-(CAM.x - hx), -(CAM.z - hz)) + F.turn + spinCur + Math.sin(t0 * 0.3) * 0.04;
         heroPose.pitch = F.pitch;
-        heroPose.state = (t0 % 16) > 12.6 ? "emote" : "idle";
+        heroPose.state = t0 < emoteUntil || (t0 % 16) > 12.6 ? "emote" : "idle";
         hero.apply(heroPose, dt);
       }
       plane.object.visible = false;

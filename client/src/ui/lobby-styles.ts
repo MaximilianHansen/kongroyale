@@ -90,9 +90,14 @@ const CSS = `
 
 /* ---------------- left column */
 .tn-play-main { position: absolute; left: ${T(84)}; top: ${T(228)}; width: ${T(560)}; z-index: 2; }
-.tn-play-sec-training { display: none; }
+.tn-play-sec-training, .tn-play-sec-wardrobe { display: none; }
 .tn-play[data-tab="training"] .tn-play-sec-play { display: none; }
 .tn-play[data-tab="training"] .tn-play-sec-training { display: block; }
+.tn-play[data-tab="wardrobe"] .tn-play-sec-play { display: none; }
+.tn-play[data-tab="wardrobe"] .tn-play-sec-wardrobe { display: block; }
+/* non-color-only active tab indicator (WCAG 1.4.1 & forced-colors safe) */
+.tn-play-nav .tn-pill { position: relative; }
+.tn-play-nav .tn-pill.is-on::after { content: ""; position: absolute; left: ${T(16)}; right: ${T(16)}; bottom: ${T(4)}; border-block-end: ${T(3)} solid currentColor; border-radius: 999px; }
 .tn-play-eyebrow { display: flex; align-items: center; gap: ${T(20)}; margin-bottom: ${T(20)}; font-size: ${T(16)}; line-height: ${T(24)}; letter-spacing: .1em; }
 .tn-play-eyebrow::before { content: ""; flex: none; width: ${T(44)}; height: ${hair}; background: currentColor; }
 .tn-play-display { margin: 0; text-transform: uppercase; white-space: nowrap; }
@@ -205,6 +210,40 @@ html.kr-calm .tn-play-spin { animation: none; }
 /* (the controls strip, current bindings: two rows, a little wider than the column) */
 .tn-play-keys { display: flex; flex-wrap: wrap; gap: ${T(14)} ${T(26)}; width: ${T(700)}; }
 .tn-play-keys .tn-play-hint { color: var(--kong-text); }
+
+/* ---------------- Wardrobe tab */
+.tn-play-sec-wardrobe .tn-play-display { font-size: ${T(92)}; line-height: ${T(84)}; }
+.tn-wd-groups { display: grid; gap: ${T(20)}; margin-top: ${T(24)}; width: ${T(580)}; }
+.tn-wd-group { display: grid; gap: ${T(10)}; }
+.tn-wd-head { margin: 0; font-family: var(--kong-font-ui); font-weight: 900; font-size: ${T(14)}; line-height: ${T(20)}; letter-spacing: .2em; text-transform: uppercase; color: var(--kong-text-muted); display: flex; align-items: center; justify-content: space-between; }
+.tn-wd-head small { font-weight: 700; letter-spacing: .12em; color: var(--kong-accent); }
+.tn-wd-grid { display: flex; flex-wrap: wrap; gap: ${T(9)}; }
+.tn-wd-chip { position: relative; display: inline-flex; align-items: center; gap: ${T(7)}; min-block-size: ${T(44)}; min-inline-size: ${T(44)}; padding: ${T(8)} ${T(16)}; box-sizing: border-box; cursor: pointer;
+  background: var(--kong-surface); color: var(--kong-text); border: var(--kong-outline-sm) solid var(--kong-outline); border-radius: ${T(12)}; box-shadow: var(--kong-drop-pill); --tn-play-drop: var(--kong-drop-pill);
+  font-family: var(--kong-font-ui); font-weight: 800; font-size: ${T(15)}; line-height: ${T(22)}; letter-spacing: .08em; text-transform: uppercase;
+  transition: transform var(--kong-motion-fast) var(--kong-ease-spring), background var(--kong-motion-fast), color var(--kong-motion-fast); }
+.tn-wd-chip:hover { background: var(--kong-surface-2); transform: translateY(${T(-2)}); }
+.tn-wd-chip:active { transform: translateY(${T(2)}); }
+.tn-wd-chip[aria-checked="true"] { background: var(--kong-accent); color: var(--kong-on-accent); border-color: var(--kong-outline); }
+.tn-wd-chip[aria-checked="true"]::before { content: ""; width: ${T(8)}; height: ${T(8)}; border-radius: 50%; background: currentColor; flex: none; }
+.tn-wd-chip[aria-disabled="true"] { background: var(--kong-disabled); color: var(--kong-disabled-text); cursor: not-allowed; opacity: .82; }
+.tn-wd-chip[aria-disabled="true"]:hover { transform: none; }
+.tn-wd-chip .tn-play-ico { width: ${T(16)}; height: ${T(18)}; }
+.tn-wd-chip:focus-visible, .tn-wd-swatch:focus-visible { outline: var(--kong-focus-width) solid var(--kong-focus); outline-offset: var(--kong-focus-offset); }
+.tn-wd-swatches { display: flex; flex-wrap: wrap; gap: ${T(12)}; align-items: center; }
+.tn-wd-swatch { position: relative; min-inline-size: ${T(44)}; min-block-size: ${T(44)}; padding: 0; border-radius: 50%; cursor: pointer;
+  background: var(--sw); border: var(--kong-outline-sm) solid var(--kong-outline); box-shadow: var(--kong-drop-pill); --tn-play-drop: var(--kong-drop-pill);
+  display: grid; place-items: center; transition: transform var(--kong-motion-fast) var(--kong-ease-spring); }
+.tn-wd-swatch:hover { transform: translateY(${T(-2)}) scale(1.06); }
+.tn-wd-swatch[aria-checked="true"] { border-color: var(--kong-text); box-shadow: 0 0 0 ${T(3)} var(--kong-accent), var(--kong-drop-pill); }
+.tn-wd-swatch[aria-checked="true"]::after { content: ""; width: ${T(14)}; height: ${T(8)}; border-left: ${T(3.5)} solid #fff; border-bottom: ${T(3.5)} solid #fff; transform: rotate(-45deg) translateY(${T(-1)}); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.85)); }
+.tn-wd-actions { display: flex; flex-wrap: wrap; gap: ${T(10)}; margin-top: ${T(6)}; }
+.tn-wd-stage { position: absolute; left: 42%; right: 0; top: ${T(130)}; bottom: ${T(120)}; z-index: 1; display: none; cursor: grab; touch-action: pan-y; }
+.tn-wd-stage.is-drag { cursor: grabbing; }
+.tn-play[data-tab="wardrobe"] .tn-wd-stage { display: block; }
+.tn-wd-draghint { position: absolute; right: ${T(76)}; bottom: ${T(12)}; padding: ${T(8)} ${T(16)}; border-radius: 999px; pointer-events: none;
+  background: ${a("--kong-bg", 72)}; border: var(--kong-outline-sm) solid ${a("--kong-text", 28)};
+  font-weight: 800; font-size: ${T(14)}; letter-spacing: .16em; text-transform: uppercase; color: var(--kong-text-muted); }
 
 /* ---------------- footer: keycap hints */
 .tn-play-foot { position: absolute; left: ${T(84)}; bottom: ${T(52)}; z-index: 2; display: flex; align-items: center; gap: ${T(36)}; }

@@ -139,7 +139,7 @@ const M4 = (x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, s = 1) => n
 const mesh = (g: THREE.BufferGeometry, m: THREE.Material, name: string) => { const x = new THREE.Mesh(g, m); x.name = name; x.castShadow = true; x.receiveShadow = true; x.frustumCulled = false; return x; };
 
 // ------------------------------------------------------------------------------------------------ outfits
-export type HatId = "straw" | "hardhat" | "tricorn";
+export type HatId = "straw" | "hardhat" | "tricorn" | "shades" | "bandana" | "crown";
 export type TopId = "hawaiian" | "vest" | "coat";
 /** head-local placement of a hat (sits on the skull top, tilted back a touch) — per kong asset (kong-asset.ts FACE.hat:
  *  the v1 seat was designed for the 0.86 head and scaled with the bigger mascot head; v2 sits on the Tripo skull) */
@@ -160,6 +160,68 @@ export function makeHat(id: HatId, detail = 1): THREE.Object3D {
     const brim = lathe([[0.22, 0.01], [0.3, 0.0], [0.305, -0.012], [0.3, -0.02], [0.22, -0.005]], 56, 1, 1.12);
     const ridge = new THREE.CapsuleGeometry(0.03, 0.34, detail < 1 ? 2 : 6, detail < 1 ? 6 : 12); ridge.rotateX(Math.PI / 2); ridge.scale(1, 0.8, 1); ridge.translate(0, 0.235, 0.0);
     g.add(mesh(dome, yel, "dome"), mesh(brim, yel, "brim"), mesh(ridge, yel, "ridge"));
+  } else if (id === "shades") {
+    // golden-rimmed tropical shades seated across the brow/eyes (head-local coordinates)
+    const gold = new THREE.MeshStandardMaterial({ color: "#f2c43a", metalness: 0.85, roughness: 0.24 });
+    const lens = new THREE.MeshStandardMaterial({ color: "#122230", metalness: 0.55, roughness: 0.14 });
+    const seg = detail < 1 ? 10 : 20;
+    const ey = FACE.eyeMid[1] + 0.015, ez = FACE.eyeMid[2] - 0.115;
+    for (const sx of [-1, 1]) {
+      const l = new THREE.CylinderGeometry(0.056, 0.052, 0.014, seg);
+      l.rotateX(Math.PI / 2); l.scale(1.18, 0.84, 1); l.rotateY(sx * -0.18); l.translate(sx * 0.072, ey, ez);
+      g.add(mesh(l, lens, sx < 0 ? "lensL" : "lensR"));
+      const rim = new THREE.TorusGeometry(0.056, 0.008, detail < 1 ? 4 : 8, seg);
+      rim.scale(1.18, 0.84, 1); rim.rotateY(sx * -0.18); rim.translate(sx * 0.072, ey, ez - 0.002);
+      g.add(mesh(rim, gold, sx < 0 ? "rimL" : "rimR"));
+      const arm = new THREE.BoxGeometry(0.01, 0.014, 0.22);
+      arm.rotateY(sx * 0.12); arm.translate(sx * 0.148, ey + 0.01, ez + 0.12);
+      g.add(mesh(arm, gold, sx < 0 ? "armL" : "armR"));
+    }
+    const bridge = new THREE.BoxGeometry(0.044, 0.012, 0.012); bridge.translate(0, ey + 0.012, ez - 0.008);
+    const brow = new THREE.BoxGeometry(0.24, 0.011, 0.011); brow.translate(0, ey + 0.046, ez - 0.005);
+    g.add(mesh(bridge, gold, "bridge"), mesh(brow, gold, "brow"));
+  } else if (id === "bandana") {
+    // crimson jungle headband wrapped around the brow with knotted tails at the back (head-local)
+    const red = new THREE.MeshStandardMaterial({ color: "#d62828", roughness: 0.72 });
+    const trim = new THREE.MeshStandardMaterial({ color: "#ffd230", roughness: 0.55 });
+    const by = FACE.brow.c[1] + 0.025, bz = 0.075;
+    const band = lathe([[0.232, -0.036], [0.238, -0.01], [0.238, 0.025], [0.228, 0.042]], 44, 1.0, 1.08);
+    band.rotateX(-0.08); band.translate(0, by, bz);
+    const stripe = lathe([[0.24, -0.008], [0.242, 0.008]], 44, 1.0, 1.08);
+    stripe.rotateX(-0.08); stripe.translate(0, by, bz);
+    const knot = new THREE.SphereGeometry(0.036, detail < 1 ? 6 : 12, detail < 1 ? 5 : 8);
+    knot.scale(1.15, 0.85, 0.9); knot.translate(0, by + 0.01, bz + 0.255);
+    g.add(mesh(band, red, "band"), mesh(stripe, trim, "stripe"), mesh(knot, red, "knot"));
+    for (const [sx, rz, len] of [[-1, 0.28, 0.22], [1, -0.34, 0.18]] as const) {
+      const tail = new THREE.BoxGeometry(0.045, len, 0.012);
+      tail.translate(0, -len * 0.5, 0); tail.rotateX(0.35); tail.rotateZ(rz);
+      tail.translate(sx * 0.02, by, bz + 0.26);
+      g.add(mesh(tail, red, sx < 0 ? "tailL" : "tailR"));
+    }
+  } else if (id === "crown") {
+    // royal victory crown: gleaming gold 5-point circlet, crimson cap, emerald & ruby gems
+    const gold = new THREE.MeshStandardMaterial({ color: "#ffcf2e", metalness: 0.85, roughness: 0.22 });
+    const rimM = new THREE.MeshStandardMaterial({ color: "#e59d14", metalness: 0.82, roughness: 0.28 });
+    const velvet = new THREE.MeshStandardMaterial({ color: "#8c1622", roughness: 0.85 });
+    const ruby = new THREE.MeshStandardMaterial({ color: "#ff3355", roughness: 0.2 });
+    const emerald = new THREE.MeshStandardMaterial({ color: "#28d97c", roughness: 0.2 });
+    const base = lathe([[0.175, 0.0], [0.185, 0.02], [0.195, 0.085], [0.18, 0.095], [0.165, 0.02]], 40);
+    const rim = new THREE.TorusGeometry(0.18, 0.015, detail < 1 ? 4 : 8, Math.max(12, Math.round(40 * detail)));
+    rim.rotateX(Math.PI / 2); rim.translate(0, 0.012, 0);
+    const cap = lathe([[0.165, 0.04], [0.16, 0.11], [0.11, 0.155], [0, 0.17]], 28);
+    g.add(mesh(base, gold, "base"), mesh(rim, rimM, "rim"), mesh(cap, velvet, "cap"));
+    const pts = 5;
+    for (let k = 0; k < pts; k++) {
+      const a = (k / pts) * TAU - Math.PI / 2;
+      const sx = Math.cos(a) * 0.188, sz = Math.sin(a) * 0.188;
+      const spire = new THREE.ConeGeometry(0.052, 0.13, 4);
+      spire.rotateY(-a + Math.PI / 4); spire.translate(sx, 0.14, sz);
+      const orb = new THREE.SphereGeometry(0.02, detail < 1 ? 5 : 10, detail < 1 ? 4 : 8);
+      orb.translate(sx, 0.21, sz);
+      const gem = new THREE.OctahedronGeometry(0.022, 0);
+      gem.scale(0.85, 1.15, 0.6); gem.rotateY(-a + Math.PI / 2); gem.translate(Math.cos(a) * 0.198, 0.055, Math.sin(a) * 0.198);
+      g.add(mesh(spire, gold, `spire${k}`), mesh(orb, rimM, `orb${k}`), mesh(gem, k % 2 === 0 ? ruby : emerald, `gem${k}`));
+    }
   } else {
     const felt = new THREE.MeshStandardMaterial({ color: "#2a211c", roughness: 0.8 });
     const gold = new THREE.MeshStandardMaterial({ color: "#d9a93c", metalness: 0.8, roughness: 0.3 });
@@ -285,7 +347,7 @@ function loadGarments(): Promise<Map<TopId, Garment> | null> {
 // kong-variety: every kong in a match
 // wears a seeded mix of these hats + tops. kong.ts draws them INSTANCED through the same bone texture as the bodies
 // (hats rigid on the head bone, tops skinned like the fur under them), hi + lo tiers only.
-export const HAT_IDS: HatId[] = ["straw", "hardhat", "tricorn"];
+export const HAT_IDS: HatId[] = ["straw", "hardhat", "tricorn", "shades", "bandana", "crown"];
 export const TOP_IDS: TopId[] = ["hawaiian", "vest", "coat"];
 export { outfitFor } from "./outfit-pick";
 export type Outfit = KongOutfit;
@@ -293,10 +355,13 @@ export type Outfit = KongOutfit;
 /** rest-pose model-space accessory geometry with the kong skin attributes (aBones / aWeights), per tier [hi, lo] */
 export interface AccPiece { tiers: [THREE.BufferGeometry, THREE.BufferGeometry]; mat: THREE.Material }
 const HEAD_J = () => REST_J[BONE_LIST.indexOf("head")];
+const HEAD_DIRECT = new Set<HatId>(["shades", "bandana"]);
 /** a hat as ONE geometry, its sub-meshes' material colours baked into vertex colours (the straw keeps its weave map) */
 function hatGeometry(id: HatId, detail: number): THREE.BufferGeometry {
   const g = makeHat(id, detail);
-  const M = new THREE.Matrix4().makeTranslation(HEAD_J()).multiply(HAT_AT);
+  const M = HEAD_DIRECT.has(id)
+    ? new THREE.Matrix4().makeTranslation(HEAD_J())
+    : new THREE.Matrix4().makeTranslation(HEAD_J()).multiply(HAT_AT);
   const parts: THREE.BufferGeometry[] = [];
   g.updateMatrixWorld(true);
   g.traverse((o) => {
@@ -358,7 +423,13 @@ export async function loadAccessories(): Promise<{ hats: AccPiece[]; tops: AccPi
   const t = textures();
   const hats = HAT_IDS.map((id): AccPiece => ({
     tiers: [hatGeometry(id, 1), hatGeometry(id, 0.3)],
-    mat: new THREE.MeshStandardMaterial({ vertexColors: true, map: id === "straw" ? t.straw : null, roughness: id === "hardhat" ? 0.36 : id === "straw" ? 0.85 : 0.72, metalness: 0, name: `hat-${id}` }),
+    mat: new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      map: id === "straw" ? t.straw : null,
+      roughness: id === "crown" ? 0.24 : id === "shades" ? 0.2 : id === "hardhat" ? 0.36 : id === "straw" ? 0.85 : 0.72,
+      metalness: id === "crown" ? 0.75 : id === "shades" ? 0.45 : 0,
+      name: `hat-${id}`,
+    }),
   }));
   let tops: AccPiece[] = [];
   if (KONG_VER === "v2") {

@@ -292,6 +292,14 @@ export interface LobbyActions {
   leave(): void;
   /** optional (admin lobby): pick a TRIOS team in an event lobby (0-based; −1 = no team, auto-placed at START) */
   pickTeam?(team: number): void;
+  /** optional (Wardrobe): preview outfit live on the title kong */
+  setOutfit?(o: import("../actors/api").KongOutfit | null): void;
+  /** optional (Wardrobe): spin the live 3D title kong by deltaRad */
+  spinHero?(deltaRad: number): void;
+  /** optional (Wardrobe): ease the 3D title kong back to front-facing */
+  resetHeroSpin?(): void;
+  /** optional (Wardrobe): trigger celebration emote on the title kong */
+  emoteHero?(): void;
 }
 export interface LobbyScreen {
   el: HTMLElement;
