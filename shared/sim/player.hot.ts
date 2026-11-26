@@ -11,6 +11,11 @@ import { CLIMB } from "./climb";
 import { PS, B, seatAsked, ammoIndex, type Input, copyInput, SK, type Player, height, weaponDef, consumableDef, fallDamage, noteShot, coolHeat, BUSY_IN } from "./player";
 import * as dmath from "./dmath";
 
+/** max 3D displacement (m) per collision sub-step: keeps walking/sprinting at 1 step (≤ 0.123 m) while sub-stepping
+ *  high-speed motion (sliding, red banana, gliding, freefall) to ≤ 0.13 m so fast capsules never cross thin walls
+ *  (0.20 m) or thin roof slabs (0.20-0.24 m) */
+const MAX_SUBSTEP = 0.13;
+const MAX_SUBSTEPS = 10;
 /** red banana multipliers (shared/sim/const.ts CONSUMABLE_DEFS) */
 const RED_SPEED = CONSUMABLE_DEFS["red-banana"].speedMul ?? 1, RED_JUMP = CONSUMABLE_DEFS["red-banana"].jumpMul ?? 1;
 /** the deterministic per-tick step. `groundedBefore` etc are all in `p`. */
@@ -243,12 +248,20 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   if (gs !== null && gs.count < gs.panes.n && (p.sprint || !p.grounded || p.mvT > 0)) glassBody(gs, p.x, p.y, p.z, h, p.vx, p.vz, dt, p.id);
   // integrate + collide (sub-step when fast)
   const wasGrounded = p.grounded, wasSlope = p.slope || (p.grounded && p.surf === 255 && slideNow(p, world));
-  const steps = dmath.hypot3(p.vx, p.vz, p.vy) * dt > PLAYER_R ? 3 : 1;
+  const moveDist = dmath.hypot3(p.vx, p.vz, p.vy) * dt;
+  const steps = moveDist > MAX_SUBSTEP ? Math.min(MAX_SUBSTEPS, Math.ceil(moveDist / MAX_SUBSTEP)) : 1;
   const sdt = dt / steps;
   for (let s = 0; s < steps; s++) {
-    p.x += p.vx * sdt; p.y += p.vy * sdt; p.z += p.vz * sdt;
+    const ox = p.x, oy = p.y, oz = p.z;
+    const nx = ox + p.vx * sdt, nz = oz + p.vz * sdt;
+    let ny = oy + p.vy * sdt;
+    // vertical swept roof/floor catch when falling fast so thin slabs (0.20-0.24 m) can never be crossed in one sub-step
+    if (!p.grounded && !p.swim && p.vy < -6 && ny < oy) {
+      world.raycast(nx, oy + 0.05, nz, 0, -1, 0, oy - ny + 0.08, CCD, false);
+      if (CCD.hit && CCD.ny >= SLOPE_LIMIT && CCD.y <= oy + 0.05 && CCD.y > ny) ny = Math.max(ny, CCD.y - 0.002);
+    }
     world.velY = p.vy; world.wallHit = false; world.headBump = false;
-    world.resolveMove(p.x, p.y, p.z, p.vx * sdt, p.vy * sdt, p.vz * sdt, PLAYER_R, h, true);   // capped depenetration
+    world.resolveMove(nx, ny, nz, nx - ox, ny - oy, nz - oz, PLAYER_R, h, true);   // capped depenetration
     p.x = world.P[0]; p.y = world.P[1]; p.z = world.P[2];
     if (world.wallHit) {
       const d = p.vx * world.wallNx + p.vz * world.wallNz;
@@ -361,7 +374,7 @@ export function canPullChute(p: Player, world: StaticWorld): boolean {
   return p.st === PS.Ground && !p.grounded && !p.swim && p.coyote <= 0 && fallWouldHurt(p, world);
 }
 
-const DOWN = makeHit(), SNAP = makeHit();
+const DOWN = makeHit(), SNAP = makeHit(), CCD = makeHit();
 
 /** a kong killed while jumping, gliding,
  *  in freefall, on a ladder or zipline drops: plain gravity (terminal 55 m/s) until the first floor / box top / terrain
@@ -705,21 +718,46 @@ function stepAir(p: Player, inp: Input, world: StaticWorld, dt: number, pressed:
   springStep(p.vx, p.mvT, tx, wh, dt, SP); p.vx = SP[0]; p.mvT = SP[1];
   springStep(p.vz, p.mvY, tz, wh, dt, SP); p.vz = SP[0]; p.mvY = SP[1];
   springStep(p.vy, p.fallV, ty, wv, dt, SP); p.vy = SP[0]; p.fallV = SP[1];
-  p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+  // break glass on high-speed entry into upper-floor windows (solid walls & roofs below still block cleanly)
+  const gs = world.glass;
+  if (gs !== null && gs.count < gs.panes.n && agl <= 45) glassBody(gs, p.x, p.y, p.z, PLAYER_H, p.vx, p.vz, dt, p.id);
+  // continuous sub-stepping + swept roof CCD + full wall/roof resolution: prevents gliding or diving through roofs and 2nd-floor walls
   const lim = world.terrain.half - 4;
-  if (p.x > lim) { p.x = lim; p.vx = 0; p.mvT = 0; } else if (p.x < -lim) { p.x = -lim; p.vx = 0; p.mvT = 0; }
-  if (p.z > lim) { p.z = lim; p.vz = 0; p.mvY = 0; } else if (p.z < -lim) { p.z = -lim; p.vz = 0; p.mvY = 0; }
-  // land
-  world.velY = p.vy; world.wallHit = false;
-  world.resolveCapsule(p.x, p.y, p.z, PLAYER_R, PLAYER_H, false);
-  const landedOnBox = world.G[0] > 0 && world.G[4] !== 255;
-  const g2 = world.ground(p.x, p.z);
-  if (landedOnBox || p.y <= g2 + 0.02 || p.y <= WATER_LEVEL - 0.6) {
-    p.x = world.P[0]; p.y = Math.max(world.P[1], p.y <= WATER_LEVEL - 0.6 ? WATER_LEVEL - 1.15 : world.P[1]); p.z = world.P[2];
-    const hard = p.st === PS.Freefall;
-    p.st = PS.Ground; p.grounded = !(p.y < WATER_LEVEL - 0.5);
-    if (hard) { p.vy = 0; fallDamage(p, 45); p.anim |= 4; }
-    p.vy = 0; p.vx *= 0.3; p.vz *= 0.3; leaveAir(p); p.airT = 0; p.landedAt = 0;
+  const moveDist = dmath.hypot3(p.vx, p.vz, p.vy) * dt;
+  const steps = agl <= 80 && moveDist > MAX_SUBSTEP ? Math.min(MAX_SUBSTEPS, Math.ceil(moveDist / MAX_SUBSTEP)) : 1;
+  const sdt = dt / steps;
+  world.resetDepen();
+  for (let s = 0; s < steps; s++) {
+    const ox = p.x, oy = p.y, oz = p.z;
+    let nx = ox + p.vx * sdt, ny = oy + p.vy * sdt, nz = oz + p.vz * sdt;
+    if (nx > lim) { nx = lim; p.vx = 0; p.mvT = 0; } else if (nx < -lim) { nx = -lim; p.vx = 0; p.mvT = 0; }
+    if (nz > lim) { nz = lim; p.vz = 0; p.mvY = 0; } else if (nz < -lim) { nz = -lim; p.vz = 0; p.mvY = 0; }
+    // vertical swept roof catch: stops fast dive/freefall cleanly on thin roofs instead of skipping through them
+    if (ny < oy) {
+      world.raycast(nx, oy + 0.05, nz, 0, -1, 0, oy - ny + 0.08, CCD, false);
+      if (CCD.hit && CCD.ny >= SLOPE_LIMIT && CCD.y <= oy + 0.05 && CCD.y > ny) ny = Math.max(ny, CCD.y - 0.002);
+    }
+    world.velY = p.vy; world.wallHit = false; world.headBump = false;
+    world.resolveMove(nx, ny, nz, nx - ox, ny - oy, nz - oz, PLAYER_R, PLAYER_H, true);
+    p.x = world.P[0]; p.y = world.P[1]; p.z = world.P[2];
+    if (world.wallHit) {
+      const vn = p.vx * world.wallNx + p.vz * world.wallNz;
+      if (vn < 0) { p.vx -= world.wallNx * vn; p.vz -= world.wallNz * vn; }
+      const an = p.mvT * world.wallNx + p.mvY * world.wallNz;
+      if (an < 0) { p.mvT -= world.wallNx * an; p.mvY -= world.wallNz * an; }
+    }
+    if (world.headBump && p.vy > 0) { p.vy = 0; p.fallV = 0; }
+    const landedOnBox = world.G[0] > 0 && world.G[4] !== 255;
+    const g2 = world.ground(p.x, p.z);
+    if (landedOnBox || p.y <= g2 + 0.02 || p.y <= WATER_LEVEL - 0.6) {
+      if (p.y <= WATER_LEVEL - 0.6) p.y = Math.max(p.y, WATER_LEVEL - 1.15);
+      const hard = p.st === PS.Freefall;
+      p.st = PS.Ground; p.grounded = !(p.y < WATER_LEVEL - 0.5);
+      p.surf = world.G[0] > 0 ? world.G[4] : 255;
+      if (hard) { p.vy = 0; fallDamage(p, 45); p.anim |= 4; }
+      p.vy = 0; p.vx *= 0.3; p.vz *= 0.3; leaveAir(p); p.airT = 0; p.landedAt = 0;
+      break;
+    }
   }
   stepHands(p, inp, dt, pressed);
 }

@@ -251,13 +251,15 @@ export class StaticWorld {
   }
   // per-player step-up of the last ground tick (the renderer smooths the body / camera over ~90 ms instead of showing a
   // 0.55 m single-tick snap): the mover's unstick() call opens a player's tick, resolveMove accumulates its lifts
-  private stepBody: object | null = null; private stepAcc = 0;
+  private stepBody: object | null = null; private stepAcc = 0; private depenLeft = DEPEN_STEP;
   /** metres the solver stepped player `p` up during its last ground tick (0 = none). Client render: on a new value > 0,
    * add −value to a render-only Y offset that decays to 0 over 80-100 ms. */
   stepLift(p: object): number { if (p === this.stepBody) return this.stepAcc; const S = US.get(p); return S ? S[9] : 0; }
+  /** reset per-tick depenetration cap (called at the start of air ticks; ground ticks reset it in openTick) */
+  resetDepen() { this.depenLeft = DEPEN_STEP; }
   private openTick(p: object) {
     if (this.stepBody && this.stepBody !== p) { let S = US.get(this.stepBody); if (!S) US.set(this.stepBody, S = new Float64Array(10)); S[9] = this.stepAcc; }
-    this.stepBody = p; this.stepAcc = 0;
+    this.stepBody = p; this.stepAcc = 0; this.depenLeft = DEPEN_STEP;
   }
 
   /**
@@ -287,6 +289,16 @@ export class StaticWorld {
         if (bl > 1e-9) { this.wallHit = true; this.wallNx = bx / bl; this.wallNz = bz / bl; } else { this.wallNx = wallX; this.wallNz = wallZ; }
         return;
       }
+      // 1b. diagonal corner/eave jam (horizontal revert alone still overlapped vertically): revert the full sub-step if clear
+      if (Math.abs(y - fy) > 1e-6) {
+        P[0] = fx; P[1] = fy; P[2] = fz; G[0] = 0; G[1] = 0; G[2] = 1; G[3] = 0; G[4] = 5; this.stepDy = 0;
+        this.floorTerrain();
+        if (this.solve(r, h, stepUp)) {
+          const bx = fx - x, bz = fz - z, bl = dmath.hypot(bx, bz);
+          if (bl > 1e-9) { this.wallHit = true; this.wallNx = bx / bl; this.wallNz = bz / bl; } else { this.wallNx = wallX; this.wallNz = wallZ; }
+          return;
+        }
+      }
       // 2. already embedded where the move started: glide toward the nearest free standable spot
       if (this.findFree(fx, fy, fz, r, h)) { this.glide(fx, fy, fz, this.FT[0], this.FT[1], this.FT[2]); return; }
       // 3. buried in a volume with no free spot in reach (a POI collider box swallowing the terrain surface): the boxes
@@ -308,11 +320,13 @@ export class StaticWorld {
     }
   }
 
-  /** P = from + (to - from) capped to DEPEN_STEP; held as grounded, the wall normal = the glide direction */
+  /** P = from + (to - from) capped to this tick's remaining DEPEN_STEP; held as grounded, the wall normal = the glide direction */
   private glide(fx: number, fy: number, fz: number, tx: number, ty: number, tz: number) {
     const P = this.P, G = this.G;
     const dx = tx - fx, dy = ty - fy, dz = tz - fz, d = dmath.hypot3(dx, dy, dz);
-    const k = d > DEPEN_STEP ? DEPEN_STEP / d : 1;
+    const cap = this.depenLeft;
+    const k = cap <= 1e-9 ? 0 : d > cap ? cap / d : 1;
+    this.depenLeft = Math.max(0, cap - d * k);
     P[0] = fx + dx * k; P[1] = fy + dy * k; P[2] = fz + dz * k;
     const gy = this.terrain.height(P[0], P[2]); if (P[1] < gy) P[1] = gy;
     G[0] = 1; G[1] = 0; G[2] = 1; G[3] = 0;

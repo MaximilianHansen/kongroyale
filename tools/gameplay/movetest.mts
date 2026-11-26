@@ -144,6 +144,92 @@ const open = new StaticWorld(FLAT, [] as never);
   check("air steering never adds speed", vmax <= C.SPRINT + 0.05, `max ${vmax.toFixed(2)} m/s`);
 }
 
+// ---------------------------------------------------------------- anti-tunneling (high-speed roofs & 2nd-floor walls)
+{
+  const PS_FREEFALL = 1, PS_GLIDE = 2;
+  // 2-story house: ground floor y=10, 2nd floor y=14, thin 0.20 m roof at y=18 (top=18.0, bot=17.8), thin 0.20 m front wall at z=0
+  const house = new StaticWorld(FLAT, [
+    { c: [0, 14 - 0.12, -4], h: [5, 0.12, 4], surf: "wood" },      // 2nd floor slab (0.24 m)
+    { c: [0, 18 - 0.10, -4], h: [5, 0.10, 4], surf: "concrete" },  // thin roof slab (0.20 m, top=18.0)
+    { c: [0, 14, 0], h: [5, 4, 0.10], surf: "concrete" },          // thin exterior wall (0.20 m, z in [-0.1, +0.1])
+  ] as never);
+
+  // (a) Parachute full-speed dive straight onto thin 0.20 m roof (starts ahead so trajectory hits roof centre z ≈ -4)
+  {
+    const p = makePlayer(0, 0, "g", false);
+    p.st = PS_GLIDE; p.x = 0; p.y = 26; p.z = 5; p.vx = 0; p.vy = -22; p.vz = -24; p.grounded = false;
+    const inp = makeInput();
+    for (let i = 0; i < 60; i++) {
+      inp.mz = 1; inp.buttons = B.DIVE; inp.yaw = 0; inp.pitch = -1.2; inp.seq = i + 1;
+      stepPlayer(p, inp, house, DT);
+      if (p.st === 0) break;
+    }
+    check("glide full dive lands ON thin 0.20 m roof", p.st === 0 && p.y >= 17.95, `st=${p.st} y=${p.y.toFixed(2)} z=${p.z.toFixed(2)}`);
+  }
+
+  // (b) Parachute full-speed dive onto terraced pitched roof (town-kit 0.45 m steps, 0.24 m thick)
+  {
+    const terraces: Box[] = [];
+    for (let k = 0; k < 5; k++) {
+      const topY = 18.0 + (4 - k) * 0.45;
+      terraces.push({ c: [0, topY - 0.12, -4 + k * 1.1], h: [5, 0.12, 0.56], surf: "metal" });
+    }
+    const pitched = new StaticWorld(FLAT, terraces as never);
+    const p = makePlayer(0, 0, "gp", false);
+    p.st = PS_GLIDE; p.x = 0; p.y = 25; p.z = 2; p.vx = 0; p.vy = -22; p.vz = -24; p.grounded = false;
+    const inp = makeInput();
+    for (let i = 0; i < 60; i++) {
+      inp.mz = 1; inp.buttons = B.DIVE; inp.yaw = 0; inp.pitch = -1.1; inp.seq = i + 1;
+      stepPlayer(p, inp, pitched, DT);
+      if (p.st === 0) break;
+    }
+    check("glide dive lands ON terraced pitched roof", p.st === 0 && p.y >= 17.95, `st=${p.st} y=${p.y.toFixed(2)} z=${p.z.toFixed(2)}`);
+  }
+
+  // (c) Parachute flying sideways/forward at 26 m/s directly into thin 0.20 m 2nd-floor exterior wall
+  {
+    const p = makePlayer(0, 0, "gw", false);
+    p.st = PS_GLIDE; p.x = 0; p.y = 14.8; p.z = 4.0; p.vx = 0; p.vy = -4; p.vz = -26; p.grounded = false;
+    const inp = makeInput();
+    let minZ = p.z;
+    for (let i = 0; i < 25; i++) {
+      inp.mz = 1; inp.buttons = 0; inp.yaw = 0; inp.pitch = 0; inp.seq = i + 1;
+      stepPlayer(p, inp, house, DT);
+      if (p.z < minZ) minZ = p.z;
+    }
+    check("glide 26 m/s blocked by 2nd-floor thin wall", minZ >= 0.45, `minZ=${minZ.toFixed(2)} end=(${p.z.toFixed(2)}, y=${p.y.toFixed(2)})`);
+  }
+
+  // (d) Terminal-velocity fall (-60 m/s) in PS.Ground & PS.Freefall onto razor-thin 0.16 m roof
+  {
+    const thinRoof = new StaticWorld(FLAT, [{ c: [0, 18 - 0.08, -4], h: [5, 0.08, 4], surf: "metal" }] as never);
+    const p1 = makePlayer(0, 0, "f1", false);
+    p1.st = 0; p1.x = 0; p1.y = 22; p1.z = -4; p1.vy = -60; p1.grounded = false;
+    const inp = makeInput();
+    for (let i = 0; i < 20; i++) { inp.seq = i + 1; stepPlayer(p1, inp, thinRoof, DT); }
+    check("terminal fall (-60 m/s) stops ON 0.16 m roof", p1.grounded && p1.y >= 17.95, `grounded=${p1.grounded} y=${p1.y.toFixed(2)}`);
+
+    const p2 = makePlayer(0, 0, "f2", false);
+    p2.st = PS_FREEFALL; p2.x = 0; p2.y = 22; p2.z = -4; p2.vy = -60; p2.grounded = false;
+    for (let i = 0; i < 20; i++) { inp.buttons = B.DIVE; inp.pitch = -1.4; inp.seq = i + 1; stepPlayer(p2, inp, thinRoof, DT); if (p2.st === 0) break; }
+    check("freefall (-60 m/s) lands ON 0.16 m roof", p2.st === 0 && p2.y >= 17.95, `st=${p2.st} y=${p2.y.toFixed(2)}`);
+  }
+
+  // (e) Fast 25 m/s horizontal dash at thin 0.20 m 2nd-floor wall
+  {
+    const p = makePlayer(0, 0, "gr", false);
+    p.st = 0; p.x = 0; p.y = 14.5; p.z = 2.0; p.vx = 0; p.vy = 2; p.vz = -25; p.grounded = false;
+    const inp = makeInput();
+    let minZ = p.z;
+    for (let i = 0; i < 20; i++) {
+      inp.mz = 1; inp.buttons = B.SPRINT; inp.yaw = 0; inp.seq = i + 1;
+      stepPlayer(p, inp, house, DT);
+      if (p.z < minZ) minZ = p.z;
+    }
+    check("fast 25 m/s dash blocked by thin 2nd-floor wall", minZ >= 0.45, `minZ=${minZ.toFixed(2)} end=(${p.z.toFixed(2)}, y=${p.y.toFixed(2)})`);
+  }
+}
+
 // ---------------------------------------------------------------- determinism (prediction == server)
 {
   const w = ledge(1.9);
