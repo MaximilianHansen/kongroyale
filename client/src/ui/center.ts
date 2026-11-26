@@ -9,7 +9,7 @@ import type { WeaponId } from "../../../shared/world/map";
 
 const SZ = 800, CX = 400, CY = 400;
 /** static crosshair gap (u px) per weapon when the game does not feed `spread` */
-const STATIC_GAP: Record<WeaponId, number> = { pistol: 10, smg: 14, ar: 12, shotgun: 44, sniper: 0, rocket: 20 };
+const STATIC_GAP: Record<WeaponId, number> = { pistol: 10, smg: 14, ar: 12, shotgun: 44, sniper: 0, rocket: 20, bow: 10, minigun: 24 };
 const HIT_COL = { body: "255,255,255", head: "255,184,0", shield: "94,206,255", break: "94,206,255", kill: "255,59,48" } as const;
 /** confirmed head / shield / shield-break hits draw a ring around the marker for this long (s) */
 const RING_LIFE = 0.5;
@@ -308,6 +308,31 @@ export class CenterLayer {
           g.lineWidth = pass === 0 ? 3.6 : 1.6;
           g.beginPath(); g.arc(CX, CY, 14 + G * 0.6, 0, Math.PI * 2); g.stroke();
         }
+        break;
+      }
+      case "bow": {
+        dot(2.6);
+        for (const pass of [0, 1]) {
+          g.strokeStyle = pass === 0 ? dark : white;
+          g.lineWidth = pass === 0 ? 4.4 : 2.2;
+          g.beginPath();
+          // hunting bow side brackets + ballistic elevation drops below center
+          g.arc(CX, CY, 18 + G * 0.35, -0.55, 0.55);
+          g.moveTo(CX - Math.cos(0.55) * (18 + G * 0.35), CY - Math.sin(0.55) * (18 + G * 0.35));
+          g.arc(CX, CY, 18 + G * 0.35, Math.PI - 0.55, Math.PI + 0.55);
+          for (let i = 1; i <= 3; i++) { const y = CY + 12 + i * 11, w2 = 10 - i * 2; g.moveTo(CX - w2, y); g.lineTo(CX + w2, y); }
+          g.stroke();
+        }
+        break;
+      }
+      case "minigun": {
+        for (const pass of [0, 1]) {
+          g.strokeStyle = pass === 0 ? dark : white;
+          g.lineWidth = pass === 0 ? 4.6 : 2.2;
+          g.beginPath(); g.arc(CX, CY, Math.max(18, G), 0, Math.PI * 2); g.stroke();
+        }
+        ticks(Math.max(18, G) + 5, 10, 3);
+        dot(2.4);
         break;
       }
       default: {

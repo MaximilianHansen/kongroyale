@@ -26,6 +26,8 @@ const MZ: Record<WeaponId, { size: number; flame: number; prongs: number; sparks
   shotgun: { size: 0.4, flame: 1.5, prongs: 4, sparks: 9, smoke: 3, speed: 230, tint: [1, 0.8, 0.5] },
   sniper: { size: 0.34, flame: 1.8, prongs: 3, sparks: 5, smoke: 2, speed: 900, tint: [1, 0.92, 0.75] },
   rocket: { size: 0.5, flame: 0.8, prongs: 0, sparks: 6, smoke: 5, speed: 60, tint: [1, 0.75, 0.4] },
+  bow: { size: 0, flame: 0, prongs: 0, sparks: 0, smoke: 0, speed: 78, tint: [0.9, 1, 0.7] },
+  minigun: { size: 0.28, flame: 1.45, prongs: 4, sparks: 5, smoke: 1, speed: 440, tint: [1, 0.86, 0.45] },
 };
 
 /** per-surface impact recipe */
@@ -99,6 +101,7 @@ export function createFx(ctx: WorldCtx): FxSystem {
   const fx: FxSystem = {
     object, glow, smoke, decal, chunks, now: () => now,
     muzzleFlash(pos, dir, weapon, firstPerson) {
+      if (weapon === "bow") return;
       // not a thin line-art star in a washed-out white bloom: a hot, mostly OPAQUE flame
       // that reads against a bright sky — a fireball core, a long forward flame body, 4-6 fat petals of flame round the
       // muzzle, side tongues, sparks, and a lit smoke puff that hangs for ~1 s. No full-screen additive halo.
@@ -154,7 +157,7 @@ export function createFx(ctx: WorldCtx): FxSystem {
       }
     },
     shell(pos, vel, weapon) {
-      if (weapon === "rocket") return;
+      if (weapon === "rocket" || weapon === "bow") return;
       C_.shape = weapon === "shotgun" ? K.HULL : K.CASING;
       C_.x = pos.x; C_.y = pos.y; C_.z = pos.z; C_.vx = vel.x; C_.vy = vel.y; C_.vz = vel.z;
       C_.life = 2.6; C_.scale = weapon === "sniper" ? 2.2 : weapon === "pistol" ? 1.5 : 1.7; C_.len = 1; C_.floor = floorAt(pos.x, pos.z); C_.rest = 0.38; C_.spin = 22; C_.grav = 1;
@@ -176,7 +179,7 @@ export function createFx(ctx: WorldCtx): FxSystem {
         G_.r = 1.3; G_.g = 1.15; G_.b = 0.8; G_.a = 1; G_.shape = G.BEAM; G_.mode = M.SEG; G_.e0 = dist;
         glow.emit();
       }
-      if (weapon === "rocket") return;
+      if (weapon === "rocket" || weapon === "bow") return;
       G_.x = from.x; G_.y = from.y; G_.z = from.z; G_.vx = _a.x; G_.vy = _a.y; G_.vz = _a.z;
       // readable tracers: thicker, HDR warm-yellow streaks
       G_.life = dist / m.speed + 0.08; G_.s0 = weapon === "shotgun" ? 0.04 : 0.065; G_.s1 = G_.s0;
@@ -462,6 +465,78 @@ export function createRocketView(ctx: WorldCtx, fx: FxEx): { object: THREE.Objec
       }
       last.copy(cur);
       void ctx;
+    },
+  };
+}
+
+let ARROW_SHARED: {
+  shaftGeo: THREE.BufferGeometry; tipGeo: THREE.BufferGeometry; finGeo: THREE.BufferGeometry;
+  shaftMat: THREE.MeshStandardMaterial; tipMat: THREE.MeshStandardMaterial; finMat: THREE.MeshStandardMaterial;
+} | null = null;
+function arrowShared() {
+  return (ARROW_SHARED ??= {
+    shaftGeo: new THREE.CylinderGeometry(0.011, 0.011, 0.78, 8).rotateX(Math.PI / 2),
+    tipGeo: new THREE.ConeGeometry(0.036, 0.14, 10).rotateX(Math.PI / 2),
+    finGeo: new THREE.BoxGeometry(0.005, 0.048, 0.14),
+    shaftMat: new THREE.MeshStandardMaterial({ color: "#9dc442", roughness: 0.55 }),
+    tipMat: new THREE.MeshStandardMaterial({ color: "#ff4e26", emissive: "#ff5511", emissiveIntensity: 1.4, roughness: 0.3 }),
+    finMat: new THREE.MeshStandardMaterial({ color: "#b6f03c", roughness: 0.65, side: THREE.DoubleSide }),
+  });
+}
+
+/** in-flight / stuck explosive bamboo arrow (Bamboo Bow): shares cached geometry/materials for zero-hitch prewarm & pooling */
+export function createArrowView(ctx: WorldCtx, fx: FxEx): { object: THREE.Object3D; update(dt: number, stuck?: boolean): void } {
+  const sys = fx as FxSystem;
+  const s = arrowShared();
+  const object = new THREE.Group(); object.name = "bamboo-arrow";
+  object.add(new THREE.Mesh(s.shaftGeo, s.shaftMat));
+  const tipMat = s.tipMat.clone();
+  const tip = new THREE.Mesh(s.tipGeo, tipMat);
+  tip.position.z = 0.42;
+  object.add(tip);
+  for (let i = 0; i < 3; i++) {
+    const fin = new THREE.Mesh(s.finGeo, s.finMat);
+    const a = (i / 3) * TAU;
+    fin.position.set(Math.cos(a) * 0.022, Math.sin(a) * 0.022, -0.32);
+    fin.rotation.z = a - Math.PI / 2;
+    object.add(fin);
+  }
+  const cur = new THREE.Vector3(), last = new THREE.Vector3();
+  let first = true, age = 0, blink = 0;
+  return {
+    object,
+    update(dt: number, stuck = false) {
+      object.updateWorldMatrix(true, false);
+      cur.setFromMatrixPosition(object.matrixWorld);
+      age += dt;
+      if (stuck) {
+        // fast urgent amber-red pulse while counting down the 0.55 s explosive fuse
+        blink += dt * 26;
+        const p = 0.6 + 0.4 * Math.sin(blink);
+        tipMat.emissiveIntensity = 1.6 + p * 3.8;
+        if (sys.glow && Math.random() < dt * 28) {
+          const G_ = sys.glow.p;
+          G_.x = cur.x; G_.y = cur.y; G_.z = cur.z; G_.life = 0.08; G_.s0 = 0.28 + p * 0.14; G_.s1 = 0.12;
+          G_.r = 3.2; G_.g = 1.1; G_.b = 0.25; G_.a = 1; G_.shape = G.GLOW; G_.mode = M.BILL; sys.glow.emit();
+        }
+        last.copy(cur);
+        return;
+      }
+      if (tipMat.emissiveIntensity !== 1.4) tipMat.emissiveIntensity = 1.4;
+      if (first || !object.visible) { last.copy(cur); first = !object.visible; return; }
+      const d2 = last.distanceToSquared(cur);
+      // guard against a teleport / pooled-arrow reuse drawing a cross-map ribbon
+      if (d2 > 25) { last.copy(cur); return; }
+      // sleek faint wind/ember ribbon behind the flying arrow (quiet, no heavy rocket smoke column)
+      if (sys.glow && d2 > 0.04) {
+        const G_ = sys.glow.p;
+        G_.x = last.x; G_.y = last.y; G_.z = last.z; G_.vx = cur.x - last.x; G_.vy = cur.y - last.y; G_.vz = cur.z - last.z;
+        G_.life = 0.12; G_.s0 = 0.035; G_.s1 = 0.01;
+        G_.r = 1.6; G_.g = 1.05; G_.b = 0.45; G_.a = 0.85; G_.shape = G.BEAM; G_.mode = M.SEG; G_.e0 = last.distanceTo(cur);
+        sys.glow.emit();
+      }
+      last.copy(cur);
+      void ctx; void age;
     },
   };
 }

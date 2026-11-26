@@ -11,6 +11,7 @@ export { ACTIVATE, lootReachable };
 import { hash32 } from "./rng";
 import { MYTHIC_POI_SHARE, MYTHIC_R, MYTHICS, mythicIndexOfPoi } from "./mythic";
 import { bananaStands } from "./economy";
+import { hotDropPoi } from "./events-dyn";
 import type { StormState } from "./storm";
 import * as dmath from "./dmath";
 
@@ -41,13 +42,13 @@ const FLOOR_RARITY = [[48, 30, 15, 6, 1], [40, 32, 18, 8, 2], [28, 32, 24, 12, 4
 /** a VAULT: a POI's hero chests (designed landmarks, always on — the temple's vault dais, the lab's dish platform, the
  * harbor's crane cab…) never roll below rare; at a hot drop they lean epic / legendary — the payoff worth the climb */
 const VAULT_RARITY = [[0, 0, 60, 32, 8], [0, 0, 60, 32, 8], [0, 0, 45, 40, 15]];
-const WEAPON_WEIGHTS: Record<string, number> = { pistol: 14, smg: 18, ar: 30, shotgun: 20, sniper: 10, rocket: 8 };
+const WEAPON_WEIGHTS: Record<string, number> = { pistol: 14, smg: 18, ar: 28, shotgun: 19, sniper: 9, rocket: 7, bow: 9, minigun: 6 };
 const CONSUMABLE_WEIGHTS: Record<ConsumableId, number> = { "leaf-bundle": 55, smoothie: 40, "golden-banana": 5, "red-banana": 8,
-  // --- throwables and placeables --- (bombs are common-ish on the floor and in chests; the crate wall is rare)
-  "banana-bomb": 20, "crate-wall": 5 };
+  // --- throwables, placeables and tactical gadgets ---
+  "banana-bomb": 20, "crate-wall": 5, "smoke-bomb": 16, "vine-grapple": 10, "airstrike": 2 };
 const CONSUMABLE_RARITY: Record<ConsumableId, number> = { "leaf-bundle": 0, smoothie: 1, "golden-banana": 4, "red-banana": 3,
-  // --- throwables and placeables ---
-  "banana-bomb": 1, "crate-wall": 2 };
+  // --- throwables, placeables and tactical gadgets ---
+  "banana-bomb": 1, "crate-wall": 2, "smoke-bomb": 1, "vine-grapple": 2, "airstrike": 4 };
 
 function rollWeighted(rng: Rng, weights: number[]): number {
   let total = 0; for (const w of weights) total += w;
@@ -283,13 +284,17 @@ export function placeLoot(seed: number, world: StaticWorld): { chests: Chest[]; 
   for (const s of set.spots) if (houseOn[s.id] && chestIn.get(s.bld)?.some((k) => Math.abs(set.spots[k].y - s.y) < 1.6 && dmath.hypot(set.spots[k].x - s.x, set.spots[k].z - s.z) < 14)) gun[s.id] = 0;
   const sig = new Map<number, [number, number]>();
   // nothing spawns inside a Banana Stand's counter
+  const hotPoi = hotDropPoi(seed);
   const stands = bananaStands(world), atStand = (s: { x: number; y: number; z: number }) => stands.some((q) => Math.abs(q.x - s.x) < 2.6 && Math.abs(q.z - s.z) < 2.6 && Math.abs(q.y - s.y) < 2.5);
   for (const s of set.spots) {
     if (!on[s.id] || atStand(s)) continue;
-    // a hot building pays better: the hot-POI rarity shift
-    const tier = s.bld >= 0 && set.buildings[s.bld]?.hot ? 2 : poiTier(s.poi);
+    // a hot building or this match's Hot Drop POI pays better: the hot-POI rarity shift
+    const isHot = s.poi === hotPoi;
+    const tier = isHot || (s.bld >= 0 && set.buildings[s.bld]?.hot) ? 2 : poiTier(s.poi);
     if (s.kind === SpotKind.Ammo && asItem[s.id]) {
-      items.push(rollFloorItem(rng, items.length, s.x, s.y, s.z, tier, 0));
+      const it = rollFloorItem(rng, items.length, s.x, s.y, s.z, tier, 0);
+      if (isHot && it.kind === IK.Cash) it.count = Math.min(255, it.count * 2);
+      items.push(it);
     } else if (s.kind === SpotKind.Ammo) {
       chests.push({ id: chests.length, x: s.x, y: s.y, z: s.z, yaw: s.yaw, rarity: 0, opened: false, poi: s.poi, box: 1, sx: s.sx, sy: s.sy, sz: s.sz });
     } else if (s.kind === SpotKind.Chest) {
@@ -301,7 +306,10 @@ export function placeLoot(seed: number, world: StaticWorld): { chests: Chest[]; 
     } else {
       // a floor gun carries its ammo stack (taking it gives the full stack, see Match.takeItem) — one
       // pickup per floor spot instead of a gun + a stack beside it; the ammo boxes carry the rest of the ammo
-      const it = rollFloorItem(rng, items.length, s.x, s.y, s.z, tier, gun[s.id] ? 1 : 0); if (it.kind === IK.Weapon) it.full = 1; items.push(it);
+      const it = rollFloorItem(rng, items.length, s.x, s.y, s.z, tier, gun[s.id] ? 1 : 0);
+      if (it.kind === IK.Weapon) it.full = 1;
+      if (isHot && it.kind === IK.Cash) it.count = Math.min(255, it.count * 2);
+      items.push(it);
     }
   }
   // a named POI's signature chest is a MYTHIC chest: its POI's mythic gun is inside (rollChestContents)
@@ -387,7 +395,9 @@ function rollFloorItem(rng: Rng, id: number, x: number, y: number, z: number, ti
   if (k < 0.66) { const a = rng.int(4); return { id, kind: IK.Ammo, sub: a, rarity: 0, count: AMMO_PICKUP[AMMO_TYPES[a]], x, y, z, taken: false, bornAt: 0 }; }
   // about 1 floor supply in 9 is a stack of Banana Bucks
   if (k < 0.73) return { id, kind: IK.Cash, sub: 0, rarity: 0, count: Math.round((ECON.floorMin + rng.next() * (ECON.floorMax - ECON.floorMin)) / 10), x, y, z, taken: false, bornAt: 0 };
-  const c = rollConsumable(rng); return { id, kind: IK.Consumable, sub: c, rarity: consumableRarity(c), count: CONSUMABLES[c] === "golden-banana" || CONSUMABLES[c] === "red-banana" ? 1 : Math.min(2, CONSUMABLE_DEFS[CONSUMABLES[c]].stack), x, y, z, taken: false, bornAt: 0 };
+  const c = rollConsumable(rng), cid = CONSUMABLES[c];
+  const cnt = cid === "golden-banana" || cid === "red-banana" || cid === "airstrike" ? 1 : cid === "vine-grapple" ? 3 : Math.min(2, CONSUMABLE_DEFS[cid].stack);
+  return { id, kind: IK.Consumable, sub: c, rarity: consumableRarity(c), count: cnt, x, y, z, taken: false, bornAt: 0 };
 }
 export const consumableRarity = (c: number) => CONSUMABLE_RARITY[CONSUMABLES[c]] ?? 0;
 
@@ -451,7 +461,8 @@ export function rollAmmoBox(rng: Rng): Array<{ kind: IK; sub: number; rarity: nu
 }
 /** what a chest spawns: [weapon, matching ammo, consumable] + a bonus at higher chest rarity. A MYTHIC chest (rarity
  * MYTHIC_R, one per POI) holds its POI's (`poi`) mythic gun, double ammo, a heal and a shield */
-export function rollChestContents(rng: Rng, chestRarity: number, poi = -1): Array<{ kind: IK; sub: number; rarity: number; count: number }> {
+export function rollChestContents(rng: Rng, chestRarity: number, poi = -1, hot = false): Array<{ kind: IK; sub: number; rarity: number; count: number }> {
+  const cashMul = hot ? 2 : 1;
   const mk = chestRarity >= MYTHIC_R ? mythicIndexOfPoi(poi) : -1;
   if (mk >= 0) {
     const def = MYTHICS[mk], w = WEAPONS.indexOf(def.weapon), ammoType = WEAPON_DEFS[def.weapon].ammo;
@@ -461,7 +472,7 @@ export function rollChestContents(rng: Rng, chestRarity: number, poi = -1): Arra
       { kind: IK.Ammo, sub: AMMO_TYPES.indexOf(ammoType), rarity: 0, count: AMMO_PICKUP[ammoType] * 2 },
       { kind: IK.Consumable, sub: c, rarity: consumableRarity(c), count: Math.min(CONSUMABLE_DEFS[CONSUMABLES[c]].stack, 2) },
       { kind: IK.Consumable, sub: sh, rarity: consumableRarity(sh), count: 2 },
-      { kind: IK.Cash, sub: 0, rarity: 0, count: ECON.chest[5] / 10 },
+      { kind: IK.Cash, sub: 0, rarity: 0, count: Math.min(255, (ECON.chest[5] / 10) * cashMul) },
     ];
   }
   const w = rollWeapon(rng);
@@ -475,8 +486,8 @@ export function rollChestContents(rng: Rng, chestRarity: number, poi = -1): Arra
   ];
   if (chestRarity >= 3 && rng.next() < 0.6) { const c2 = rollConsumable(rng); out.push({ kind: IK.Consumable, sub: c2, rarity: consumableRarity(c2), count: 1 }); }
   const kept = out.slice(0, LOOT_PER_CHEST + 1);
-  // every chest pays out a little Banana Bucks
-  kept.push({ kind: IK.Cash, sub: 0, rarity: 0, count: ECON.chest[Math.max(0, Math.min(5, chestRarity))] / 10 });
+  // every chest pays out a little Banana Bucks (2× inside the Hot Drop POI)
+  kept.push({ kind: IK.Cash, sub: 0, rarity: 0, count: Math.min(255, (ECON.chest[Math.max(0, Math.min(5, chestRarity))] / 10) * cashMul) });
   // the chest's heal bump: one more heal / shield now and then (its own draw, after every other one)
   if (rng.next() < HEALS.chestExtra) { const h = CONSUMABLES.indexOf(rng.next() < HEALS.shield ? "smoothie" : "leaf-bundle"); kept.push({ kind: IK.Consumable, sub: h, rarity: consumableRarity(h), count: 1 }); }
   return kept;

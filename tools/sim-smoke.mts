@@ -150,7 +150,7 @@ for (const q of [...POIS.map((p) => p.id), "open"]) { const v = poiStats[q]; if 
 const stateHash = matchHash(m);
 if (check) {
   console.log(`state hash: ${stateHash}`);
-  const SIM_HASH: Record<string, string> = { "trios 42 riders 0": "888d3a01", "solo 1 riders 0": "35793e5f", "trios 7 riders 0": "df98eec3", "trios 7 riders 8": "2ca1c7c6" };
+  const SIM_HASH: Record<string, string> = { "trios 42 riders 0": "65a6f843", "solo 1 riders 0": "95be4041", "trios 7 riders 0": "250a5788", "trios 7 riders 8": "0ad38219" };
   const golden = m.phase === Phase.Results ? SIM_HASH[`${mode} ${seed} riders ${riders}`] : undefined;
   const MAX_AVG_TICK_MS = 3, MAX_TICK_MS = 100, MIN_ARMED_PCT = 90;
   const fail: string[] = [];

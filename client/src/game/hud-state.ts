@@ -10,11 +10,17 @@ import type { StaticWorld } from "../../../shared/sim/world";
 import type { HudState } from "../ui/api";
 
 /** what each gun is for, on the pickup card and the inventory cards */
-export const WEAPON_ROLES = { pistol: "Sidearm", smg: "Close range", ar: "All round", shotgun: "Close range burst", sniper: "Long range · hitscan", rocket: "Explosive" } as const;
+export const WEAPON_ROLES = {
+  pistol: "Sidearm", smg: "Close range", ar: "All round", shotgun: "Close range burst", sniper: "Long range · hitscan", rocket: "Explosive",
+  bow: "Silent · explosive arrow", minigun: "Rotary · shreds vehicles",
+} as const;
 /** what each consumable does, on the pickup card and the inventory cards */
 export const CONSUMABLE_ROLES: Record<ConsumableId, string> = {
   "leaf-bundle": "+25 Health", smoothie: "+25 Shield", "golden-banana": "+100 Health · +100 Shield", "red-banana": "Speed + jump boost · 8 s",
   "banana-bomb": "Frag grenade · cook, then throw", "crate-wall": "Portable cover · set it down",
+  "smoke-bomb": "Smoke screen · blocks sight & bots",
+  "vine-grapple": "Jungle hook · sling 38 m",
+  airstrike: "Call 6-bomb air barrage",
 };
 
 /** the hotbar, ammo and reload / use prompts belong to a kong on its feet (or hanging off a zipline / a ledge) —

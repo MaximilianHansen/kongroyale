@@ -8,6 +8,7 @@ import { drawGlyph } from "./icons";
 import { TOON } from "./toon";
 import { preferences } from "../settings/preferences";
 import type { POIS } from "../../../shared/world/map";
+import { AIRSTRIKE } from "../../../shared/sim/const";
 const LABEL_BOXES: Array<[number, number, number]> = [];
 
 const VIEW = 375;                          // u px (inner size)
@@ -106,6 +107,11 @@ export class Minimap {
       g.setLineDash([]);
     }
 
+    // Hot Drop (Zona Caliente): pulsing golden halo over the featured POI
+    if (s.hotDrop) {
+      const [hx, hy] = P(s.hotDrop.x, s.hotDrop.z), hr = s.hotDrop.r * k;
+      if (hx + hr > -20 && hx - hr < VIEW + 20 && hy + hr > -20 && hy - hr < VIEW + 20) hotDropHalo(g, hx, hy, hr, now);
+    }
     // POI names when zoomed out (plane / drop)
     if (viewR > 420) {
       g.font = `900 ${viewR > 700 ? 15 : 17}px ${TOON.ui}`;
@@ -116,10 +122,12 @@ export class Minimap {
       const lh = viewR > 700 ? 17 : 19, top = VIEW * (1 - this.band) / 2;
       for (const p of this.poisBySize()) {
         if (p.id === "lobby-islet") continue;
+        const isHot = s.hotDrop?.id === p.id;
+        const label = isHot ? `★ ${p.name}` : p.name;
         let [x, y0] = P(p.x, p.z);
         if (x < -20 || x > VIEW + 20 || y0 < top + 12 || y0 > VIEW - top - 12) continue;
         // never clip a label at the frame: slide it inside (it still sits over its POI's side of the map)
-        const hw = g.measureText(p.name).width / 2 + 4;
+        const hw = g.measureText(label).width / 2 + 4;
         x = Math.max(hw, Math.min(VIEW - hw, x));
         let y = -1;
         for (const dy of [0, lh, -lh, lh * 2, -lh * 2]) {
@@ -128,8 +136,8 @@ export class Minimap {
         }
         if (y < 0) continue;
         placed.push([x, y, hw]);
-        g.lineWidth = 4.5; g.strokeStyle = TOON.outline; g.strokeText(p.name, x, y);
-        g.fillStyle = TOON.text; g.fillText(p.name, x, y);
+        g.lineWidth = 4.5; g.strokeStyle = TOON.outline; g.strokeText(label, x, y);
+        g.fillStyle = isHot ? "#ffd21f" : TOON.text; g.fillText(label, x, y);
       }
     }
 
@@ -164,6 +172,16 @@ export class Minimap {
       for (const q of s.econ.stands) { const [x, y] = P(q.x, q.z); if (x > -12 && x < VIEW + 12 && y > -12 && y < VIEW + 12) standDot(g, x, y, 8); }
       const B = s.econ.bounty; if (B) bountyRing(g, ...P(B.x, B.z), Math.max(10, B.r * k), now);
     }
+    // Banana Airstrike: pulsing crimson 6-blast danger corridor
+    if (s.airstrikes) for (const a of s.airstrikes) {
+      const [ax, ay] = P(a.x, a.z);
+      airstrikeOverlay(g, ax, ay, rot - a.yaw, AIRSTRIKE.span * k, Math.max(5, AIRSTRIKE.radius * k), now);
+    }
+    // Radar Pulse (UAV): cyan sonar sweep ring + pulsing enemy diamonds
+    if (s.uav && s.me.alive) {
+      uavOverlay(g, VIEW / 2, VIEW / 2, s.uav.radius * k, now);
+      for (const e of s.uav.enemies) { const [ex, ey] = P(e.x, e.z); if (ex > -14 && ex < VIEW + 14 && ey > -14 && ey < VIEW + 14) uavEnemyDot(g, ex, ey, 6.5, now); }
+    }
     // squad mates
     let si = 0;
     for (const q of s.squad) {
@@ -196,7 +214,86 @@ function northTag(g: CanvasRenderingContext2D, nx: number, ny: number, band = 1)
 }
 
 // (economy) the Banana Stands (a banana-coin badge) and the bounty circle (a pulsing red ring, a skull)
-function econSig(s: HudState, now: number) { const e = s.econ; if (!e) return ""; return `${e.stands.length}|${e.bounty ? `${e.bounty.x | 0},${e.bounty.z | 0},${Math.floor(now * 8)}` : ""}`; }
+function econSig(s: HudState, now: number) {
+  const e = s.econ;
+  const uav = s.uav ? `|uav${s.uav.enemies.length}:${Math.floor(now * 12)}` : "";
+  const hd = s.hotDrop ? `|hd${s.hotDrop.id}:${Math.floor(now * 3)}` : "";
+  const as = s.airstrikes?.length ? `|as${s.airstrikes.length}:${Math.floor(now * 10)}` : "";
+  if (!e) return uav + hd + as;
+  return `${e.stands.length}|${e.bounty ? `${e.bounty.x | 0},${e.bounty.z | 0},${Math.floor(now * 8)}` : ""}${uav}${hd}${as}`;
+}
+/** Banana Airstrike crimson danger corridor (rotated pill + 6 pulsing blast markers) */
+export function airstrikeOverlay(g: CanvasRenderingContext2D, x: number, y: number, ang: number, span: number, r: number, now: number) {
+  const pulse = 0.5 + 0.5 * Math.sin(now * 11);
+  const half = span * 0.5;
+  g.save();
+  g.translate(x, y);
+  g.rotate(ang);
+  g.fillStyle = `rgba(255, 59, 48, ${0.22 + 0.14 * pulse})`;
+  g.strokeStyle = `rgba(255, 72, 56, ${0.85 + 0.15 * pulse})`;
+  g.lineWidth = Math.max(2, r * 0.22);
+  g.beginPath();
+  g.roundRect(-r * 1.15, -half - r * 1.15, r * 2.3, span + r * 2.3, r * 1.15);
+  g.fill();
+  g.setLineDash([Math.max(4, r * 0.6), Math.max(3, r * 0.45)]);
+  g.stroke();
+  g.setLineDash([]);
+  g.fillStyle = `rgba(255, 224, 96, ${0.75 + 0.25 * pulse})`;
+  for (let k = 0; k < AIRSTRIKE.bombs; k++) {
+    const frac = AIRSTRIKE.bombs > 1 ? k / (AIRSTRIKE.bombs - 1) - 0.5 : 0;
+    const py = -frac * span;
+    g.beginPath(); g.arc(0, py, Math.max(2, r * 0.32), 0, Math.PI * 2); g.fill();
+  }
+  g.restore();
+}
+/** Hot Drop POI golden zone halo */
+export function hotDropHalo(g: CanvasRenderingContext2D, x: number, y: number, r: number, now: number) {
+  const pulse = 0.5 + 0.5 * Math.sin(now * 3.2);
+  g.save();
+  const gr = g.createRadialGradient(x, y, r * 0.1, x, y, r);
+  gr.addColorStop(0, `rgba(255, 210, 31, ${0.18 + 0.08 * pulse})`);
+  gr.addColorStop(0.75, `rgba(255, 168, 24, ${0.10 + 0.05 * pulse})`);
+  gr.addColorStop(1, "rgba(255, 168, 24, 0)");
+  g.fillStyle = gr;
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  g.setLineDash([Math.max(5, r * 0.12), Math.max(4, r * 0.08)]);
+  g.lineWidth = Math.max(2, Math.min(4, r * 0.04));
+  g.strokeStyle = `rgba(255, 214, 40, ${0.72 + 0.25 * pulse})`;
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+  g.setLineDash([]);
+  g.restore();
+}
+/** Radar Pulse (UAV) sonar ring + rotating cyan sweep wedge centered on the player */
+export function uavOverlay(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, now: number) {
+  g.save();
+  const ang = (now * 2.2) % (Math.PI * 2);
+  g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, r, ang - 0.65, ang); g.closePath();
+  g.fillStyle = "rgba(64, 234, 255, 0.16)"; g.fill();
+  g.strokeStyle = "rgba(120, 246, 255, 0.85)"; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r); g.stroke();
+  const pr = (now * 0.55) % 1;
+  g.strokeStyle = `rgba(92, 242, 255, ${0.55 * (1 - pr)})`; g.lineWidth = 2;
+  g.beginPath(); g.arc(cx, cy, r * pr, 0, Math.PI * 2); g.stroke();
+  g.setLineDash([8, 6]);
+  g.strokeStyle = "rgba(92, 242, 255, 0.72)"; g.lineWidth = 2;
+  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+  g.setLineDash([]);
+  g.restore();
+}
+/** UAV-revealed enemy diamond blip */
+export function uavEnemyDot(g: CanvasRenderingContext2D, x: number, y: number, r: number, now: number) {
+  const pulse = 0.5 + 0.5 * Math.sin(now * 8);
+  g.save();
+  g.translate(x, y);
+  g.strokeStyle = `rgba(92, 242, 255, ${0.75 * (1 - pulse * 0.6)})`;
+  g.lineWidth = Math.max(1.5, r * 0.25);
+  g.beginPath(); g.arc(0, 0, r * (1.2 + pulse * 0.7), 0, Math.PI * 2); g.stroke();
+  g.beginPath();
+  g.moveTo(0, -r * 1.15); g.lineTo(r * 1.05, 0); g.lineTo(0, r * 1.15); g.lineTo(-r * 1.05, 0); g.closePath();
+  g.fillStyle = "#ff3b30"; g.fill();
+  g.lineWidth = Math.max(1.5, r * 0.28); g.strokeStyle = "#fff8e7"; g.stroke();
+  g.restore();
+}
 export function standDot(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
   g.save(); g.translate(x, y);
   g.beginPath(); g.arc(0, 0, r * 1.25, 0, Math.PI * 2); g.fillStyle = "rgba(10,14,20,0.85)"; g.fill();

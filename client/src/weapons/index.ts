@@ -17,7 +17,7 @@ import { flag } from "../flags";
 
 /** FX piece surface (fx.ts): the contract Fx + extras the viewmodel / kongs use */
 export type FxEx = Fx & VmFx & { hitSparkle?(pos: THREE.Vector3, headshot: boolean): void; markerSmoke?(pos: THREE.Vector3, k?: number): void };
-interface FxModule { createFx(ctx: WorldCtx): FxEx; createRocketView?(ctx: WorldCtx, fx: FxEx): { object: THREE.Object3D; update(dt: number): void } }
+interface FxModule { createFx(ctx: WorldCtx): FxEx; createRocketView?(ctx: WorldCtx, fx: FxEx): { object: THREE.Object3D; update(dt: number): void }; createArrowView?(ctx: WorldCtx, fx: FxEx): { object: THREE.Object3D; update(dt: number, stuck?: boolean): void } }
 const FX_MODULES = import.meta.glob<FxModule>("./fx.ts");
 
 /** the atmos warm multi-bounce (state.ts warmBounce 1.2) feeds a yellow albedo's own chroma back into its fill: every
@@ -44,6 +44,8 @@ export interface WeaponsKitEx extends WeaponsKit {
   createSupplyDrop(): Promise<import("./supply").SupplyDrop>;
   /** the in-flight rocket (banana bunch + coconut nose + trail); null until the fx piece provides it */
   createRocket(): Promise<{ object: THREE.Object3D; update(dt: number): void } | null>;
+  /** the in-flight / sticky explosive bamboo arrow (Bamboo Bow) */
+  createArrow(): Promise<{ object: THREE.Object3D; update(dt: number, stuck?: boolean): void } | null>;
   prepareLoot(next?: () => Promise<void>): Promise<THREE.Object3D>;
 }
 
@@ -165,6 +167,13 @@ export function createWeaponsKit(ctx: WorldCtx): WeaponsKitEx {
       await fxLoad;
       if (!fxMod?.createRocketView || !real) return null;
       const r = fxMod.createRocketView(ctx, real);
+      patchTree(r.object);
+      return r;
+    },
+    async createArrow() {
+      await fxLoad;
+      if (!fxMod?.createArrowView || !real) return null;
+      const r = fxMod.createArrowView(ctx, real);
       patchTree(r.object);
       return r;
     },

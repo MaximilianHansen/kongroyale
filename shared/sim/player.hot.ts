@@ -1,15 +1,18 @@
 import { CONSUMABLES } from "../world/map";
-import { BOMB, ACCEL, ADS_MOVE_MUL, CONSUMABLE_DEFS, COYOTE_S, CROUCH_SPEED, FALL_DMG_PER_MS, FALL_DMG_V, FRICTION, GLIDE_MIN_AGL, GRAVITY, REDEPLOY_MIN_CLEAR, CHUTE_CUT_HOLD_S, JUMP_BUFFER_S, JUMP_V, MAX_HP, MAX_SHIELD, PLAYER_H, PLAYER_R, SLOPE_LIMIT, SPRINT, STEP_H, SWAP_S, SWIM, SWIM_SPRINT, SWIM_SURFACE, SWIM_LEAVE, SWIM_FLOAT_Y, DIVE_MIN_DEPTH, UW_SPEED, UW_SPRINT, UW_VERT, UW_BUOY, DIVE_KICK, UW_RESP, BREATH_S, BREATH_REFILL_S, SWIM_DRAW_S, SWIM_GUN_HOLD_S, SWIM_TREAD, WALK, WATER_LEVEL, WEAPON_SLOTS, AIR_STEER, MANTLE_EXIT_V, MANTLE_FWD, MANTLE_MAX, MANTLE_MAX_S, MANTLE_MIN, MANTLE_REACH, MANTLE_UP, SWIM_MANTLE_MAX, SWIM_MANTLE_MIN, SLIDE_CD, SLIDE_DECEL, SLIDE_END_V, SLIDE_ENTRY, SLIDE_MAX_V, SLIDE_SLOPE, SLIDE_STEER, SLIDE_V } from "./const";
+import { BOMB, SMOKE, GRAPPLE, WEAPON_DEFS, ACCEL, ADS_MOVE_MUL, CONSUMABLE_DEFS, COYOTE_S, CROUCH_SPEED, FALL_DMG_PER_MS, FALL_DMG_V, FRICTION, GLIDE_MIN_AGL, GRAVITY, REDEPLOY_MIN_CLEAR, CHUTE_CUT_HOLD_S, JUMP_BUFFER_S, JUMP_V, MAX_HP, MAX_SHIELD, PLAYER_H, PLAYER_R, SLOPE_LIMIT, SPRINT, STEP_H, SWAP_S, SWIM, SWIM_SPRINT, SWIM_SURFACE, SWIM_LEAVE, SWIM_FLOAT_Y, DIVE_MIN_DEPTH, UW_SPEED, UW_SPRINT, UW_VERT, UW_BUOY, DIVE_KICK, UW_RESP, BREATH_S, BREATH_REFILL_S, SWIM_DRAW_S, SWIM_GUN_HOLD_S, SWIM_TREAD, WALK, WATER_LEVEL, WEAPON_SLOTS, AIR_STEER, MANTLE_EXIT_V, MANTLE_FWD, MANTLE_MAX, MANTLE_MAX_S, MANTLE_MIN, MANTLE_REACH, MANTLE_UP, SWIM_MANTLE_MAX, SWIM_MANTLE_MIN, SLIDE_CD, SLIDE_DECEL, SLIDE_END_V, SLIDE_ENTRY, SLIDE_MAX_V, SLIDE_SLOPE, SLIDE_STEER, SLIDE_V } from "./const";
 import { makeHit, slopeFeel, TERRAIN_FULL_NY, TERRAIN_SLIDE_NY, type StaticWorld } from "./world";
 import { V as VAULT, findVault, glassBody } from "./glass";
 import { stepZip, zipAttach } from "./zipline";
 import { coverPlace, pushCover } from "./cover";
+import { airstrikeTrace, grappleTrace, grappleVelocity } from "./grapple";
 import { VF, VKind, VS, exitVehicle, pushKong, seatRider, stepVehicle, switchSeat, takeSeat } from "./vehicle";
 import { HELI, gunOf, stepGun, stepHeli } from "./heli";
 import { UPDRAFT, inUpdraft, updraftLift } from "./updraft";
 import { CLIMB } from "./climb";
-import { PS, B, seatAsked, ammoIndex, type Input, copyInput, SK, type Player, height, weaponDef, consumableDef, fallDamage, noteShot, coolHeat, BUSY_IN } from "./player";
+import { PS, B, seatAsked, ammoIndex, type Input, copyInput, SK, type Player, eyeY, height, weaponDef, consumableDef, fallDamage, noteShot, coolHeat, BUSY_IN } from "./player";
 import * as dmath from "./dmath";
+
+const GV = new Float64Array(3);
 
 /** red banana multipliers (shared/sim/const.ts CONSUMABLE_DEFS) */
 const RED_SPEED = CONSUMABLE_DEFS["red-banana"].speedMul ?? 1, RED_JUMP = CONSUMABLE_DEFS["red-banana"].jumpMul ?? 1;
@@ -18,7 +21,7 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   p.anim &= ~(4 | 8);
   // last tick's shot was resolved with the pre-shot spread; now it blooms (TOP BANANA's rounds heat the gun instead)
   if (p.fired > 0 && gunOf(world.veh, p) === null) noteShot(p);
-  p.fired = 0; p.thrown = 0; p.placed = 0;
+  p.fired = 0; p.thrown = 0; p.thrownKind = 0; p.placed = 0; p.grappled = 0; p.airstrike = 0;
   const pressed = inp.buttons & ~p.prevButtons;
   const useTaken = p.useTaken; p.useTaken = false;
   p.yaw = inp.yaw; p.pitch = inp.pitch;
@@ -29,11 +32,11 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   // slot change
   const slot = inp.slot | 0;
   if (slot >= 0 && slot < WEAPON_SLOTS && slot !== p.active) {
-    p.active = slot; p.swapT = SWAP_S; p.reloadT = 0; p.useT = 0; p.scoped = false; p.ads = false; p.heat = 0;
+    p.active = slot; p.swapT = SWAP_S; p.reloadT = 0; p.useT = 0; p.scoped = false; p.ads = false; p.heat = 0; p.spinT = 0;
   }
   // red banana buff: runs down in every state, gone with the kong
   if (p.buffT > 0) p.buffT = p.st === PS.Dead || p.st === PS.Spectate || p.st === PS.Plane ? 0 : Math.max(0, p.buffT - dt);
-  if (p.st === PS.Dead || p.st === PS.Spectate || p.st === PS.Plane) { if (p.st === PS.Dead) stepCorpse(p, world, dt); p.prevButtons = inp.buttons; return; }
+  if (p.st === PS.Dead || p.st === PS.Spectate || p.st === PS.Plane) { p.spinT = 0; if (p.st === PS.Dead) stepCorpse(p, world, dt); p.prevButtons = inp.buttons; return; }
 
   if (p.st === PS.Freefall || p.st === PS.Glide) { stepAir(p, inp, world, dt, pressed); p.prevButtons = inp.buttons; return; }
   if (p.st === PS.Ride) { stepRide(p, inp, world, dt, pressed); p.prevButtons = inp.buttons; return; }
@@ -74,7 +77,8 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   // back once both are let go if the sprint key is still held / toggled. (Swimming has its own gun rules. Bots keep
   // run-and-gun: their brains choose sprint or aim themselves.)
   const handsUp = !p.bot && (p.ads || (!p.swim && (inp.buttons & B.FIRE) !== 0));
-  const wantSprint = (inp.buttons & B.SPRINT) !== 0 && inp.mz > 0.3 && !p.crouch && !p.scoped && p.reloadT <= 0 && p.useT <= 0 && !handsUp;
+  const spinSlow = p.spinT > 0.15;
+  const wantSprint = (inp.buttons & B.SPRINT) !== 0 && inp.mz > 0.3 && !p.crouch && !p.scoped && !spinSlow && p.reloadT <= 0 && p.useT <= 0 && !handsUp;
   p.sprint = wantSprint && moving;
   // wish velocity in world space
   let wx = 0, wz = 0;
@@ -97,8 +101,11 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   p.breath = p.under ? Math.max(0, p.breath - dt / BREATH_S) : p.swim ? Math.min(1, p.breath + dt / BREATH_REFILL_S) : 1;
   if (p.swim) stepSwimGun(p, inp, pressed, wasSwim, dt);
   // ADS (last tick's hands state, replayed by the client prediction) walks slower: aiming is a commitment
+  const curW = weaponDef(p);
+  const spinSlowMul = curW?.moveMul ?? WEAPON_DEFS.minigun.moveMul ?? 1;
+  const spinMul = p.spinT > 0.05 ? 1 - (1 - spinSlowMul) * p.spinT : 1;
   const speed = (p.swim ? (p.swGun > 0 ? SWIM_TREAD : p.sprint ? SWIM_SPRINT : SWIM) : p.crouch ? CROUCH_SPEED : p.sprint ? SPRINT : WALK) * (p.ads && !p.swim ? ADS_MOVE_MUL : 1)
-    * (p.buffT > 0 && !p.swim ? RED_SPEED : 1);
+    * (p.buffT > 0 && !p.swim ? RED_SPEED : 1) * (p.swim ? 1 : spinMul);
   if (p.useT > 0 || p.reloadT > 0) { /* no speed penalty: keep it snappy */ }
   wx *= speed; wz *= speed;
 
@@ -305,15 +312,28 @@ export function stepPlayer(p: Player, inp: Input, world: StaticWorld, dt: number
   // swimming: the stowed gun / a diver's hands stroke — timers run (a reload in progress finishes), nothing fires
   if (p.swim && (p.under || p.swGun <= 0)) stepHandsBusy(p, inp, dt, pressed, p.under ? B.RELOAD | B.THROW | B.USE : 0);
   else stepHands(p, inp, dt, pressed);
-  // the crate wall in hand: fire sets it down where the ghost shows (cover.ts coverPlace)
+  // the crate wall, vine grapple & banana airstrike in hand: fire activates them deterministically on client + server
   { const a = p.slots[p.active];
-    if (a.kind === SK.Consumable && a.id === WALL_ID && a.count > 0 && (pressed & B.FIRE) && p.grounded && !p.swim && p.cool <= 0 && p.swapT <= 0 && coverPlace(world, p.x, p.y, p.z, p.yaw)) {
-      a.count--; if (a.count <= 0) { a.kind = SK.Empty; a.id = 0; a.count = 0; a.rarity = 0; }
-      p.placed = 1; p.cool = 0.5;
+    if (a.kind === SK.Consumable && a.count > 0 && (pressed & B.FIRE) && p.cool <= 0 && p.swapT <= 0) {
+      if (a.id === WALL_ID && p.grounded && !p.swim && coverPlace(world, p.x, p.y, p.z, p.yaw)) {
+        a.count--; if (a.count <= 0) { a.kind = SK.Empty; a.id = 0; a.count = 0; a.rarity = 0; }
+        p.placed = 1; p.cool = 0.5;
+      } else if (a.id === GRAPPLE_ID && !p.under && grappleTrace(world, p.x, eyeY(p), p.z, p.yaw, p.pitch)) {
+        grappleVelocity(p.x, p.y, p.z, GV);
+        p.vx = GV[0]; p.vy = GV[1]; p.vz = GV[2];
+        p.grounded = false; p.coyote = 0; p.fallV = 0; p.mvT = 0; p.swim = false;
+        a.count--; if (a.count <= 0) { a.kind = SK.Empty; a.id = 0; a.count = 0; a.rarity = 0; }
+        p.grappled = 1; p.cool = GRAPPLE.cooldownS;
+      } else if (a.id === AIRSTRIKE_ID && p.grounded && !p.swim && airstrikeTrace(world, p.x, eyeY(p), p.z, p.yaw, p.pitch)) {
+        a.count--; if (a.count <= 0) { a.kind = SK.Empty; a.id = 0; a.count = 0; a.rarity = 0; }
+        p.airstrike = 1; p.cool = 0.8;
+      }
     } }
   p.prevButtons = inp.buttons;
 }
 export const WALL_ID = CONSUMABLES.indexOf("crate-wall");
+export const GRAPPLE_ID = CONSUMABLES.indexOf("vine-grapple");
+export const AIRSTRIKE_ID = CONSUMABLES.indexOf("airstrike");
 
 /** in a tuk-tuk (shared/sim/vehicle.ts). The DRIVER's input steps the tuk-tuk itself — one vehicle tick per input, so
  * the server and the driver's prediction drive the very same machine: W / S throttle and brake / reverse, A / D the
@@ -757,8 +777,8 @@ function stepHands(p: Player, inp: Input, dt: number, pressed: number) {
     }
   } else p.anim &= ~2;
   // the banana bomb: hands busy while one is pulled
-  if (stepBomb(p, inp, dt, pressed)) { p.ads = false; p.scoped = false; return; }
-  if (p.swapT > 0) return;
+  if (stepBomb(p, inp, dt, pressed)) { p.ads = false; p.scoped = false; p.spinT = 0; return; }
+  if (p.swapT > 0) { p.spinT = 0; return; }
   if (w) {
     // aiming ends a sprint at once (and stepPlayer keeps it off while aiming); a bot still cannot aim
     // while it sprints
@@ -767,17 +787,26 @@ function stepHands(p: Player, inp: Input, dt: number, pressed: number) {
     p.scoped = !!w.scope && (inp.buttons & B.SCOPE) !== 0 && planted && p.reloadT <= 0;
     const ai = ammoIndex(w.ammo);
     if ((pressed & B.RELOAD) && s.mag < w.mag && p.ammo[ai] > 0 && p.reloadT <= 0) { p.reloadT = w.reloadS; p.reloadTotal = w.reloadS; p.anim |= 1; p.useT = 0; }
+    // rotary barrel spin-up (Banana Shredder): holding fire OR ADS spins the barrels; bullets leave once spinT reaches 1
+    if (w.spinUpS) {
+      const spinWant = ((inp.buttons & (B.FIRE | B.SCOPE)) !== 0) && planted && p.reloadT <= 0 && p.useT <= 0 && s.mag > 0;
+      if (spinWant) { p.spinT = Math.min(1, p.spinT + dt / w.spinUpS); p.sprint = false; }
+      else p.spinT = Math.max(0, p.spinT - dt / 0.72);
+    } else p.spinT = 0;
     const wantFire = w.auto ? (inp.buttons & B.FIRE) !== 0 : (pressed & B.FIRE) !== 0;
     if (wantFire && p.reloadT > 0 && w.id === "shotgun" && s.mag > 0) p.reloadT = 0; // interrupt shell reload to fire
     if (wantFire && p.cool <= 0 && p.reloadT <= 0 && p.useT <= 0) {
       if (s.mag > 0) {
-        // cool += (not =): carries the sub-tick remainder (cool ends in (-dt, 0]), so the real rpm is the table rpm
-        s.mag--; p.cool += 60 / w.rpm; p.fired = w.pellets; p.shotSeq++; p.anim |= 8;
-        if (p.sprint) p.sprint = false;
+        if (!w.spinUpS || p.spinT >= 0.999) {
+          // cool += (not =): carries the sub-tick remainder (cool ends in (-dt, 0]), so the real rpm is the table rpm
+          s.mag--; p.cool += 60 / w.rpm; p.fired = w.pellets; p.shotSeq++; p.anim |= 8;
+          if (p.sprint) p.sprint = false;
+        }
       } else if (p.ammo[ai] > 0) { p.reloadT = w.reloadS; p.reloadTotal = w.reloadS; p.anim |= 1; }
       else p.cool = 0.25; // dry fire
     }
   } else if (s.kind === SK.Consumable) {
+    p.spinT = 0;
     p.scoped = false;
     const c = consumableDef(p)!;
     // a press starts a use; still holding fire as one finishes chains straight into the next
@@ -785,7 +814,7 @@ function stepHands(p: Player, inp: Input, dt: number, pressed: number) {
       const useful = (c.hp > 0 && p.hp < MAX_HP) || (c.shield > 0 && p.shield < MAX_SHIELD) || (c.buffS ?? 0) > 0;
       if (useful) { p.useT = c.useS; p.useTotal = c.useS; }
     }
-  } else p.scoped = false;
+  } else { p.scoped = false; p.spinT = 0; }
 }
 
 // ---- BANANA BOMB. G (B.THROW) pulls the peel fuse from any slot — fire does the same with the
@@ -793,30 +822,38 @@ function stepHands(p: Player, inp: Input, dt: number, pressed: number) {
 // Predicted like a shot: the client and the server count the bomb out of the same slot on the same tick; the match
 // spawns the projectile from `p.thrown` (shared/sim/bomb.ts flies it). Not while reloading / healing / swapping.
 export const BOMB_ID = CONSUMABLES.indexOf("banana-bomb");
-/** the slot holding banana bombs (the active one first), or −1 */
-export function bombSlot(p: Player): number {
-  const a = p.slots[p.active]; if (a.kind === SK.Consumable && a.id === BOMB_ID && a.count > 0) return p.active;
-  for (let i = 0; i < p.slots.length; i++) { const s = p.slots[i]; if (s.kind === SK.Consumable && s.id === BOMB_ID && s.count > 0) return i; }
+export const SMOKE_ID = CONSUMABLES.indexOf("smoke-bomb");
+/** the slot holding a throwable grenade (kind: -1 = active throwable first, else frag then smoke; 0 = frag only; 1 = smoke only), or −1 */
+export function bombSlot(p: Player, kind: -1 | 0 | 1 = -1): number {
+  const a = p.slots[p.active];
+  if (a.kind === SK.Consumable && a.count > 0) {
+    if (kind === 0 && a.id === BOMB_ID) return p.active;
+    if (kind === 1 && a.id === SMOKE_ID) return p.active;
+    if (kind === -1 && (a.id === BOMB_ID || a.id === SMOKE_ID)) return p.active;
+  }
+  if (kind !== 1) for (let i = 0; i < p.slots.length; i++) { const s = p.slots[i]; if (s.kind === SK.Consumable && s.id === BOMB_ID && s.count > 0) return i; }
+  if (kind !== 0) for (let i = 0; i < p.slots.length; i++) { const s = p.slots[i]; if (s.kind === SK.Consumable && s.id === SMOKE_ID && s.count > 0) return i; }
   return -1;
 }
-/** true while a bomb is in hand (the hands do nothing else) */
+/** true while a frag or smoke bomb is in hand (the hands do nothing else) */
 function stepBomb(p: Player, inp: Input, dt: number, pressed: number): boolean {
-  const a = p.slots[p.active], inHand = a.kind === SK.Consumable && a.id === BOMB_ID;
+  const a = p.slots[p.active], inHand = a.kind === SK.Consumable && a.count > 0 && (a.id === BOMB_ID || a.id === SMOKE_ID);
   const hold = (inp.buttons & B.THROW) !== 0 || (inHand && (inp.buttons & B.FIRE) !== 0);
   const canThrow = p.st === PS.Ground || p.st === PS.Zip || (p.st === PS.Ride && p.seat !== 0);
   if (p.cookT > 0) {
+    const smoke = p.cookKind === 1, fuse = smoke ? SMOKE.fuseS : BOMB.fuseS;
     p.cookT += dt;
-    if ((!hold && canThrow) || p.cookT >= BOMB.fuseS) {
-      const k = bombSlot(p);
-      if (k >= 0) { const s = p.slots[k]; s.count--; if (s.count <= 0) { s.kind = SK.Empty; s.id = 0; s.count = 0; s.rarity = 0; } p.thrown = Math.min(BOMB.fuseS, p.cookT); }
-      p.cookT = 0; p.cool = Math.max(p.cool, BOMB.cooldownS);
+    if ((!hold && canThrow) || p.cookT >= fuse) {
+      const k = bombSlot(p, smoke ? 1 : 0);
+      if (k >= 0) { const s = p.slots[k]; s.count--; if (s.count <= 0) { s.kind = SK.Empty; s.id = 0; s.count = 0; s.rarity = 0; } p.thrown = Math.min(fuse, p.cookT); p.thrownKind = smoke ? 1 : 0; }
+      p.cookT = 0; p.cookKind = 0; p.cool = Math.max(p.cool, BOMB.cooldownS);
       return true;
     }
     return true;
   }
-  if (((pressed & B.THROW) || (inHand && (pressed & B.FIRE))) && canThrow && p.cool <= 0 && p.reloadT <= 0 && p.useT <= 0 && p.swapT <= 0 && bombSlot(p) >= 0) {
-    p.cookT = dt; p.sprint = false;
-    return true;
+  if (((pressed & B.THROW) || (inHand && (pressed & B.FIRE))) && canThrow && p.cool <= 0 && p.reloadT <= 0 && p.useT <= 0 && p.swapT <= 0) {
+    const k = inHand && (pressed & B.FIRE) ? p.active : bombSlot(p, -1);
+    if (k >= 0) { p.cookT = dt; p.cookKind = p.slots[k].id === SMOKE_ID ? 1 : 0; p.sprint = false; return true; }
   }
   return false;
 }

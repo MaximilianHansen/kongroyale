@@ -115,6 +115,15 @@ export function createHud(terrain: Terrain, pois: typeof POIS): Hud {
   // no progress bar in the pill: the countdown and its label only
   // the warnings under the storm clock (left column): the storm guide, RESURGENCE OFF, STORM CLOSING
   const warnEl = el("div", "tn-hud-warn kr-hide", leftCol);
+  // live tactical & match event countdown pills (UAV Radar Pulse, Fire Sale)
+  const evWrap = el("div", "tn-hud-events", leftCol);
+  const uavPill = el("div", "tn-hud-ev uav kr-hide", evWrap);
+  uavPill.appendChild(svgGlyph("radar"));
+  const uavTx = el("span", "", uavPill);
+  const salePill = el("div", "tn-hud-ev sale kr-hide", evWrap);
+  salePill.appendChild(svgGlyph("banana"));
+  const saleTx = el("span", "", salePill);
+  let uavSig = "", saleSig = "";
   // the plain status line under the compass (FIRING RANGE · INFINITE AMMO, WARM-UP …): stays top centre
   const substat = el("div", "kr-substat kr-hide", root);
 
@@ -506,6 +515,11 @@ export function createHud(terrain: Terrain, pois: typeof POIS): Hud {
       if (warn) { const i = warn.indexOf(":"); warnEl.className = `tn-hud-warn ${warn.slice(0, i)}`; warnEl.textContent = warn.slice(i + 1); }
       else warnEl.className = "tn-hud-warn kr-hide";
     }
+    // live event pills (UAV Radar Pulse, Fire Sale)
+    { const ul = alive && s.uav && s.uav.left > 0.05 ? `UAV RADAR · ${Math.ceil(s.uav.left)}S · ${s.uav.enemies.length} NEAR` : "";
+      if (ul !== uavSig) { uavSig = ul; tog(uavPill, "kr-hide", !ul); if (ul) uavTx.textContent = ul; }
+      const sl = (s.fireSaleLeft ?? 0) > 0.05 ? `FIRE SALE · 50% OFF · ${fmtClock(Math.ceil(s.fireSaleLeft!))}` : "";
+      if (sl !== saleSig) { saleSig = sl; tog(salePill, "kr-hide", !sl); if (sl) saleTx.textContent = sl; } }
     if (sub !== subSeen) { subSeen = sub; subAt = now; }
     tog(substat, "faded", !!sub && now - subAt > 5);
     stats.update(s, calm());
@@ -824,8 +838,9 @@ export function createHud(terrain: Terrain, pois: typeof POIS): Hud {
     }
     // the bomb's key hints (cooking is not discoverable otherwise)
     const bombH = alive && !s.air && s.lethal?.hint ? s.lethal.hint : 0;
+    const bombSmoke = s.lethal?.id === "smoke-bomb";
     const swimH = alive && !s.air && s.swim?.hint ? s.swim.hint : null;
-    const hintKey = (s.phase === "plane" && alive ? "plane" : s.air?.mode === "freefall" ? "free" : s.air?.mode === "glide" ? "glide" : "") || (bombH ? `bomb${bombH}|${s.lethal!.key}` : "") || (swimH ? `swim-${swimH}` : "");
+    const hintKey = (s.phase === "plane" && alive ? "plane" : s.air?.mode === "freefall" ? "free" : s.air?.mode === "glide" ? "glide" : "") || (bombH ? `bomb${bombH}|${bombSmoke ? 1 : 0}|${s.lethal!.key}` : "") || (swimH ? `swim-${swimH}` : "");
     if (hintKey !== last.hint) {
       last.hint = hintKey;
       hint.classList.toggle("kr-hide", !hintKey);
@@ -838,6 +853,8 @@ export function createHud(terrain: Terrain, pois: typeof POIS): Hud {
       // alone just turns. Say so, and that the dive is a HOLD of the sprint button (its glyph can read like the stick)
       else if (hintKey === "free") { add(keyName("jump"), "PULL CHUTE"); add(lookText(), "STEER"); add(keyName("fwd"), "FLY FORWARD"); add(`HOLD ${keyName("sprint")}`, "DIVE"); if (pk) add(pk, "PING"); }
       else if (hintKey === "glide") { add(`HOLD ${keyName("jump")}`, "CUT CHUTE"); add(lookText(), "STEER"); add(keyName("fwd"), "GLIDE FORWARD"); if (pk) add(pk, "PING"); }
+      else if (bombH === 1 && bombSmoke) { add(`HOLD ${s.lethal!.key}`, "OR FIRE · AIM"); add("RELEASE", "THROW"); add("1.5 S", "SMOKE SCREEN — BLOCKS SIGHT & BOTS"); }
+      else if (bombH === 2 && bombSmoke) { add(`HOLD ${s.lethal!.key}`, "THROW SMOKE BANANA"); add("RELEASE", "DEPLOY CLOUD"); }
       else if (bombH === 1) { add(`HOLD ${s.lethal!.key}`, "OR FIRE · COOK"); add("RELEASE", "THROW"); add("3 S", "FUSE — DON'T HOLD IT TOO LONG"); }
       else if (bombH === 2) { add(`HOLD ${s.lethal!.key}`, "COOK A BANANA BOMB"); add("RELEASE", "THROW"); }
       else if (hintKey === "swim-surface") { add(keyName("crouch"), "DIVE"); add(keyName("sprint"), "SWIM FASTER"); add(keyName("jump"), "AT AN EDGE · CLIMB OUT"); }

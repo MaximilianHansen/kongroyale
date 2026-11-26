@@ -21,7 +21,6 @@
       "const summary = JSON.stringify([state.outcomeTime, state.placement, state.totalSquads, state.kills, state.damage, state.winner, state.squadOut]);"
     ],
     "shared/sim/match.ts": [
-      "this.explode(bx, by, bz, w.splashR, weaponDamage({ dmg: w.splashDmg }, r.rarity), r.owner, killWeapon(5, r.rarity));",
       "if (it.kind === IK.Weapon) { if (p.slots.some((s) => s.kind === SK.Empty) && !carriesWeapon(p, it.sub)) this.takeItem(p, it, false); }"
     ]
   },

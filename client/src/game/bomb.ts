@@ -9,7 +9,7 @@
 // Pooled meshes, scratch vectors: nothing allocates per frame.
 import * as THREE from "three";
 import type { Scope } from "../engine/res/scope";
-import { BOMB } from "../../../shared/sim/const";
+import { BOMB, SMOKE } from "../../../shared/sim/const";
 import { bombLaunch, bombStep, type BombBody } from "../../../shared/sim/bomb";
 import type { StaticWorld } from "../../../shared/sim/world";
 import { buildHeal } from "../weapons/heals";
@@ -17,7 +17,7 @@ import { createHand, handMaterials, type Hand } from "../weapons/hands";
 import { BOMB_SHAPE } from "../weapons/loot-lane";
 import { bananaAt } from "../weapons/lib/geo";
 
-interface View { id: number; obj: THREE.Object3D; ember: THREE.Object3D | null; body: BombBody; fuse: number; spin: THREE.Vector3; live: boolean }
+interface View { id: number; obj: THREE.Object3D; ember: THREE.Object3D | null; body: BombBody; fuse: number; fuse0: number; smoke: boolean; spin: THREE.Vector3; live: boolean }
 const AX = new THREE.Vector3(), Q = new THREE.Quaternion();
 const PREV_N = 90;
 /** the first-person bomb hand's keys (camera space, m / rad; mutable for live tuning):
@@ -48,13 +48,16 @@ export function bombPrefabs(): THREE.Object3D[] {
 
 export class BombFx {
   readonly views = new Map<number, View>();
-  private pool: View[] = [];
+  private poolFrag: View[] = [];
+  private poolSmoke: View[] = [];
   private pred: number[] = []; private predSeq = 0;
   // arc preview
   private readonly dots: THREE.InstancedMesh; private readonly ring: THREE.Mesh; private readonly ringMat: THREE.MeshBasicMaterial; private readonly dotMat: THREE.MeshBasicMaterial;
   private arcFrame = 0;
   // first person
-  readonly fp = new THREE.Group(); private readonly fpBomb: THREE.Object3D; private readonly fpEmber: THREE.Object3D | null; private readonly hand: Hand;
+  readonly fp = new THREE.Group(); private readonly fpBomb: THREE.Object3D; private readonly fpEmber: THREE.Object3D | null;
+  private readonly fpSmoke: THREE.Object3D; private readonly fpSmokeEmber: THREE.Object3D | null; private fpIsSmoke = false;
+  private readonly hand: Hand;
   private fpT = -1; private throwT = -1;
   // the PEEL PULL: the off hand hooks the pin ring, a strip of banana skin peels off the stem
   // with it, the fuse ember catches; the pin + strip leave with the hand
@@ -81,7 +84,11 @@ export class BombFx {
     hb.position.set(-0.03, 0.02, -0.02); hb.rotation.set(0.2, 0.6, 1.25);
     this.fpBomb = hb; this.fpEmber = hb.getObjectByName("banana-bomb/ember") ?? null;
     hb.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = false; m.frustumCulled = false; } });
-    this.fp.add(this.hand.mesh, hb); this.fp.name = "bomb-fp"; this.fp.visible = false; this.fp.renderOrder = 10;
+    const hs = buildHeal("smoke-bomb").root; hs.scale.setScalar(0.62); hs.visible = false;
+    hs.position.set(-0.03, 0.02, -0.02); hs.rotation.set(0.2, 0.6, 1.25);
+    this.fpSmoke = hs; this.fpSmokeEmber = hs.getObjectByName("smoke-bomb/ember") ?? null;
+    hs.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = false; m.frustumCulled = false; } });
+    this.fp.add(this.hand.mesh, hb, hs); this.fp.name = "bomb-fp"; this.fp.visible = false; this.fp.renderOrder = 10;
     // drawn in the viewmodel's own pass (atmos/post.ts): a wall a step away never cuts into the throwing hand
     this.fp.userData.vmPass = true;
     camera.add(this.fp);
@@ -122,8 +129,8 @@ export class BombFx {
     this.handL.mesh.userData.vmPass = true;
     camera.add(this.handL.mesh);
     res.defer(() => {
-      for (const v of [...this.views.values(), ...this.pool]) v.obj.removeFromParent();
-      this.views.clear(); this.pool.length = 0;
+      for (const v of [...this.views.values(), ...this.poolFrag, ...this.poolSmoke]) v.obj.removeFromParent();
+      this.views.clear(); this.poolFrag.length = 0; this.poolSmoke.length = 0;
       this.dots.removeFromParent(); this.ring.removeFromParent(); this.fp.removeFromParent(); this.handL.mesh.removeFromParent();
     });
   }
@@ -153,37 +160,40 @@ export class BombFx {
     const ga = this.strip.geometry.attributes;
     (ga.position as THREE.BufferAttribute).needsUpdate = true; (ga.normal as THREE.BufferAttribute).needsUpdate = true;
   }
-  private grab(id: number): View {
-    let v = this.pool.pop();
+  private grab(id: number, smoke: boolean): View {
+    const pool = smoke ? this.poolSmoke : this.poolFrag;
+    let v = pool.pop();
     if (!v) {
-      const obj = buildHeal("banana-bomb").root;
+      const kind = smoke ? "smoke-bomb" : "banana-bomb";
+      const obj = buildHeal(kind).root;
       obj.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.castShadow = true; });
-      v = { id, obj, ember: obj.getObjectByName("banana-bomb/ember") ?? null, body: { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rest: false }, fuse: 0, spin: new THREE.Vector3(), live: true };
+      v = { id, obj, ember: obj.getObjectByName(`${kind}/ember`) ?? null, body: { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rest: false }, fuse: 0, fuse0: smoke ? SMOKE.fuseS : BOMB.fuseS, smoke, spin: new THREE.Vector3(), live: true };
       this.scene.add(obj);
     }
-    v.id = id; v.live = true; v.obj.visible = true;
+    v.id = id; v.live = true; v.obj.visible = true; v.fuse0 = smoke ? SMOKE.fuseS : BOMB.fuseS;
     v.spin.set(Math.random() - 0.5, 1, Math.random() - 0.5).normalize().multiplyScalar(9 + Math.random() * 5);
     this.views.set(id, v);
     return v;
   }
-  private drop(v: View) { v.obj.visible = false; v.live = false; this.views.delete(v.id); this.pool.push(v); }
+  private drop(v: View) { v.obj.visible = false; v.live = false; this.views.delete(v.id); (v.smoke ? this.poolSmoke : this.poolFrag).push(v); }
   /** the server: a bomb left someone's hand (ours adopts the predicted one) */
-  spawn(id: number, mine: boolean, x: number, y: number, z: number, vx: number, vy: number, vz: number, fuse: number) {
+  spawn(id: number, mine: boolean, x: number, y: number, z: number, vx: number, vy: number, vz: number, fuse: number, smoke = false) {
     if (mine) {
       const pid = this.pred.shift(); const pv = pid !== undefined ? this.views.get(pid) : undefined;
       if (pv) { this.views.delete(pid!); pv.id = id; pv.fuse = fuse; this.views.set(id, pv); return; }
     }
-    const v = this.grab(id); const b = v.body;
+    const v = this.grab(id, smoke); const b = v.body;
     b.x = x; b.y = y; b.z = z; b.vx = vx; b.vy = vy; b.vz = vz; b.rest = false; v.fuse = fuse;
     v.obj.position.set(x, y, z);
   }
   end(id: number) { const v = this.views.get(id); if (v) this.drop(v); }
   /** our own throw, from the predicted pose (the server's bombLaunch with the same numbers) */
-  localThrow(ex: number, ey: number, ez: number, yaw: number, pitch: number, pvx: number, pvz: number, cooked: number) {
-    const v = this.grab(-(++this.predSeq));
-    bombLaunch(this.world, ex, ey, ez, yaw, pitch, pvx, pvz, v.body); v.fuse = BOMB.fuseS - cooked;
+  localThrow(ex: number, ey: number, ez: number, yaw: number, pitch: number, pvx: number, pvz: number, cooked: number, smoke = false) {
+    const v = this.grab(-(++this.predSeq), smoke);
+    bombLaunch(this.world, ex, ey, ez, yaw, pitch, pvx, pvz, v.body); v.fuse = (smoke ? SMOKE.fuseS : BOMB.fuseS) - cooked;
     v.obj.position.set(v.body.x, v.body.y, v.body.z);
     this.pred.push(v.id); if (this.pred.length > 4) { const old = this.views.get(this.pred.shift()!); if (old) this.drop(old); }
+    this.fpIsSmoke = smoke;
     this.throwT = 0;
   }
   update(dt: number, t: number) {
@@ -201,16 +211,17 @@ export class BombFx {
       }
       v.obj.position.set(b.x, b.y, b.z);
       // the ember: a steady glow that blinks faster and faster as the fuse runs out
-      if (v.ember) { const rate = 3 + 22 * Math.max(0, 1 - v.fuse / BOMB.fuseS); v.ember.scale.setScalar(Math.sin(t * rate * Math.PI * 2) > 0 ? 1.9 : 0.8); }
+      if (v.ember) { const rate = 3 + 22 * Math.max(0, 1 - v.fuse / v.fuse0); v.ember.scale.setScalar(Math.sin(t * rate * Math.PI * 2) > 0 ? 1.9 : 0.8); }
     }
   }
   /** the arc while cooking: `on` false hides it. (ex, ey, ez) the eye, yaw / pitch the look, fuse seconds left */
-  arc(on: boolean, ex = 0, ey = 0, ez = 0, yaw = 0, pitch = 0, pvx = 0, pvz = 0, fuseLeft = 0) {
+  arc(on: boolean, ex = 0, ey = 0, ez = 0, yaw = 0, pitch = 0, pvx = 0, pvz = 0, fuseLeft = 0, smoke = false) {
     if (!on) { this.dots.visible = false; this.ring.visible = false; return; }
     if ((this.arcFrame++ & 1) === 1 && this.dots.visible) return;
     const b = this.B; bombLaunch(this.world, ex, ey, ez, yaw, pitch, pvx, pvz, b);
+    const fuse0 = smoke ? SMOKE.fuseS : BOMB.fuseS;
     let n = 0, t = 0; const step = 1 / 30;
-    for (let k = 0; k < PREV_N && t < Math.min(fuseLeft, 3.0); k++) {
+    for (let k = 0; k < PREV_N && t < Math.min(fuseLeft, fuse0); k++) {
       bombStep(this.world, b, step); t += step;
       // (from a metre out: the throwing hand covers the first stretch; one dot per 1/30 s reads as a dotted line)
       // (sized with distance: a dotted line of even width on screen, not blobs next to the eye)
@@ -219,37 +230,41 @@ export class BombFx {
     }
     this.dots.count = n; this.dots.instanceMatrix.needsUpdate = true; this.dots.visible = n > 0;
     this.ring.visible = true; this.ring.position.set(b.x, b.y + 0.04, b.z);
-    // red: the fuse goes before it gets there (it will go off in the air); otherwise yellow → orange as the
-    // fuse burns down — the arc itself shows how cooked the bomb is
-    const late = !b.rest && t >= fuseLeft - 1e-3, burnt = Math.min(1, Math.max(0, 1 - fuseLeft / BOMB.fuseS));
-    if (late) { this.ringMat.color.setRGB(1.3, 0.25, 0.2); this.dotMat.color.setRGB(1.1, 0.35, 0.25); }
+    const late = !b.rest && t >= fuseLeft - 1e-3, burnt = Math.min(1, Math.max(0, 1 - fuseLeft / fuse0));
+    if (smoke) {
+      if (late) { this.ringMat.color.setRGB(0.75, 1.35, 1.55); this.dotMat.color.setRGB(0.7, 1.25, 1.45); }
+      else { this.ringMat.color.setRGB(0.3 + 0.25 * burnt, 1.25, 1.5); this.dotMat.color.setRGB(0.45 + 0.25 * burnt, 1.2, 1.4); }
+    } else if (late) { this.ringMat.color.setRGB(1.3, 0.25, 0.2); this.dotMat.color.setRGB(1.1, 0.35, 0.25); }
     else { this.ringMat.color.setRGB(1.15 + 0.15 * burnt, 0.9 - 0.45 * burnt, 0.2); this.dotMat.color.setRGB(1.0 + 0.15 * burnt, 0.88 - 0.4 * burnt, 0.3 - 0.1 * burnt); }
   }
   /** first person: `cook` = seconds the bomb in hand has burnt (0 = none). Returns true while the hand is on screen. */
-  firstPerson(cook: number, dt: number, t: number): boolean {
-    if (cook > 0) this.fpT = Math.min(1, (this.fpT < 0 ? 0 : this.fpT) + dt / 0.18);
+  firstPerson(cook: number, dt: number, t: number, smoke = false): boolean {
+    if (cook > 0) { this.fpT = Math.min(1, (this.fpT < 0 ? 0 : this.fpT) + dt / 0.18); this.fpIsSmoke = smoke; }
     const throwing = this.throwT >= 0;
     if (throwing) { this.throwT += dt; if (this.throwT > 0.34) { this.throwT = -1; this.fpT = -1; } }
     if (cook <= 0 && !throwing) { this.fp.visible = false; this.fpT = -1; this.handL.mesh.visible = false; if (this.pinOff) this.homePin(); return false; }
     this.fp.visible = true;
-    // the bomb comes up in front (the peel pull, 0-0.32 s of the fuse), THEN winds back over the shoulder
-    // with a nervous jiggle; the throw: over the top and down out of sight
+    const isSm = this.fpIsSmoke;
     const rise = this.fpT < 0 ? 1 : this.fpT, er = rise * rise * (3 - 2 * rise);
     const w = Math.min(1, Math.max(0, (cook - 0.3) / 0.22)), e = w * w * (3 - 2 * w);
     const A = BOMB_FP.pull, Bw = BOMB_FP.wind;
     let px = A.p[0] + (Bw.p[0] - A.p[0]) * e, py = A.p[1] + (Bw.p[1] - A.p[1]) * e - 0.38 * (1 - er), pz = A.p[2] + (Bw.p[2] - A.p[2]) * e;
     let rx = A.r[0] + (Bw.r[0] - A.r[0]) * e, ry = A.r[1] + (Bw.r[1] - A.r[1]) * e, rz = A.r[2] + (Bw.r[2] - A.r[2]) * e;
-    { const Bb = BOMB_FP.bomb; this.fpBomb.position.set(Bb.p[0], Bb.p[1], Bb.p[2]); this.fpBomb.rotation.set(Bb.r[0], Bb.r[1], Bb.r[2]); }
+    { const Bb = BOMB_FP.bomb;
+      this.fpBomb.position.set(Bb.p[0], Bb.p[1], Bb.p[2]); this.fpBomb.rotation.set(Bb.r[0], Bb.r[1], Bb.r[2]);
+      this.fpSmoke.position.set(Bb.p[0], Bb.p[1], Bb.p[2]); this.fpSmoke.rotation.set(Bb.r[0], Bb.r[1], Bb.r[2]); }
     if (throwing) {
       const k = Math.min(1, this.throwT / 0.34), s = Math.sin(k * Math.PI * 0.5);
       px = 0.3 - 0.22 * s; py = -0.14 + 0.1 * Math.sin(k * Math.PI) - 0.5 * k * k; pz = -0.3 - 0.45 * s; rx = -0.7 + 1.9 * s;
-      this.fpBomb.visible = k < 0.12;
+      this.fpBomb.visible = !isSm && k < 0.12;
+      this.fpSmoke.visible = isSm && k < 0.12;
       this.handL.mesh.visible = false;
     } else {
-      this.fpBomb.visible = true;
+      this.fpBomb.visible = !isSm;
+      this.fpSmoke.visible = isSm;
       px += Math.sin(t * 17) * 0.003 * e; py += Math.sin(t * 23) * 0.003 * e;
-      // the fuse catches as the peel comes away
-      if (this.fpEmber) this.fpEmber.scale.setScalar(cook < 0.2 ? 0.001 : 0.7 + Math.random() * 1.6);
+      const emb = isSm ? this.fpSmokeEmber : this.fpEmber;
+      if (emb) emb.scale.setScalar(cook < 0.2 ? 0.001 : 0.7 + Math.random() * 1.6);
     }
     this.fp.position.set(px, py, pz); this.fp.rotation.set(rx, ry, rz);
     // the forearm leaves through the bottom right corner whatever the wrist does (the hand's own +Z went anywhere)

@@ -216,7 +216,7 @@ function buildButtons() {
         mk("1P", () => audio?.playEvent(k));
         if (def.spatial) mk("world", () => audio?.playEvent(k, { pos: worldPos() }));
         if (k.startsWith("fire:")) {
-          const rpm = { pistol: 400, smg: 900, ar: 620, shotgun: 70, sniper: 50, rocket: 30 }[k.slice(5)] ?? 600;
+          const rpm = { pistol: 400, smg: 900, ar: 620, shotgun: 70, sniper: 50, rocket: 30, bow: 60, minigun: 900 }[k.slice(5)] ?? 600;
           mk("burst 1P", () => { for (let i = 0; i < 8; i++) setTimeout(() => audio?.playEvent(k), (i * 60000) / rpm); });
           mk("burst world", () => { const p = worldPos(); for (let i = 0; i < 8; i++) setTimeout(() => audio?.playEvent(k, { pos: p }), (i * 60000) / rpm); });
         }

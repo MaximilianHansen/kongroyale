@@ -22,7 +22,7 @@ import { stageLength } from "../../../shared/sim/storm";
 import type { AccoladeId, Hud, HudState, HotbarSlot } from "../ui/api";
 import { ClientMatch, type EventSink, type Remote } from "./client";
 import type { GameInput } from "./input";
-import { AMMO_TYPES, PS, SK, consumableId, weaponId, rarityOf, eyeY as simEyeY, canPullChute, FF_DOWN, FF_DIVE_DOWN, type Player } from "../../../shared/sim/player";
+import { AMMO_TYPES, B, PS, SK, consumableId, weaponId, rarityOf, eyeY as simEyeY, canPullChute, FF_DOWN, FF_DIVE_DOWN, type Player } from "../../../shared/sim/player";
 import { PLANE_OPEN_S, FREEFALL_FOV, FREEFALL_FOV_MAX, GLIDE_FOV, PLANE_FOV } from "../../../shared/sim/plane";
 import { ZIP_LINES, zipNear } from "../../../shared/sim/zipline";
 import { PLANE_BAY_S, CHUTE_CUT_HOLD_S, CONSUMABLE_DEFS, DT, PLANE_ALT, PLANE_SPEED, WEAPON_DEFS, SPRINT, SOLO_REDEPLOYS, WARMUP_S, resurgenceDelay, scopeSway, SCOPE_SWAY } from "../../../shared/sim/const";
@@ -31,7 +31,7 @@ import { weaponDef, currentSpread } from "../../../shared/sim/player";
 import { IK, type Item } from "../../../shared/sim/loot";
 import { makeHit, surfaceById } from "../../../shared/sim/world";
 import { ANN, HELD_STOWED, SURF_PLAYER } from "../../../shared/net/proto";
-import { Biome, CONSUMABLES, POIS, WEAPONS, type WeaponId } from "../../../shared/world/map";
+import { Biome, CONSUMABLES, POIS, RARITIES, WEAPONS, type WeaponId } from "../../../shared/world/map";
 import type { Surface } from "../../../shared/world/colliders";
 import type { Terrain } from "../../../shared/world/terrain";
 import { releasePlanePaint, restorePlanePaint, type PlaneProps } from "../actors/plane";
@@ -59,7 +59,7 @@ import { TukThru } from "./tuk-thru";
 import { STATIONS, onAir, stationName } from "../audio/radio";
 import { TUK, VE, VF, VKind, VS, freeSeat, specOf, vehicleInReach, vehPoint } from "../../../shared/sim/vehicle";
 import { HELI, TOP_BANANA, gunAngles, gunOf, padSlope } from "../../../shared/sim/heli";
-import { KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, VK } from "../../../shared/net/proto";
+import { KILL_AIRSTRIKE, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, VK } from "../../../shared/net/proto";
 import type { VehRemote } from "./client";
 import { gamepads } from "./gamepad";
 import { SWIM_DEV, WaterFx } from "./water-fx";
@@ -68,11 +68,15 @@ import { BuffOverlay } from "../ui/buff";
 import { ClimbViews } from "./climb-views";
 import type { WaterApi } from "../world/water/api";
 import { BombFx, bombPrefabs } from "./bomb";
+import { SmokeFx, smokePrefabs } from "./smoke-fx";
+import { TacticalFx, tacticalPrefabs } from "./tactical-fx";
+import { AIRSTRIKE_TARGET, GRAPPLE_TARGET, airstrikeTrace, grappleTrace } from "../../../shared/sim/grapple";
+import type { WeaponsKitEx } from "../weapons/index";
 import { CoverViews, coverGhostPrefab } from "./cover";
-import { ANN_ECON, OFFERS, Offer, SOLO_LIFE } from "../../../shared/sim/economy";
-import { ECON, SWIM_FLOAT_Y, UW_EYE, SWIM_EYE, DIVE_MIN_DEPTH } from "../../../shared/sim/const";
+import { ANN_ECON, OFFERS, Offer, RADAR_UAV, SOLO_LIFE, UPGRADE_PRICES } from "../../../shared/sim/economy";
+import { hotDropPoi, salePrice } from "../../../shared/sim/events-dyn";
+import { AIRSTRIKE, ECON, GRAPPLE, SWIM_FLOAT_Y, UW_EYE, SWIM_EYE, DIVE_MIN_DEPTH, BOMB, SMOKE } from "../../../shared/sim/const";
 import { bananaStand, tickStands } from "../weapons/stand";
-import { BOMB } from "../../../shared/sim/const";
 import { bombSlot } from "../../../shared/sim/player";
 import { killBaseWeapon, killMythic, MYTHIC_R, MYTHICS, mythicIndexOfPoi, mythicOf } from "../../../shared/sim/mythic";
 
@@ -80,6 +84,7 @@ import { killBaseWeapon, killMythic, MYTHIC_R, MYTHICS, mythicIndexOfPoi, mythic
 const FIRE_RUMBLE: Record<string, [number, number, number, number]> = {
   pistol: [0.12, 0.45, 70, 0.35], smg: [0.1, 0.35, 45, 0.25], ar: [0.22, 0.45, 60, 0.4],
   shotgun: [0.75, 0.6, 150, 0.9], sniper: [0.9, 0.5, 200, 1], rocket: [1, 0.8, 300, 0.8],
+  bow: [0.18, 0.38, 85, 0.45], minigun: [0.24, 0.55, 50, 0.4],
 };
 
 export interface Kits {
@@ -93,7 +98,7 @@ export interface Kits {
   lights?: LightBalancer;
 }
 interface ActorSlot { actor: KongActor; pose: KongPose; glider: GliderProps | null; id: number; lastFire: number; lastReload: number; stepAcc: number; wasGrounded: boolean; swimEvt: number }
-interface RocketView { id: number; mesh: THREE.Mesh; x: number; y: number; z: number; vx: number; vy: number; vz: number; live: boolean; life: number }
+interface RocketView { id: number; mesh: THREE.Object3D; x: number; y: number; z: number; vx: number; vy: number; vz: number; live: boolean; life: number; arrow?: boolean; arrowUpdate?: (dt: number, stuck?: boolean) => void }
 /** enemy gunfire shows on the maps within this range (m), fading over SHOT_PING_MS */
 const SHOT_PING_R = 200, SHOT_PING_MS = 1500;
 /** the spectator bar's key labels (refreshed each frame from the bindings) */
@@ -131,6 +136,8 @@ const PATTERN: Record<WeaponId, Array<[number, number]>> = {
   shotgun: [[1, 0.25], [1, -0.25]],
   sniper: [[1, 0.15]],
   rocket: [[1, 0.1]],
+  bow: [[0.8, 0.08]],
+  minigun: [[0.7, 0.45], [0.75, -0.55], [0.8, 0.6], [0.85, -0.65], [0.8, 0.7], [0.8, -0.7]],
 };
 
 /** apply the atmos material patch to a freshly added subtree right away (the atmos sweep only runs every 24 frames:
@@ -217,6 +224,7 @@ export class GameRender implements EventSink {
   private readonly rocketGeo = shared().rocketGeo;
   private readonly rocketMat = shared().rocketMat;
   private readonly rocketPool: THREE.Mesh[] = [];
+  private readonly arrowPool: Array<{ object: THREE.Object3D; update(dt: number, stuck?: boolean): void }> = [];
   private loops = new Set<string>();
   private fps = 0; private fpsAcc = 0; private fpsN = 0;
   private placeholderPlane: THREE.Object3D | null = null;
@@ -272,6 +280,8 @@ export class GameRender implements EventSink {
   coverHit(id: number, hp: number) { this.coverViews.hit(id, hp); }
   coverEnd(id: number, why: number) { this.coverViews.end(id, why); }
   private lastCook = 0; private coverOk = false; private coverHeld = false;
+  private grappleHeld = false; private grappleOk = false; private strikeHeld = false; private strikeOk = false;
+  private prevSpinT = 0;
   /** bombs carried last frame, until when the pick-up hint shows, the fuse's next tick (s) */
   private bombSeen = 0; private bombHintUntil = 0; private fuseTickAt = 0;
   // ---- (economy) the Banana Stands, the shop prompt, the wallet
@@ -280,6 +290,11 @@ export class GameRender implements EventSink {
   standNear = -1; private lastE = false; private bountyTeam = -1;
   onShop: ((stand: number) => void) | null = null;
   private cashGainAt = 0; private cashGainAmt = 0;
+  private uavUntil = 0; private fireSaleUntil = 0;
+  private hotDropSeed = NaN; private hotDropObj: HudState["hotDrop"] = null;
+  private readonly uavPool: Array<{ x: number; z: number }> = Array.from({ length: 48 }, () => ({ x: 0, z: 0 }));
+  private readonly uavList: Array<{ x: number; z: number }> = [];
+  private readonly uavHud = { left: 0, radius: RADAR_UAV.radius, enemies: this.uavList };
   cashGain(amount: number) { this.cashGainAt = performance.now(); this.cashGainAmt = amount; }
   private syncStands() {
     if (this.standViews.length === this.cm.stands.length) return;
@@ -296,29 +311,83 @@ export class GameRender implements EventSink {
   shopView(): import("../ui/shop").ShopView {
     const cm = this.cm, p = cm.pred, e = cm.econ, solo = cm.mode === "solo";
     const resOn = (cm.flags & 1) !== 0;
+    const now = performance.now();
+    const saleLeft = Math.max(0, (this.fireSaleUntil - now) / 1000), onSale = saleLeft > 0;
     const mateOut = !solo && cm.remotes.some((r) => r.n > 0 && r.team === p.team && r.id !== cm.me && (r.st === PS.Dead || r.st === PS.Spectate)) && !resOn;
     const offers = OFFERS.map((o) => {
-      let name = o.name, desc = o.desc, price = o.price, why: string | undefined;
+      let name = o.name, desc = o.desc, basePrice = o.price, why: string | undefined;
       if (o.id === Offer.BuyBack) {
-        if (solo) { name = SOLO_LIFE.name; desc = SOLO_LIFE.desc; price = SOLO_LIFE.price; if (!resOn) why = "RESURGENCE IS OFF"; else if (this.redeploysUsed <= 0) why = "YOU HAVE ALL YOUR LIVES"; }
+        if (solo) { name = SOLO_LIFE.name; desc = SOLO_LIFE.desc; basePrice = SOLO_LIFE.price; if (!resOn) why = "RESURGENCE IS OFF"; else if (this.redeploysUsed <= 0) why = "YOU HAVE ALL YOUR LIVES"; }
         else if (!mateOut) why = resOn ? "SQUADMATES REDEPLOY ON THEIR OWN" : "NO ELIMINATED SQUADMATE";
       } else if (o.id === Offer.Bounty && e.huntTeam !== 255) why = "YOUR SQUAD HAS A CONTRACT";
+      else if (o.id === Offer.Upgrade) {
+        const act = p.slots[p.active];
+        if (act.kind !== SK.Weapon) why = "HOLD A GUN FIRST";
+        else if (act.rarity >= 4) why = act.rarity >= 5 ? "MYTHIC — MAX TIER" : "ALREADY LEGENDARY";
+        else {
+          basePrice = UPGRADE_PRICES[act.rarity] ?? UPGRADE_PRICES[0];
+          name = `UPGRADE ${WEAPON_DEFS[weaponId(act.id)].name}`;
+          desc = `${RARITIES[act.rarity].toUpperCase()} → ${RARITIES[act.rarity + 1].toUpperCase()} · refills mag`;
+        }
+      } else if (o.id === Offer.Radar && now < this.uavUntil) why = `UAV ACTIVE (${Math.ceil((this.uavUntil - now) / 1000)}S)`;
       else if (o.id === Offer.Ammo && p.slots[p.active].kind !== SK.Weapon) why = "HOLD A GUN FIRST";
-      return { id: o.id, name, desc, price, icon: o.icon, ok: !why && e.cash >= price, why };
+      const price = salePrice(basePrice, onSale);
+      return { id: o.id, name, desc, price, origPrice: onSale ? basePrice : undefined, icon: o.icon, ok: !why && e.cash >= price, why };
     });
-    return { cash: e.cash, title: "BANANA STAND", sub: (POIS[cm.stands[this.standNear]?.poi ?? -1]?.name ?? "") + " · SPEND YOUR BANANA BUCKS", offers };
+    const poiName = POIS[cm.stands[this.standNear]?.poi ?? -1]?.name ?? "";
+    const sub = onSale ? `${poiName ? poiName + " · " : ""}FIRE SALE — ALL PRICES 50% OFF!` : `${poiName ? poiName + " · " : ""}SPEND YOUR BANANA BUCKS`;
+    return { cash: e.cash, title: "BANANA STAND", sub, saleLeft, offers };
   }
-  bomb(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, fuse: number) {
-    this.bombFx.spawn(id, owner === this.cm.me, x, y, z, vx, vy, vz, fuse);
+  private smokeFx: SmokeFx | null = null;
+  private tacticalFx: TacticalFx | null = null;
+  private ensureSmoke(): SmokeFx {
+    if (!this.smokeFx) {
+      this.smokeFx = new SmokeFx(this.engine.scene, this.matchScope);
+      this.matchScope.defer(() => { this.smokeFx = null; });
+    }
+    return this.smokeFx;
+  }
+  private ensureTactical(): TacticalFx {
+    if (!this.tacticalFx) {
+      this.tacticalFx = new TacticalFx(this.engine.scene, this.cm.world, this.matchScope);
+      patchTree(this.engine, this.tacticalFx.root);
+      this.matchScope.defer(() => { this.tacticalFx = null; });
+    }
+    return this.tacticalFx;
+  }
+  /** eagerly construct & patch SmokeFx + TacticalFx at match setup (eliminates first-use hitches without altering constructor) */
+  initTacticalFx() { this.ensureSmoke(); this.ensureTactical(); }
+  grapple(owner: number, x: number, y: number, z: number, tx: number, ty: number, tz: number) {
+    if (owner === this.cm.me) return;
+    this.ensureTactical().spawnGrapple(x, y, z, tx, ty, tz);
+    this.play("grapple:shoot", x, y, z, 0.9);
+  }
+  localGrapple(x: number, y: number, z: number, tx: number, ty: number, tz: number) {
+    this.ensureTactical().spawnGrapple(x, y, z, tx, ty, tz);
+    this.sfx("grapple:shoot", { volume: 0.9 });
+    gamepads.rumble(0.28, 0.52, 115);
+    this.addTrauma(0.08);
+  }
+  airstrike(id: number, _owner: number, x: number, y: number, z: number, yaw: number, startT = 0) {
+    this.ensureTactical().spawnAirstrike(id, x, y, z, yaw, startT);
+    if (startT < 0.3) this.play("airstrike:warn", x, y + 20, z, 1);
+  }
+  bomb(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, fuse: number, smoke = false) {
+    this.bombFx.spawn(id, owner === this.cm.me, x, y, z, vx, vy, vz, fuse, smoke);
     if (owner !== this.cm.me) this.play("jump", x, y, z, 0.35);
   }
   bombEnd(id: number) { this.bombFx.end(id); }
-  localThrow(cooked: number) {
+  smoke(id: number, x: number, y: number, z: number, dur: number) {
+    this.ensureSmoke().spawn(id, x, y, z, dur);
+    this.play("impact:metal", x, y, z, 0.55);
+    this.play("gun:lock", x, y, z, 0.9);
+  }
+  localThrow(cooked: number, smoke = false) {
     const p = this.cm.pred;
-    this.bombFx.localThrow(p.x, simEyeY(p), p.z, p.yaw, p.pitch, p.vx, p.vz, cooked);
+    this.bombFx.localThrow(p.x, simEyeY(p), p.z, p.yaw, p.pitch, p.vx, p.vz, cooked, smoke);
     this.sfx("jump", { volume: 0.4 }); gamepads.rumble(0.15, 0.3, 80);
     // the release: the bomb whooshes out of the hand
-    this.kits.audio.play("whizz", { volume: 0.45, rate: 0.62 });
+    this.kits.audio.play("whizz", { volume: 0.45, rate: smoke ? 0.78 : 0.62 });
   }
   /** TOP BANANA's rounds drawn as flying bananas (game/banana-rounds.ts) */
   private readonly bananas: BananaRounds;
@@ -348,8 +417,23 @@ export class GameRender implements EventSink {
 
   /** create every other kong up front (instanced actors: cheap) so nobody pops in or hitches mid-fight */
   async prewarmActors() {
+    this.ensureSmoke();
+    this.ensureTactical();
     const jobs: Array<Promise<unknown>> = [];
     for (let i = 0; i < 50; i++) if (i !== this.cm.me) jobs.push(this.ensureActor(i, this.cm.remotes[i]?.team ?? 0));
+    const kit = this.kits.weapons as Partial<WeaponsKitEx>;
+    if (kit.createArrow) {
+      for (let k = this.arrowPool.length; k < 4; k++) {
+        jobs.push(kit.createArrow().then((av) => {
+          if (!av || this.disposed) return;
+          av.object.visible = false;
+          av.object.userData.gameRoot = true;
+          this.engine.scene.add(av.object);
+          patchTree(this.engine, av.object);
+          this.arrowPool.push(av);
+        }));
+      }
+    }
     await Promise.all(jobs);
     for (const a of this.actors.values()) a.actor.setVisible(false);
   }
@@ -545,7 +629,7 @@ export class GameRender implements EventSink {
     const me = this.cm.me;
     // a mythic kill carries KILL_MYTHIC + its index: the base gun's silhouette + the mythic's name tag
     const myth = killMythic(weapon); weapon = killBaseWeapon(weapon);
-    const wid: HudState["killfeed"][number]["weapon"] = weapon < 6 ? WEAPONS[weapon] : weapon === 255 ? "storm" : weapon === 254 ? "fall" : weapon === KILL_BOMB ? "banana-bomb" : "unknown";
+    const wid: HudState["killfeed"][number]["weapon"] = weapon < WEAPONS.length ? WEAPONS[weapon] : weapon === 255 ? "storm" : weapon === 254 ? "fall" : weapon === KILL_BOMB ? "banana-bomb" : weapon === KILL_AIRSTRIKE ? "airstrike" : "unknown";
     this.hud.killfeed.push({ at: performance.now(), killer: killer >= 0 ? this.name(killer) : "", victim: this.name(victim), weapon: wid, meKiller: killer === me, meVictim: victim === me, mythic: myth ? { name: myth.name, color: myth.color } : undefined });
     if (this.hud.killfeed.length > 6) this.hud.killfeed.shift();
     this.range?.onKill(killer, victim);
@@ -558,11 +642,11 @@ export class GameRender implements EventSink {
     if (victim === me && killer >= 0 && killer !== me) this.acc.died(killer);
     if (victim === me) {
       const deathNow = performance.now();
-      this.deathSummary = { weapon: myth ? myth.name : weapon < 6 ? WEAPON_DEFS[WEAPONS[weapon]].name : wid === "storm" ? "Storm" : wid === "fall" ? "Fall damage" : weapon === KILL_TUK ? "Tuk-tuk" : weapon === KILL_BOMB ? "Banana bomb" : weapon === KILL_HELI ? "Helicopter" : weapon === KILL_GUN ? `${TOP_BANANA.name} (door gun)` : "Unknown cause", incomingDamage: Math.round(this.incomingHits.filter((q) => deathNow - q.at <= 10000).reduce((a, q) => a + q.damage, 0)), windowS: 10 };
+      this.deathSummary = { weapon: myth ? myth.name : weapon < WEAPONS.length ? WEAPON_DEFS[WEAPONS[weapon]].name : wid === "storm" ? "Storm" : wid === "fall" ? "Fall damage" : weapon === KILL_TUK ? "Tuk-tuk" : weapon === KILL_BOMB ? "Banana bomb" : weapon === KILL_AIRSTRIKE ? "Banana Airstrike" : weapon === KILL_HELI ? "Helicopter" : weapon === KILL_GUN ? `${TOP_BANANA.name} (door gun)` : "Unknown cause", incomingDamage: Math.round(this.incomingHits.filter((q) => deathNow - q.at <= 10000).reduce((a, q) => a + q.damage, 0)), windowS: 10 };
       this.incomingHits.length = 0;
       this.cm.resetJitter();                  // the view changes (death cam → spectate): re-learn the buffer from fresh arrivals
       const p = this.cm.pred; this.cm.localPose(V3); this.deathX = V3.x; this.deathY = V3.y; this.deathZ = V3.z; void p;
-      this.deadAt = performance.now(); this.killedBy = killer >= 0 && killer !== me ? this.name(killer) : wid === "storm" ? "THE STORM" : weapon === KILL_TUK ? "A TUK-TUK" : weapon === KILL_HELI ? "A HELICOPTER" : weapon === KILL_BOMB ? "A BANANA BOMB" : "THE FALL";
+      this.deadAt = performance.now(); this.killedBy = killer >= 0 && killer !== me ? this.name(killer) : wid === "storm" ? "THE STORM" : weapon === KILL_TUK ? "A TUK-TUK" : weapon === KILL_HELI ? "A HELICOPTER" : weapon === KILL_BOMB ? "A BANANA BOMB" : weapon === KILL_AIRSTRIKE ? "A BANANA AIRSTRIKE" : "THE FALL";
       this.resCountdown = final ? null : resurgenceDelay(this.cm.mode, this.cm.storm.phase);
       if (!final && this.cm.phase !== 0) this.redeploysUsed++;
       this.sfx("elim:self");
@@ -624,28 +708,65 @@ export class GameRender implements EventSink {
     const cam = this.engine.camera.position; const d = Math.hypot(cam.x - x, cam.y - y, cam.z - z);
     this.addTrauma(Math.max(0, 1 - d / 45) * 0.8);
   }
-  rocket(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number) {
-    this.pingShot(owner, x, z);
-    // our own rocket was already drawn from the muzzle frame (localFire): adopt the oldest predicted one
+  rocket(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, arrow = false) {
+    if (!arrow) this.pingShot(owner, x, z);
+    // our own rocket/arrow was already drawn from the muzzle frame (localFire): adopt the oldest predicted one
     if (owner === this.cm.me) {
       const pid = this.predRockets.shift();
       const pr = pid !== undefined ? this.rockets.get(pid) : undefined;
       if (pr) { this.rockets.delete(pid!); pr.id = id; this.rockets.set(id, pr); return; }
     }
-    this.addRocket(id, x, y, z, vx, vy, vz);
-    if (owner !== this.cm.me) this.play("fire:rocket", x, y, z, 1);
+    this.addRocket(id, x, y, z, vx, vy, vz, arrow);
+    if (owner !== this.cm.me) this.play(arrow ? "fire:bow" : "fire:rocket", x, y, z, arrow ? 0.8 : 1);
   }
-  private addRocket(id: number, x: number, y: number, z: number, vx: number, vy: number, vz: number) {
-    let mesh = this.rocketPool.pop();
-    if (!mesh) { mesh = new THREE.Mesh(this.rocketGeo, this.rocketMat); mesh.castShadow = true; this.engine.scene.add(mesh); }
-    mesh.visible = true; mesh.position.set(x, y, z);
+  private addRocket(id: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, arrow = false) {
+    let mesh: THREE.Object3D;
+    if (arrow) {
+      const pooled = this.arrowPool.pop();
+      if (pooled) {
+        pooled.object.position.set(x, y, z);
+        pooled.object.visible = true;
+        const r: RocketView = { id, mesh: pooled.object, x, y, z, vx, vy, vz, live: true, life: 7, arrow: true, arrowUpdate: pooled.update };
+        this.rockets.set(id, r);
+        return r;
+      }
+      const holder = new THREE.Group();
+      holder.position.set(x, y, z);
+      holder.userData.gameRoot = true;
+      this.engine.scene.add(holder);
+      mesh = holder;
+      const r: RocketView = { id, mesh, x, y, z, vx, vy, vz, live: true, life: 7, arrow: true };
+      this.rockets.set(id, r);
+      const kit = this.kits.weapons as Partial<WeaponsKitEx>;
+      void kit.createArrow?.().then((av) => {
+        if (!av || !this.rockets.has(r.id) || this.disposed) return;
+        patchTree(this.engine, av.object);
+        holder.add(av.object);
+        r.arrowUpdate = av.update;
+      });
+      return r;
+    }
+    let m = this.rocketPool.pop();
+    if (!m) { m = new THREE.Mesh(this.rocketGeo, this.rocketMat); m.castShadow = true; this.engine.scene.add(m); }
+    m.visible = true; m.position.set(x, y, z);
+    mesh = m;
     const r: RocketView = { id, mesh, x, y, z, vx, vy, vz, live: true, life: 7 };
     this.rockets.set(id, r);
     return r;
   }
   /** predicted own rockets (negative ids) waiting for the server's EV.Rocket, oldest first */
   private predRockets: number[] = []; private predRocketSeq = 0;
-  rocketEnd(id: number) { const r = this.rockets.get(id); if (r) { r.mesh.visible = false; this.rocketPool.push(r.mesh); this.rockets.delete(id); } }
+  rocketEnd(id: number) {
+    const r = this.rockets.get(id);
+    if (!r) return;
+    if (r.arrow) {
+      if (r.mesh.name === "bamboo-arrow" && r.arrowUpdate) {
+        r.mesh.visible = false;
+        this.arrowPool.push({ object: r.mesh, update: r.arrowUpdate });
+      } else r.mesh.removeFromParent();
+    } else { r.mesh.visible = false; this.rocketPool.push(r.mesh as THREE.Mesh); }
+    this.rockets.delete(id);
+  }
   respawn(id: number, x: number, y: number, z: number) {
     if (id === this.cm.me) {
       this.cm.resetJitter();
@@ -703,6 +824,55 @@ export class GameRender implements EventSink {
       case ANN_ECON.BountyDone: { const t = this.cm.pred.team; if (a === (t & 0xff)) { this.announce("BOUNTY COMPLETE", "+$1,500 each · the reward dropped where they fell", "victory"); this.sfx("ui:victory"); } else if (b === (t & 0xff)) this.announce("YOUR BOUNTY WAS CLAIMED", "the hunters got one of you", "warn"); break; }
       case ANN_ECON.BountyOver: { const t = this.cm.pred.team; if (a === (t & 0xff)) this.announce("BOUNTY EXPIRED", "the mark got away", "info"); else if (b === (t & 0xff)) this.announce("BOUNTY SURVIVED", "+$500 for every one of you still standing", "victory"); break; }
       case ANN_ECON.BuyBack: { const q = this.cm.remotes[a]; if (a === this.cm.me || (q && q.team === this.cm.pred.team)) { this.announce(`${this.name(a)} IS BACK`, `bought back by ${this.name(b)} — redeploying`, "info"); this.sfx("ui:resurgence"); } break; }
+      case ANN_ECON.Upgrade: {
+        if (a === this.cm.me) {
+          const wid = b & 0x0f, rar = (b >> 4) & 0x0f;
+          const wn = WEAPON_DEFS[WEAPONS[wid]]?.name ?? "WEAPON";
+          const rn = RARITIES[rar]?.toUpperCase() ?? "UPGRADED";
+          this.announce(`${wn} UPGRADED!`, `NOW ${rn} · FULL MAGAZINE`, "victory");
+          this.sfx("ui:medal-big");
+          this.kits.audio.play("pickup:weapon", { tier: rar, volume: 0.9 });
+        }
+        break;
+      }
+      case ANN_ECON.Radar: {
+        if (a === (this.cm.pred.team & 0xff)) {
+          this.uavUntil = performance.now() + b * 1000;
+          this.announce("RADAR PULSE (UAV) ONLINE", `enemies within ${RADAR_UAV.radius} m revealed on map for ${b} s`, "info");
+          this.sfx("ui:poi");
+          this.sfx("ui:countdown-go");
+        }
+        break;
+      }
+      case ANN_ECON.FireSaleStart: {
+        this.fireSaleUntil = performance.now() + a * 1000;
+        this.announce("BANANA STAND FIRE SALE!", `50% OFF ALL ITEMS FOR ${a} SECONDS`, "victory");
+        this.sfx("ui:medal-big");
+        break;
+      }
+      case ANN_ECON.FireSaleEnd: {
+        this.fireSaleUntil = 0;
+        this.announce("FIRE SALE ENDED", "Banana Stand prices back to normal", "info");
+        break;
+      }
+      case ANN_ECON.SupplyFrenzy: {
+        this.announce("SUPPLY DROP FRENZY!", `${a || 3} GOLDEN CRATES INBOUND — CHECK YOUR MAP`, "warn");
+        this.sfx("ui:countdown-go");
+        this.kits.audio.play("plane:ramp", { volume: 0.75 });
+        break;
+      }
+      case ANN_ECON.HotDropBonus: {
+        if (a === this.cm.me) {
+          this.hud.pickup = { at: performance.now(), label: `HOT DROP BONUS · +$${b * 10}` };
+          this.sfx("ui:medal");
+        }
+        break;
+      }
+      case ANN_ECON.Airstrike: {
+        this.announce("BANANA AIRSTRIKE INBOUND!", `IMPACT IN ${AIRSTRIKE.warnS.toFixed(1)}S — CLEAR THE RED ZONE!`, "warn");
+        this.sfx("airstrike:warn", { volume: 0.9 });
+        break;
+      }
       case ANN.SquadEliminated: if (a === this.cm.pred.team) { this.placement = b + 1; this.totalSquads = Math.max(this.totalSquads, b + 1); this.resCountdown = null; if (this.cm.mode === "trios") this.announce("SQUAD ELIMINATED", `#${b + 1} · better luck next drop`, "warn"); this.onEliminated?.(); } break;
     }
   }
@@ -742,11 +912,11 @@ export class GameRender implements EventSink {
       if (heavy) this.addTrauma(w.id === "rocket" ? 0.14 : 0.08); }
     this.sfx(`fire:${w.id}`);
     if (w.projectile) {
-      // the rocket leaves the barrel NOW (same launch maths as the server's Match.resolveShot); the server's copy adopts it
+      // the rocket / arrow leaves the barrel NOW (same launch maths as the server's Match.resolveShot); the server's copy adopts it
       const pj = w.projectile, cp = Math.cos(p.pitch), sp = Math.sin(p.pitch), sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
       const dx = -sy * cp, dy = sp, dz = -cy * cp, oy = simEyeY(p);
       const id = -(++this.predRocketSeq);
-      this.addRocket(id, p.x + dx * 0.8, oy + dy * 0.8 - 0.15, p.z + dz * 0.8, dx * pj.speed + p.vx * 0.5, dy * pj.speed, dz * pj.speed + p.vz * 0.5);
+      this.addRocket(id, p.x + dx * 0.8, oy + dy * 0.8 - 0.15, p.z + dz * 0.8, dx * pj.speed + p.vx * 0.5, dy * pj.speed, dz * pj.speed + p.vz * 0.5, w.id === "bow");
       this.predRockets.push(id); if (this.predRockets.length > 8) this.predRockets.shift();
       return;
     }
@@ -821,7 +991,7 @@ export class GameRender implements EventSink {
   phase(phase: number) {
     if (phase === 0 || phase === 1) this.input.slotWanted = 0;
     if (phase === 1) { this.placeSeen.fill(0); this.hud.place = null; this.hud.where = null; this.acc.reset(); if (this.hud.accolades) this.hud.accolades.length = 0; this.hud.pickup = null; this.deathSummary = null; this.incomingHits.length = 0; this.totalSquads = this.cm.mode === "solo" ? 50 : 17; this.kills = 0; this.redeploysUsed = 0; this.headshots = 0; this.chestsOpened = 0; this.damage = 0; this.deadAt = -1; this.resCountdown = null; this.placement = 0; this.hud.killfeed.length = 0; this.rampOpen = 0; this.planeCamInit = false; }   // (the warm-up's map pin stays: it marks your drop)
-    if (phase === 0 || phase === 1) { this.victoryAt = -1; if (this.meActor) this.meActor.setVisible(false); }
+    if (phase === 0 || phase === 1) { this.victoryAt = -1; this.uavUntil = 0; this.fireSaleUntil = 0; this.smokeFx?.clear(); this.tacticalFx?.clear(); if (this.meActor) this.meActor.setVisible(false); }
     if (phase === 0) { this.stopAllLoops(); this.deadAt = -1; if (this.range) this.announce("FIRING RANGE", "every item on the rack behind you · targets respawn", "info"); else this.announce("WARM-UP", "loot up, shoot around — the plane leaves soon", "info"); }
   }
   inventory() { this.syncViewModel(); }
@@ -1068,7 +1238,7 @@ export class GameRender implements EventSink {
     this.kits.viewModel.setScoped(scoped); this.kits.viewModel.setAds?.(ads); this.adsOn = ads;
     // the viewmodel stays on in freefall / glide — it carries the parachute hands (weapons/viewmodel.ts AIR)
     // a banana bomb in hand: the throwing hand comes up, the gun goes down
-    const bombHand = this.bombFx.firstPerson(!victory && !spec && !dead ? p.cookT : 0, dt, t);
+    const bombHand = this.bombFx.firstPerson(!victory && !spec && !dead ? p.cookT : 0, dt, t, p.cookKind === 1);
     const casterHands = this.caster?.hands?.() ?? null;
     this.kits.viewModel.object.visible = casterHands ? true : !victory && !spec && !inPlane && !dead && !atBars && !gunner && !bombHand;   // (both fists are on the bars / the gun's grips)
     // swimming: the gun stowed (the sim's swim gun timer) → both hands swim
@@ -1083,6 +1253,11 @@ export class GameRender implements EventSink {
     this.streaks.visible = su.uAmt.value > 0.01;
     if (this.streaks.visible) { su.uCam.value.copy(cam.position); su.uVel.value.set(p.vx, p.vy, p.vz); su.uTime.value = t; }
     this.syncViewModel();
+    // Banana Shredder rotary barrel spin + spin-up/down motor audio
+    this.kits.viewModel.setSpin?.(p.spinT);
+    if (p.spinT >= 0.08 && this.prevSpinT < 0.08) this.sfx("gun:spinup", { volume: 0.72 });
+    else if (p.spinT < 0.35 && this.prevSpinT >= 0.35 && !(this.cm.cur.buttons & B.FIRE)) this.sfx("gun:spindown", { volume: 0.65 });
+    this.prevSpinT = p.spinT;
     // (treading water with the gun up: no walk bob, no airborne sag — the camera rides the water instead)
     this.kits.viewModel.update(dt, casterHands ?? { speed: p.st === PS.Ride || p.swim ? 0 : Math.hypot(p.vx, p.vz), grounded: p.grounded || p.swim, sprint: p.sprint && !p.swim, crouch: p.crouch, lookDX: this.input.dx, lookDY: this.input.dy });
     // my swim strokes: the sound + splash on the swim hands' beat
@@ -1141,37 +1316,57 @@ export class GameRender implements EventSink {
     for (const v of this.lootViews.values()) v.update(dt, t);
     if (this.drops.size) this.stepDrops();
     this.boxes.update(dt, cm.chests);
-    // banana bombs: in flight, the arc while one cooks in our hand, the pin pull
+    // banana & smoke bombs: in flight, smoke clouds, the arc while one cooks in our hand, the pin pull
     this.bombFx.update(dt, t);
+    this.smokeFx?.update(dt, this.engine.camera.position);
     this.coverViews.update(dt);
     this.syncStands();
     // the stands' shopkeepers: only the ones near the camera animate / draw their detail
     { const c = this.engine.camera.position; tickStands(this.standViews, c.x, c.z, p.x, p.z, cm.econ.cash, t, dt); }
-    { const a = p.slots[p.active], hold = a.kind === SK.Consumable && consumableId(a.id) === "crate-wall" && a.count > 0 && p.st === PS.Ground && !dead && !spec;
-      this.coverOk = this.coverViews.preview(hold, p.x, p.y, p.z, this.input.yaw); this.coverHeld = hold; }
-    { const cooking = p.cookT > 0 && !dead && !spec;
-      if (cooking && this.lastCook <= 0) { this.sfx("equip", { volume: 0.7 }); this.fuseTickAt = 0.12; this.loops.add("bomb:fuse"); this.kits.audio.play("gun:hot", { loopId: "bomb:fuse", volume: 0.28, rate: 1.7 }); }
+    { const a = p.slots[p.active], cid = a.kind === SK.Consumable && a.count > 0 && p.st === PS.Ground && !dead && !spec ? consumableId(a.id) : null;
+      const hold = cid === "crate-wall";
+      this.coverOk = this.coverViews.preview(hold, p.x, p.y, p.z, this.input.yaw); this.coverHeld = hold;
+      this.grappleHeld = cid === "vine-grapple";
+      this.strikeHeld = cid === "airstrike";
+      if (this.grappleHeld) {
+        this.grappleOk = grappleTrace(cm.world, p.x, simEyeY(p), p.z, this.input.yaw, this.input.pitch);
+        if (this.grappleOk) this.ensureTactical().preview("grapple", GRAPPLE_TARGET[0], GRAPPLE_TARGET[1], GRAPPLE_TARGET[2], this.input.yaw, cam.position, t);
+        else this.tacticalFx?.preview("none", 0, 0, 0, 0, cam.position, t);
+      } else if (this.strikeHeld) {
+        this.strikeOk = airstrikeTrace(cm.world, p.x, simEyeY(p), p.z, this.input.yaw, this.input.pitch);
+        if (this.strikeOk) this.ensureTactical().preview("airstrike", AIRSTRIKE_TARGET[0], AIRSTRIKE_TARGET[1], AIRSTRIKE_TARGET[2], this.input.yaw, cam.position, t);
+        else this.tacticalFx?.preview("none", 0, 0, 0, 0, cam.position, t);
+      } else {
+        this.grappleOk = false; this.strikeOk = false;
+        this.tacticalFx?.preview("none", 0, 0, 0, 0, cam.position, t);
+      }
+      this.tacticalFx?.update(dt, t); }
+    { const cooking = p.cookT > 0 && !dead && !spec, cookSmoke = p.cookKind === 1, fuse0 = cookSmoke ? SMOKE.fuseS : BOMB.fuseS;
+      if (cooking && this.lastCook <= 0) { this.sfx("equip", { volume: 0.7 }); this.fuseTickAt = 0.12; this.loops.add("bomb:fuse"); this.kits.audio.play("gun:hot", { loopId: "bomb:fuse", volume: cookSmoke ? 0.2 : 0.28, rate: cookSmoke ? 2.1 : 1.7 }); }
       // the peel fuse sizzles and ticks while it burns — faster and higher as it runs out
       if (cooking && p.cookT >= this.fuseTickAt) {
-        const left = BOMB.fuseS - p.cookT;
-        this.kits.audio.play("ui:click", { volume: 0.55 + 0.35 * (1 - left / BOMB.fuseS), rate: 1 + 0.6 * (1 - left / BOMB.fuseS) });
+        const left = fuse0 - p.cookT;
+        this.kits.audio.play("ui:click", { volume: 0.55 + 0.35 * (1 - left / fuse0), rate: (cookSmoke ? 1.2 : 1) + 0.6 * (1 - left / fuse0) });
         this.fuseTickAt = p.cookT + (left > 2 ? 0.5 : left > 1 ? 0.33 : 0.16);
       }
       if (!cooking && this.lastCook > 0) this.stopLoop("bomb:fuse");
       this.lastCook = cooking ? p.cookT : 0;
-      this.bombFx.arc(cooking, p.x, simEyeY(p), p.z, this.input.yaw, this.input.pitch, p.vx, p.vz, BOMB.fuseS - p.cookT); }
-    // ---- rockets (client-side ballistic mirror of the server projectile)
+      this.bombFx.arc(cooking, p.x, simEyeY(p), p.z, this.input.yaw, this.input.pitch, p.vx, p.vz, fuse0 - p.cookT, cookSmoke); }
+    // ---- rockets & bamboo arrows (client-side ballistic mirror of the server projectile)
     for (const r of this.rockets.values()) {
       r.life -= dt;
       if (r.life <= 0) { this.rocketEnd(r.id); continue; }                                 // never confirmed / ended: drop it
-      if (!r.live) continue;
-      r.vy -= WEAPON_DEFS.rocket.projectile!.gravity * dt;
+      if (!r.live) { r.arrowUpdate?.(dt, true); continue; }
+      const grav = r.arrow ? WEAPON_DEFS.bow.projectile!.gravity : WEAPON_DEFS.rocket.projectile!.gravity;
+      r.vy -= grav * dt;
       const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt, nz = r.z + r.vz * dt;
       // it stops where it hits (the explosion arrives with the server's verdict) instead of flying through the wall
       this.cm.world.raycast(r.x, r.y, r.z, nx - r.x, ny - r.y, nz - r.z, 1, RHIT, true);
-      if (RHIT.hit || ny < -1) { r.live = false; r.x = RHIT.hit ? RHIT.x : nx; r.y = RHIT.hit ? RHIT.y : ny; r.z = RHIT.hit ? RHIT.z : nz; r.mesh.position.set(r.x, r.y, r.z); continue; }
+      if (RHIT.hit || ny < -1) { r.live = false; r.x = RHIT.hit ? RHIT.x : nx; r.y = RHIT.hit ? RHIT.y : ny; r.z = RHIT.hit ? RHIT.z : nz; r.mesh.position.set(r.x, r.y, r.z); r.arrowUpdate?.(dt, true); continue; }
       r.x = nx; r.y = ny; r.z = nz;
-      r.mesh.position.set(r.x, r.y, r.z); r.mesh.quaternion.setFromUnitVectors(V3.set(0, 1, 0), V3b.set(r.vx, r.vy, r.vz).normalize());
+      r.mesh.position.set(r.x, r.y, r.z);
+      r.mesh.quaternion.setFromUnitVectors(V3.set(0, r.arrow ? 0 : 1, r.arrow ? 1 : 0), V3b.set(r.vx, r.vy, r.vz).normalize());
+      r.arrowUpdate?.(dt, false);
     }
     // ---- storm
     const s = cm.storm;
@@ -2381,6 +2576,8 @@ export class GameRender implements EventSink {
     for (const v of this.chestViews.values()) v.object.removeFromParent();
     for (const r of this.rockets.values()) r.mesh.removeFromParent();
     for (const m of this.rocketPool) m.removeFromParent();
+    for (const a of this.arrowPool) a.object.removeFromParent();
+    this.arrowPool.length = 0;
     this.myGlider?.object.removeFromParent();
     for (const v of this.tuks.values()) v.dispose();
     this.tuks.clear(); this.tukAudio.clear();
@@ -2470,11 +2667,14 @@ export class GameRender implements EventSink {
     h.activeSlot = p.active;
     if (handsVisible && p.reloadT > 0) { h.reload ??= { t: 0, total: 1 }; h.reload.t = p.reloadTotal - p.reloadT; h.reload.total = p.reloadTotal; } else h.reload = null;
     if (handsVisible && p.useT > 0) { h.using ??= { t: 0, total: 1, label: "" }; h.using.t = p.useTotal - p.useT; h.using.total = p.useTotal; h.using.label = CONSUMABLE_DEFS[consumableId(slot.id)]?.name ?? ""; }
-    // a cooking banana bomb: the fuse burning down in the centre ring
-    else if (handsVisible && p.cookT > 0) { h.using ??= { t: 0, total: 1, label: "" }; h.using.t = p.cookT; h.using.total = BOMB.fuseS; h.using.label = BOMB_COOK_LABEL; }
+    // a cooking banana or smoke bomb: the fuse burning down in the centre ring
+    else if (handsVisible && p.cookT > 0) { h.using ??= { t: 0, total: 1, label: "" }; h.using.t = p.cookT; h.using.total = p.cookKind === 1 ? SMOKE.fuseS : BOMB.fuseS; h.using.label = p.cookKind === 1 ? "SMOKE BANANA" : BOMB_COOK_LABEL; }
     else h.using = null;
     { const k = bombSlot(p), L = k >= 0 ? (h.lethal ??= { count: 0, key: "G", cooking: false }) : null;
-      if (L) { let n = 0; for (const s of p.slots) if (s.kind === SK.Consumable && consumableId(s.id) === "banana-bomb") n += s.count; L.count = n; L.key = bindingText("throw", 0).toUpperCase(); L.cooking = p.cookT > 0;
+      if (L) {
+        const lid: "banana-bomb" | "smoke-bomb" = p.cookT > 0 ? (p.cookKind === 1 ? "smoke-bomb" : "banana-bomb") : (consumableId(p.slots[k].id) === "smoke-bomb" ? "smoke-bomb" : "banana-bomb");
+        let n = 0; for (const s of p.slots) if (s.kind === SK.Consumable && consumableId(s.id) === lid) n += s.count;
+        L.id = lid; L.count = n; L.key = bindingText("throw", 0).toUpperCase(); L.cooking = p.cookT > 0;
         // the key hints: a bomb in hand (not yet cooking) → HOLD to cook / RELEASE to throw;
         // the first 6 s after bombs come into the inventory → HOLD G to cook one (a tap alone never teaches it)
         if (n > this.bombSeen) this.bombHintUntil = now + 6000; this.bombSeen = n;
@@ -2486,6 +2686,31 @@ export class GameRender implements EventSink {
     while (h.killfeed.length && now - h.killfeed[0].at > 7000) h.killfeed.shift();
     while (h.damageDirs.length && now - h.damageDirs[0].at > 1600) h.damageDirs.shift();
     this.dmgDirsAim();
+    // Radar Pulse (UAV) enemy scan feed from interest-replicated remotes within 320 m
+    if (now < this.uavUntil && !this.range && cm.phase >= 1) {
+      const ul = this.uavList; ul.length = 0;
+      const r2 = RADAR_UAV.radius * RADAR_UAV.radius;
+      for (const r of cm.remotes) {
+        if (r.n === 0 || r.id === cm.me || r.team === p.team || r.st === PS.Dead || r.st === PS.Spectate || r.st === PS.Plane || st0 - r.lastTick > 90) continue;
+        const dx = r.x - V3.x, dz = r.z - V3.z;
+        if (dx * dx + dz * dz > r2 || ul.length >= this.uavPool.length) continue;
+        const slot = this.uavPool[ul.length];
+        slot.x = r.x; slot.z = r.z; ul.push(slot);
+      }
+      this.uavHud.left = (this.uavUntil - now) / 1000;
+      h.uav = this.uavHud;
+    } else h.uav = null;
+    h.fireSaleLeft = now < this.fireSaleUntil ? (this.fireSaleUntil - now) / 1000 : 0;
+    h.airstrikes = this.tacticalFx?.activeZones();
+    if (!this.range && cm.seed !== 0) {
+      if (cm.seed !== this.hotDropSeed) {
+        this.hotDropSeed = cm.seed;
+        const hpi = hotDropPoi(cm.seed);
+        const hp = hpi >= 0 ? POIS[hpi] : null;
+        this.hotDropObj = hp ? { id: hp.id, name: hp.name, x: hp.x, z: hp.z, r: hp.r } : null;
+      }
+      h.hotDrop = this.hotDropObj;
+    } else h.hotDrop = null;
     if (h.hitMarker && now - h.hitMarker.at > 400) h.hitMarker = null;
     if (h.announce && now - h.announce.at > 4500) h.announce = null;
     // damage numbers: project (a stack keeps its `at` key; the HUD merges amount changes into the same number)
@@ -2522,8 +2747,10 @@ export class GameRender implements EventSink {
       if (this.standNear >= 0) { STAND_PROMPT.key = bindingText("use", 0).toUpperCase(); STAND_PROMPT.detail = `$${cm.econ.cash.toLocaleString("en-US")} · BUY BACK · BOUNTIES · BOMBS · COVER`; h.interact = STAND_PROMPT; }
     }
     { const e = this.input.interactHeld(); if (e && !this.lastE && this.standNear >= 0 && h.interact === STAND_PROMPT) this.onShop?.(this.standNear); this.lastE = e; }
-    // the crate wall in hand: what fire does
+    // the crate wall / vine grapple / banana airstrike in hand: what fire does
     if (this.coverHeld && !h.interact) { const P = this.coverOk ? COVER_PROMPT : COVER_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
+    else if (this.grappleHeld && !h.interact) { const P = this.grappleOk ? GRAPPLE_PROMPT : GRAPPLE_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
+    else if (this.strikeHeld && !h.interact) { const P = this.strikeOk ? STRIKE_PROMPT : STRIKE_NO; P.key = bindingText("fire", 0).toUpperCase(); h.interact = P; }
     h.resurgence.on = (cm.flags & 1) !== 0; h.resurgence.final = (cm.flags & 4) !== 0;
     h.resurgence.lives = cm.mode === "solo" ? Math.max(0, SOLO_REDEPLOYS - this.redeploysUsed) : null;
     h.resurgence.countdown = this.deadAt >= 0 && this.resCountdown != null ? Math.max(0, this.resCountdown - (now - this.deadAt) / 1000) : null;
@@ -2705,6 +2932,10 @@ const BOMB_COOK_LABEL = "COOKING · LET GO TO THROW";
 const COVER_PROMPT: NonNullable<HudState["interact"]> = { label: "SET DOWN COCONUT CRATE WALL", key: "FIRE", act: "fire", rarity: "rare", detail: "PORTABLE COVER · STOPS BULLETS AND BLASTS · BREAKS" };
 const STAND_PROMPT: NonNullable<HudState["interact"]> = { label: "SHOP AT THE BANANA STAND", key: "E", rarity: "legendary", detail: "", low: true };
 const COVER_NO: NonNullable<HudState["interact"]> = { label: "NO ROOM FOR THE WALL HERE", key: "FIRE", act: "fire", blocked: "FIND FLAT, OPEN GROUND" };
+const GRAPPLE_PROMPT: NonNullable<HudState["interact"]> = { label: "FIRE VINE GRAPPLE", key: "FIRE", act: "fire", rarity: "rare", detail: `SLING UP TO ${GRAPPLE.maxDist} M · CHAINS INTO GLIDER OR SLIDE` };
+const GRAPPLE_NO: NonNullable<HudState["interact"]> = { label: "OUT OF GRAPPLE RANGE", key: "FIRE", act: "fire", blocked: `AIM AT A SURFACE WITHIN ${GRAPPLE.maxDist} M` };
+const STRIKE_PROMPT: NonNullable<HudState["interact"]> = { label: "CALL BANANA AIRSTRIKE", key: "FIRE", act: "fire", rarity: "legendary", detail: `${AIRSTRIKE.bombs} BOMBS AFTER ${AIRSTRIKE.warnS.toFixed(1)}S WARN · ${AIRSTRIKE.dmg} DMG EACH` };
+const STRIKE_NO: NonNullable<HudState["interact"]> = { label: "NO TARGET DESIGNATED", key: "FIRE", act: "fire", blocked: `AIM AT GROUND WITHIN ${AIRSTRIKE.maxDist} M` };
 const INTERACT_BOX = { label: "OPEN AMMO BOX", key: "E" };
 const INTERACT_GLASS = { label: "SMASH WINDOW", key: "E" };
 const INTERACT_ZIP = { label: "RIDE ZIPLINE", key: "E" }, INTERACT_UNZIP = { label: "LET GO · SPACE JUMP OFF", key: "E" };
@@ -2774,7 +3005,7 @@ export function renderPrefabs(): THREE.Object3D[] {
   const r = new THREE.Mesh(s.rocketGeo, s.rocketMat); r.castShadow = true;
   const w = new THREE.Mesh(s.streakGeo, s.streakMat); w.frustumCulled = false;
   const fx = new THREE.Group() as unknown as THREE.Scene;
-  const effects = [new InteractHighlight(fx).group, new MarkerBeams(fx, () => 0, resources.root).group, new UpdraftFx(fx).group, new TukFx(fx, () => 0).object, new BananaRounds(fx, resources.root).mesh, new AmmoBoxes(resources.root).group, glassShardPrefab(), coverGhostPrefab(), ...bombPrefabs()];
+  const effects = [new InteractHighlight(fx).group, new MarkerBeams(fx, () => 0, resources.root).group, new UpdraftFx(fx).group, new TukFx(fx, () => 0).object, new BananaRounds(fx, resources.root).mesh, new AmmoBoxes(resources.root).group, glassShardPrefab(), coverGhostPrefab(), ...bombPrefabs(), ...smokePrefabs(), ...tacticalPrefabs()];
   // (the highlight draws its hull / rim meshes empty until it has a target, then with the target's geometry, and a
   // program's key reads which attributes the geometry has: a second copy carries a small real mesh)
   const hl = new InteractHighlight(fx).group, geo = new THREE.PlaneGeometry(0.01, 0.01);

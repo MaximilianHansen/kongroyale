@@ -48,6 +48,97 @@ export function bananaBomb(): Built {
   return { root: g, meshes: built.meshes, tris: built.tris, pivots: built.pivots };
 }
 
+/** SMOKE BANANA: slate-charcoal tactical banana canister with bright cyan warning bands, perforated vent collar,
+ * chrome pin ring, and glowing cyan ignition ember */
+export function smokeBanana(): Built {
+  const b = new PartBuilder(), o = BOMB_SHAPE;
+  b.addGradient(bananaGeometry(o), "#303a45", "#566778", "x", "gloss");
+  const st = bananaEnd(o, false), tp = bananaEnd(o, true);
+  // metallic pressure cap + dark rubberized tip
+  b.add(filletCyl(st.radius * 1.05, 0.036, 0.006, 16), "#9aa8b8", "metal", alignY(st.center.clone().addScaledVector(st.dir, 0.015), st.dir));
+  b.add(new THREE.SphereGeometry(tp.radius * 1.15, 12, 8), "#222933", "matte", tf([tp.center.x, tp.center.y, tp.center.z]));
+  // twin cyan tactical warning stripes + dark iron clamp band
+  for (const [t, col, r] of [[0.28, "#38d9f0", 0.007], [0.5, "#1d242c", 0.008], [0.72, "#38d9f0", 0.007]] as const) {
+    const s = bananaAt(o, t);
+    b.add(new THREE.TorusGeometry(s.radius * 1.0, r, 8, 28).rotateX(Math.PI / 2), col, col === "#38d9f0" ? "gloss" : "metal", alignY(s.center, s.dir));
+  }
+  // spoon lever + chrome pull ring
+  {
+    const s = bananaAt(o, 0.42), side = new THREE.Vector3(0, 0, 1);
+    const pos = s.center.clone().addScaledVector(side, s.radius + 0.006);
+    const m = new THREE.Matrix4().makeBasis(s.dir, new THREE.Vector3().crossVectors(side, s.dir).normalize(), side).setPosition(pos);
+    b.add(rbox(0.15, 0.024, 0.008, 0.003), "#6e7d8c", "metal", m);
+    const r = bananaAt(o, 0.12), rp = r.center.clone().addScaledVector(side, r.radius + 0.022);
+    b.add(new THREE.TorusGeometry(0.017, 0.0035, 6, 18), "#e6edf5", "chrome", new THREE.Matrix4().makeBasis(s.dir, side, new THREE.Vector3().crossVectors(s.dir, side).normalize()).setPosition(rp));
+  }
+  // vent ports + glowing cyan ignition ember
+  const ventBase = st.center.clone().addScaledVector(st.dir, 0.036);
+  const em = b.sub("ember", [ventBase.x, ventBase.y, ventBase.z]);
+  em.add(new THREE.SphereGeometry(0.014, 10, 8), "#5cf2ff", "emissive", tf([ventBase.x, ventBase.y, ventBase.z]));
+  const built = b.build({ name: "smoke-bomb" });
+  const g = new THREE.Group(); g.name = "smoke-bomb"; g.add(built.root);
+  built.root.rotation.set(-Math.PI / 2, 0, 0);
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g);
+  built.root.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+  return { root: g, meshes: built.meshes, tris: built.tris, pivots: built.pivots };
+}
+
+/** VINE GRAPPLE: carved bamboo handle, coiled emerald jungle vine spool, and triple curved grappling claw hooks */
+export function vineGrapple(): Built {
+  const b = new PartBuilder();
+  // carved bamboo handle & winch drum
+  b.add(filletCyl(0.024, 0.18, 0.006, 14), "#8c6130", "matte", tf([0, 0.09, 0]));
+  b.add(filletCyl(0.055, 0.09, 0.008, 20), "#3f7a24", "matte", tf([0, 0.17, 0.02], [Math.PI / 2, 0, 0]));
+  // coiled emerald vine loops around the winch drum
+  for (let k = 0; k < 4; k++) {
+    b.add(new THREE.TorusGeometry(0.058, 0.011, 8, 22), k % 2 === 0 ? "#48b836" : "#6ee045", "gloss", tf([0, 0.17, -0.015 + k * 0.022]));
+  }
+  // metallic launcher collar + 3 curved bronze grappling claw prongs pointing up-forward
+  b.add(filletCyl(0.032, 0.07, 0.006, 16), "#3b424a", "metal", tf([0, 0.23, 0.04], [0.55, 0, 0]));
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const pts = [
+      new THREE.Vector3(0, 0.25, 0.06),
+      new THREE.Vector3(Math.cos(a) * 0.07, 0.31, 0.11 + Math.sin(a) * 0.04),
+      new THREE.Vector3(Math.cos(a) * 0.095, 0.27, 0.05 + Math.sin(a) * 0.05),
+    ];
+    b.add(rope(pts, 0.01, false, 0, 6, 16), "#d9a938", "metal");
+  }
+  // emerald glowing target crystal on the front
+  b.add(new THREE.SphereGeometry(0.018, 10, 8), "#4dff88", "emissive", tf([0, 0.25, 0.075]));
+  const built = b.build({ name: "vine-grapple" });
+  const g = new THREE.Group(); g.name = "vine-grapple"; g.add(built.root);
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g);
+  built.root.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+  return { root: g, meshes: built.meshes, tris: built.tris, pivots: built.pivots };
+}
+
+/** BANANA AIRSTRIKE: rugged BANANA CO. red-and-gold tactical laser target designator radio with whip antenna & red laser lens */
+export function airstrikeBeacon(): Built {
+  const b = new PartBuilder();
+  // chunky yellow-and-crimson tactical radio body
+  b.add(rbox(0.15, 0.22, 0.09, 0.018), "#d92b24", "gloss", tf([0, 0.11, 0]));
+  b.add(rbox(0.158, 0.055, 0.098, 0.012), "#ffd21f", "gloss", tf([0, 0.165, 0]));
+  b.add(rbox(0.158, 0.036, 0.098, 0.01), "#282e36", "metal", tf([0, 0.025, 0]));
+  // recessed dark screen & glowing red laser optic lens
+  b.add(rbox(0.095, 0.058, 0.012, 0.005), "#151a22", "matte", tf([0, 0.105, 0.044]));
+  b.add(new THREE.TorusGeometry(0.028, 0.007, 8, 20), "#252b34", "metal", tf([0, 0.165, 0.052]));
+  b.add(new THREE.SphereGeometry(0.021, 12, 8), "#ff3326", "emissive", tf([0, 0.165, 0.052]));
+  // tall whip antenna + blinking red beacon tip
+  b.add(filletCyl(0.006, 0.24, 0.002, 10), "#2c333c", "metal", tf([0.052, 0.31, -0.01]));
+  b.add(new THREE.SphereGeometry(0.015, 10, 8), "#ff4530", "emissive", tf([0.052, 0.435, -0.01]));
+  // side rubber bumper grips
+  for (const sx of [-1, 1]) b.add(rbox(0.018, 0.14, 0.07, 0.006), "#232830", "matte", tf([sx * 0.082, 0.1, 0]));
+  const built = b.build({ name: "airstrike" });
+  const g = new THREE.Group(); g.name = "airstrike"; g.add(built.root);
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g);
+  built.root.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+  return { root: g, meshes: built.meshes, tris: built.tris, pivots: built.pivots };
+}
+
 export function crateWallPack(): Built {
   const b = new PartBuilder();
   // three boards stacked (0.62 × 0.05 × 0.2), grain tones, the top one with a stencilled coconut

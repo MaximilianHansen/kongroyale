@@ -33,6 +33,7 @@ import { manualLootCandidate } from "./hud-state";
 import { killMythic } from "../../../shared/sim/mythic";
 import { CoverSet } from "../../../shared/sim/cover";
 import { makeEconView, STAND_ID0, STAND_SIZE } from "../../../shared/sim/economy";
+import { GRAPPLE_TARGET } from "../../../shared/sim/grapple";
 
 export interface Remote {
   id: number; present: boolean; lastTick: number; team: number;
@@ -82,7 +83,12 @@ export interface EventSink {
   chestReset?(id: number): void;
   spawnItem(it: Item): void; takeItem(id: number, by: number): void;
   explosion(x: number, y: number, z: number, r: number): void;
-  rocket(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number): void; rocketEnd(id: number): void;
+  rocket(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, arrow?: boolean): void; rocketEnd(id: number): void;
+  /** optional: Vine Grapple shot (server broadcast & instant local prediction) */
+  grapple?(owner: number, x: number, y: number, z: number, tx: number, ty: number, tz: number): void;
+  localGrapple?(x: number, y: number, z: number, tx: number, ty: number, tz: number): void;
+  /** optional: Banana Airstrike incoming barrage */
+  airstrike?(id: number, owner: number, x: number, y: number, z: number, yaw: number, startT?: number): void;
   respawn(id: number, x: number, y: number, z: number): void; jump(id: number): void; land(id: number, surf: number): void;
   storm(phase: number, shrinking: boolean): void; announceCode(code: number, a: number, b: number): void;
   /** local predicted shot left the barrel (pellets, spread already applied by the sim) */
@@ -100,9 +106,11 @@ export interface EventSink {
   veh?(id: number, kind: number, a: number, x: number, y: number, z: number): void;
   /** optional: damage landed on a tuk-tuk (shooter −1 = nobody's) */
   vehHit?(shooter: number, veh: number, dmg: number, x: number, y: number, z: number): void;
-  /** optional: a banana bomb was thrown (fuse = seconds left) / is gone */
-  bomb?(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, fuse: number): void;
+  /** optional: a banana or smoke bomb was thrown (fuse = seconds left) / is gone */
+  bomb?(id: number, owner: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, fuse: number, smoke?: boolean): void;
   bombEnd?(id: number): void;
+  /** optional: a smoke banana deployed its smoke cloud */
+  smoke?(id: number, x: number, y: number, z: number, dur: number): void;
   /** optional: a crate wall stands / took damage / is gone (why 1 = broken) */
   cover?(id: number, owner: number, fresh: boolean): void;
   coverHit?(id: number, hp: number): void;
@@ -110,7 +118,7 @@ export interface EventSink {
   /** optional (economy): the wallet grew by `amount` (a pickup, a bounty, a refund) */
   cashGain?(amount: number): void;
   /** optional: MY predicted throw left the hand this tick (`cooked` s of fuse already burnt) */
-  localThrow?(cooked: number): void;
+  localThrow?(cooked: number, smoke?: boolean): void;
   /** optional: MY tuk-tuk straight from the prediction, no round trip: what its step just reported (shared/sim/vehicle.ts
    * VE bits) and how hard (m/s) */
   tukFeel?(id: number, evt: number, hard: number): void;
@@ -378,6 +386,8 @@ export class ClientMatch {
       this.stands = ((m.stands as number[][]) ?? []).map((r) => ({ x: r[0], y: r[1], z: r[2], yaw: r[3], poi: r[4] }));
       this.stands.forEach((s, i) => this.covers.add(STAND_ID0 + i, 255, s.x, s.y, s.z, s.yaw, 1e9, 0, STAND_SIZE));
       for (const c of (m.covers as number[][]) ?? []) { this.covers.add(c[0], c[1], c[2], c[3], c[4], c[5], c[6], this.time); this.sink?.cover?.(c[0], c[1], false); }
+      for (const sm of (m.smokes as number[][]) ?? []) this.sink?.smoke?.(sm[0], sm[1], sm[2], sm[3], sm[4]);
+      for (const as of (m.airstrikes as number[][]) ?? []) this.sink?.airstrike?.(as[0], as[1], as[2], as[3], as[4], as[5], as[6]);
       for (const row of (m.items as number[][]) ?? []) { const it: Item = { id: row[0], kind: row[1], sub: row[2], rarity: row[3], count: row[4], x: row[5], y: row[6], z: row[7], taken: false, bornAt: 0 }; this.items.set(it.id, it); this.sink?.spawnItem(it); }
       this.started = true; this.ackedSeq = this.inputSeq;
       this.sink?.phase(this.phase);
@@ -557,7 +567,7 @@ export class ClientMatch {
         case EV.SpawnItem: { const id = r.u16(), kind = r.u8(), sub = r.u8(), rar = r.u8(), cnt = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(); const it: Item = { id, kind, sub, rarity: rar, count: cnt, x, y, z, taken: false, bornAt: this.time }; this.items.set(id, it); s?.spawnItem(it); break; }
         case EV.TakeItem: { const id = r.u16(), by = r.u8(); const it = this.items.get(id); if (it) { it.taken = true; this.items.delete(id); } s?.takeItem(id, by); break; }
         case EV.Explosion: { const x = r.f32(), y = r.f32(), z = r.f32(), rr = r.u8() / 10; s?.explosion(x, y, z, rr); break; }
-        case EV.Rocket: { const id = r.u16(), o = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(), vx = r.f32(), vy = r.f32(), vz = r.f32(); s?.rocket(id, o, x, y, z, vx, vy, vz); break; }
+        case EV.Rocket: { const id = r.u16(), ob = r.u8(), o = ob & 0x7f, arrow = (ob & 0x80) !== 0, x = r.f32(), y = r.f32(), z = r.f32(), vx = r.f32(), vy = r.f32(), vz = r.f32(); s?.rocket(id, o, x, y, z, vx, vy, vz, arrow); break; }
         case EV.RocketEnd: { const id = r.u16(); s?.rocketEnd(id); break; }
         // respawn / plane exit move us: the next snapshot's state reconciles the prediction (no guessing here)
         case EV.Respawn: { const id = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(); s?.respawn(id, x, y, z); break; }
@@ -567,12 +577,15 @@ export class ClientMatch {
         case EV.Announce: { const c = r.u8(), a = r.u8(), b = r.u8(); s?.announceCode(c, a, b); break; }
         case EV.Glass: { const id = r.u16(), c = r.u8(), by = r.u8(), sd = (c >> 2) & 3; this.glass.breakPane(id, c & 3, sd === 1 ? 1 : sd === 2 ? -1 : 0, by); break; }
         case EV.Veh: { const id = r.u8(), kind = r.u8(), a = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(); s?.veh?.(id, kind, a, x, y, z); break; }
-        case EV.Bomb: { const id = r.u16(), o = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(), vx = r.f32(), vy = r.f32(), vz = r.f32(), f = r.u16() / 1000; s?.bomb?.(id, o, x, y, z, vx, vy, vz, f); break; }
+        case EV.Bomb: { const id = r.u16(), ob = r.u8(), o = ob & 0x7f, sm = (ob & 0x80) !== 0, x = r.f32(), y = r.f32(), z = r.f32(), vx = r.f32(), vy = r.f32(), vz = r.f32(), f = r.u16() / 1000; s?.bomb?.(id, o, x, y, z, vx, vy, vz, f, sm); break; }
         case EV.BombEnd: { const id = r.u16(); s?.bombEnd?.(id); break; }
+        case EV.Smoke: { const id = r.u16(), x = r.f32(), y = r.f32(), z = r.f32(), dur = r.u16() / 1000; s?.smoke?.(id, x, y, z, dur); break; }
         case EV.Cover: { const id = r.u16(), o = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(), yw = yawDec(r.u16()), hp = r.u16(); this.covers.remove(id); this.covers.add(id, o, x, y, z, yw, hp, this.time); s?.cover?.(id, o, true); break; }
         case EV.CoverEnd: { const id = r.u16(), why = r.u8(); this.covers.remove(id); s?.coverEnd?.(id, why); break; }
         case EV.CoverHit: { const id = r.u16(), hp = r.u16(); const w = this.covers.byId(id); if (w) w.hp = hp; s?.coverHit?.(id, hp); break; }
         case EV.VehHit: { const a = r.u8(), id = r.u8(), d = r.u16() / 4, x = r.f32(), y = r.f32(), z = r.f32(); s?.vehHit?.(a === 255 ? -1 : a, id, d, x, y, z); break; }
+        case EV.Grapple: { const o = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(), tx = r.f32(), ty = r.f32(), tz = r.f32(); s?.grapple?.(o, x, y, z, tx, ty, tz); break; }
+        case EV.Airstrike: { const id = r.u16(), o = r.u8(), x = r.f32(), y = r.f32(), z = r.f32(), yw = yawDec(r.u16()); s?.airstrike?.(id, o, x, y, z, yw, 0); break; }
         default: return; // unknown: cannot skip → stop
       }
     }
@@ -692,7 +705,7 @@ export class ClientMatch {
     const first = Math.max(lastSeq + 1, this.inputSeq - PRING + 2);
     for (let seq = first; seq <= this.inputSeq; seq++) {
       const e = (seq % PRING) * PS_STRIDE, inp = this.inRing[seq % PRING], pre = R[e + PF.PRE];
-      s.scoped = (pre & 1) !== 0; s.reloadT = (pre & 2) !== 0 ? 1 : 0; s.useT = (pre & 4) !== 0 ? 1 : 0; s.ads = (pre & 8) !== 0; s.useTaken = (pre & 16) !== 0;
+      s.scoped = (pre & 1) !== 0; s.reloadT = (pre & 2) !== 0 ? 1 : 0; s.useT = (pre & 4) !== 0 ? 1 : 0; s.ads = (pre & 8) !== 0; s.useTaken = (pre & 16) !== 0; s.spinT = ((pre >> 8) & 0xff) / 255;
       if (s.st === PS.Plane) this.ridePlane(s, inp);
       else { if (s.st === PS.Ride && s.seat !== 0) this.seatDrawn(s); stepPlayer(s, inp, this.world, DT); }
       R[e + PF.X] = s.x; R[e + PF.Y] = s.y; R[e + PF.Z] = s.z; R[e + PF.VX] = s.vx; R[e + PF.VY] = s.vy; R[e + PF.VZ] = s.vz;
@@ -759,7 +772,7 @@ export class ClientMatch {
       if (inp.slot < this.slotSentAt.length) this.slotSentAt[inp.slot] = performance.now();
       // E: a chest / gun / window / aimed tuk-tuk in reach wins over a zipline pole (Match.useClaimed — the prompt's order)
       if (p.st === PS.Ground && (inp.buttons & B.USE) !== 0 && (p.prevButtons & B.USE) === 0) { p.yaw = inp.yaw; p.pitch = inp.pitch; p.useTaken = this.useClaimed(p); }
-      const pre = (p.scoped ? 1 : 0) | (p.reloadT > 0 ? 2 : 0) | (p.useT > 0 ? 4 : 0) | (p.ads ? 8 : 0) | (p.useTaken ? 16 : 0);   // 8: ADS walk (combat)
+      const pre = (p.scoped ? 1 : 0) | (p.reloadT > 0 ? 2 : 0) | (p.useT > 0 ? 4 : 0) | (p.ads ? 8 : 0) | (p.useTaken ? 16 : 0) | ((Math.round(p.spinT * 255) & 0xff) << 8);   // 8: ADS walk, >>8: minigun spin slow
       if (p.st === PS.Plane) { if (this.ridePlane(p, inp)) { this.px = p.x; this.py = p.y; this.pz = p.z; this.errX = this.errY = this.errZ = 0; } }
       else {
         // in a tuk-tuk: at the bars my prediction drives it (its pose before this tick is kept for the render blend);
@@ -781,7 +794,8 @@ export class ClientMatch {
       this.savePred(inp.seq, pre);
       copyInput(this.inRing[inp.seq % PRING], inp);
       if (p.fired > 0) this.sink?.localFire();
-      if (p.thrown > 0) this.sink?.localThrow?.(p.thrown);
+      if (p.thrown > 0) this.sink?.localThrow?.(p.thrown, p.thrownKind === 1);
+      if (p.grappled > 0) this.sink?.localGrapple?.(p.x, eyeY(p) - 0.15, p.z, GRAPPLE_TARGET[0], GRAPPLE_TARGET[1], GRAPPLE_TARGET[2]);
       this.onTick?.(inp);
       this.sentAt[inp.seq % PRING] = performance.now();
       this.sendInput(inp);

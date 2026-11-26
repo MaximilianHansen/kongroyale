@@ -9,7 +9,7 @@
 // off the panel to drop it. DOM only, touched when a value changes; the game owns the rules (shared/sim/player.ts
 // invMove / invDrop; equipping is the slot the hands want, game/input.ts) and just gets callbacks.
 import { type ConsumableId, type WeaponId } from "../../../shared/world/map";
-import { AMMO_CAP, BOMB, CONSUMABLE_DEFS, RARITY_MUL, WEAPON_DEFS } from "../../../shared/sim/const";
+import { AIRSTRIKE, AMMO_CAP, BOMB, CONSUMABLE_DEFS, GRAPPLE, RARITY_MUL, SMOKE, WEAPON_DEFS } from "../../../shared/sim/const";
 import { COVER } from "../../../shared/sim/cover";
 import type { HotbarSlot } from "./api";
 import { itemIconUrl } from "./icons";
@@ -184,7 +184,10 @@ function statOf(s: HotbarSlot): Stat | null {
   const c = CONSUMABLE_DEFS[s.id as ConsumableId]; if (!c) return null;
   switch (c.id) {
     case "banana-bomb": return ["Damage", String(BOMB.dmg)];
+    case "smoke-bomb": return ["Smoke", `${SMOKE.durationS} s`];
     case "crate-wall": return ["Health", String(COVER.hp)];
+    case "vine-grapple": return ["Range", `${GRAPPLE.maxDist} m`];
+    case "airstrike": return ["Bombs", `${AIRSTRIKE.bombs}×${AIRSTRIKE.dmg}`];
     case "red-banana": return ["Speed", `×${c.speedMul ?? 1}`];
     default: return c.hp && c.shield ? ["Heal + shield", `+${c.hp}`] : c.shield ? ["Shield", `+${c.shield}`] : ["Health", `+${c.hp}`];
   }

@@ -8,8 +8,10 @@ import { buildAr } from "./ar";
 import { buildShotgun } from "./shotgun";
 import { buildSniper } from "./sniper";
 import { buildRocket } from "./rocket";
+import { buildBow } from "./bow";
+import { buildMinigun } from "./minigun";
 
-const builders: Record<WeaponId, () => GunSpec> = { pistol: buildPistol, smg: buildSmg, ar: buildAr, shotgun: buildShotgun, sniper: buildSniper, rocket: buildRocket };
+const builders: Record<WeaponId, () => GunSpec> = { pistol: buildPistol, smg: buildSmg, ar: buildAr, shotgun: buildShotgun, sniper: buildSniper, rocket: buildRocket, bow: buildBow, minigun: buildMinigun };
 const cache = new Map<WeaponId, GunSpec>();
 
 /** the master (do not add it to a scene twice — use gunInstance) */
@@ -32,4 +34,4 @@ export function gunInstance(id: WeaponId): { root: THREE.Group; spec: GunSpec; p
   return { root, spec, pivots, meshes };
 }
 
-export const GUN_ORDER: WeaponId[] = ["pistol", "smg", "ar", "shotgun", "sniper", "rocket"];
+export const GUN_ORDER: WeaponId[] = ["pistol", "smg", "ar", "shotgun", "sniper", "rocket", "bow", "minigun"];

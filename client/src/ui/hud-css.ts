@@ -108,6 +108,14 @@ html.kr-calm .kr-vig.low.on, html.kr-calm .kr-vig.heal.on { animation: none; opa
   text-transform: uppercase; color: var(--kong-text); text-shadow: var(--tn-hud-soft); }
 .tn-hud-warn.storm { color: var(--tn-hud-storm-text); }
 .tn-hud-warn.final { color: var(--kong-warning); }
+/* active tactical & match event pills (UAV Radar Pulse, Banana Stand Fire Sale) in the left column */
+.tn-hud-events { display: flex; flex-direction: column; align-items: flex-start; gap: ${T(6)}; }
+.tn-hud-ev { display: inline-flex; align-items: center; gap: ${T(8)}; padding: ${T(5)} ${T(13)}; border-radius: 999px;
+  ${nunito(13, 900, ".11em")} text-transform: uppercase; color: var(--kong-text); text-shadow: var(--tn-hud-soft);
+  background: var(--tn-hud-chip); border: ${T(2)} solid var(--ev-c, var(--kong-accent)); box-shadow: 0 0 ${T(12)} color-mix(in srgb, var(--ev-c, var(--kong-accent)) 45%, transparent); }
+.tn-hud-ev svg { width: ${T(16)}; height: ${T(16)}; flex: none; color: var(--ev-c, var(--kong-accent)); }
+.tn-hud-ev.uav { --ev-c: #5cf2ff; color: #dcfaff; }
+.tn-hud-ev.sale { --ev-c: #ff9f1a; color: #fff1cc; }
 
 /* ---------- top-right column: match stats, diagnostics, kill feed ---------- */
 .tn-hud-tr { position: absolute; right: ${T(44)}; top: ${T(36)}; display: flex; flex-direction: column; align-items: flex-end; gap: ${T(10)}; }

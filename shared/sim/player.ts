@@ -81,11 +81,17 @@ export interface Player {
   useTaken: boolean;
   /** red banana: seconds of the speed / jump buff left (0 = none) — rides in the self state */
   buffT: number;
-  /** banana bomb: seconds the pulled bomb has been cooking (0 = none in hand); `thrown` = this tick's throw
-   *  (> 0: the seconds it cooked — the match spawns the bomb, like `fired`) */
-  cookT: number; thrown: number;
+  /** banana / smoke bomb: seconds the pulled grenade has been cooking (0 = none in hand); `thrown` = this tick's throw
+   *  (> 0: the seconds it cooked — the match spawns the bomb, like `fired`); `cookKind` / `thrownKind`: 0 = frag, 1 = smoke */
+  cookT: number; thrown: number; cookKind: number; thrownKind: number;
   /** a crate wall was set down this tick (cover.ts PLACED holds where — the match spawns it) */
   placed: number;
+  /** Banana Shredder rotary barrel spin 0..1 (reaches 1 after spinUpS before firing) */
+  spinT: number;
+  /** Vine Grapple fired this tick (grapple.ts GRAPPLE_TARGET holds anchor) */
+  grappled: number;
+  /** Banana Airstrike called this tick (grapple.ts AIRSTRIKE_TARGET holds target) */
+  airstrike: number;
   /** Banana Bucks in the wallet (this match; dropped on death) */
   cash: number;
   /** swimming: `under` = diving below the surface (p.swim stays true), `breath` 0..1 of the
@@ -108,7 +114,7 @@ export function makePlayer(id: number, team: number, name: string, bot: boolean)
     kills: 0, damage: 0, deadAt: -1, respawnAt: -1, killer: -1, placement: 0,
     lastSeq: 0, lastInputAt: 0, stormT: 0, landedAt: -1, spectate: -1,
     hist: new Float32Array(HISTORY_TICKS * 5),
-    anim: 0, eliminated: false, redeploys: 0, infAmmo: false, veh: -1, seat: 0, useTaken: false, buffT: 0, cookT: 0, thrown: 0, placed: 0, cash: 0,
+    anim: 0, eliminated: false, redeploys: 0, infAmmo: false, veh: -1, seat: 0, useTaken: false, buffT: 0, cookT: 0, thrown: 0, cookKind: 0, thrownKind: 0, placed: 0, spinT: 0, grappled: 0, airstrike: 0, cash: 0,
     under: false, breath: 1, swGun: 0,
   };
 }
@@ -261,4 +267,4 @@ export function invDrop(p: Player, i: number): Slot | null {
 
 
 export const BUSY_IN: Input = makeInput();
-export { stepPlayer, WALL_ID, canPullChute, CORPSE_FLOAT_Y, FF_DOWN, FF_DIVE_DOWN, FF_FWD, FF_DIVE_P0, FF_DIVE_P1, FF_WV, FF_WH, GL_WV, GL_WH, GL_DOWN, GL_DIVE_DOWN, GL_FWD, GL_NEUTRAL, GL_BACK, GL_DIVE_P0, GL_DIVE_P1, AUTO_DEPLOY, dropAgl, BOMB_ID, bombSlot } from "./player.hot";
+export { stepPlayer, WALL_ID, GRAPPLE_ID, AIRSTRIKE_ID, canPullChute, CORPSE_FLOAT_Y, FF_DOWN, FF_DIVE_DOWN, FF_FWD, FF_DIVE_P0, FF_DIVE_P1, FF_WV, FF_WH, GL_WV, GL_WH, GL_DOWN, GL_DIVE_DOWN, GL_FWD, GL_NEUTRAL, GL_BACK, GL_DIVE_P0, GL_DIVE_P1, AUTO_DEPLOY, dropAgl, BOMB_ID, SMOKE_ID, bombSlot } from "./player.hot";

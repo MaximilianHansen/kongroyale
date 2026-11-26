@@ -10,6 +10,7 @@ import { fitToBox, squareBox, stageCam, type StageDef, type StageFile } from "..
 export const SHEET_BOX: Record<WeaponId, [number, number, number, number]> = {
   pistol: squareBox(48, 660, 668, 1240), smg: squareBox(736, 656, 1528, 1232), ar: squareBox(1588, 640, 2852, 1236),
   shotgun: squareBox(32, 1708, 772, 2136), sniper: squareBox(764, 1624, 1860, 2156), rocket: squareBox(1792, 1604, 2852, 2208),
+  bow: squareBox(764, 1624, 1860, 2156), minigun: squareBox(1792, 1604, 2852, 2208),
 };
 /** yaw (muzzle toward camera), tilt (top toward camera), pitch (muzzle up) per gun, read off the target art */
 // the shotgun + rocket side-on (the rocket read short: L/D ≈ 3.5 on screen with BANANA CO. + the
@@ -17,6 +18,7 @@ export const SHEET_BOX: Record<WeaponId, [number, number, number, number]> = {
 const POSE: Record<WeaponId, [number, number, number]> = {
   pistol: [0.36, 0.42, 0.04], smg: [0.42, 0.3, 0.04], ar: [0.16, 0.16, 0.16],
   shotgun: [0.55, 0.2, 0.1], sniper: [0.36, 0.14, 0.06], rocket: [0.1, 0.2, 0.03],
+  bow: [0.22, 0.18, 0.04], minigun: [0.18, 0.2, 0.04],
 };
 
 /** product-shot pose: muzzle → −X (left), turned toward the camera by `yaw`, top rolled toward the camera by `tilt`,

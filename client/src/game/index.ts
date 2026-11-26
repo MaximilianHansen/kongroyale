@@ -600,8 +600,14 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     // the inventory key (Tab) opens AND closes the inventory; Esc closes it too
     if (input.matches("inventory", code) && !paused && !resultsOpen && !videoMenuOpen()) { toggleInventory(); return true; }
     if (inv.open && inv.key(code)) return true;
-    // (economy) the buy menu: 1-7 buy, the interact key leaves
-    if (shop.open) { const n = /^Digit([1-9])$/.exec(code); if (n) { shop.key(+n[1]); return true; } if (input.matches("use", code)) { setShopOpen(false); return true; } }
+    // (economy) the buy menu: 1-9, 0, -, = buy, the interact key leaves
+    if (shop.open) {
+      const n = /^Digit([0-9])$/.exec(code);
+      if (n) { const d = +n[1]; shop.key(d === 0 ? 10 : d); return true; }
+      if (code === "Minus") { shop.key(11); return true; }
+      if (code === "Equal") { shop.key(12); return true; }
+      if (input.matches("use", code)) { setShopOpen(false); return true; }
+    }
     if (code === "Escape") {
       if (resultsOpen) return false;
       escapeLayer();
@@ -817,6 +823,8 @@ export async function startGame(engine: Engine, boot: GameBoot) {
         else if (!st || p.hp <= 0 || p.st !== PS.Ground || Math.hypot(st.x - p.x, st.z - p.z) > 6.5) setShopOpen(false); else shop.update(render.shopView());
         shopHs = hs; shopShield = p.shield;
       }
+      // During Warmup (phase 0), keep warming any light POIs / late textures at 1 upload/frame before the plane takes off
+      if (warmReady && cm.phase === 0) warmer.tick();
     } else {
       coach.update({ active: false }); coachObserver.reset();
       title.update(dt, t);
@@ -849,7 +857,7 @@ export async function startGame(engine: Engine, boot: GameBoot) {
     if (!loadsLazily()) void loadHeli().catch((e) => console.error("[heli] model failed", e));
     if (!kits.viewModel) { const t = performance.now(); const vm = await weapons.createViewModel(); vm.object.visible = false; engine.camera.add(vm.object); kits.viewModel = vm; kr.viewModelMs = Math.round(performance.now() - t); }
     const lootRoot = await weapons.prepareLoot(() => new Promise<void>((r) => (kr.prepareUrgent ? setTimeout(r, 0) : requestAnimationFrame(() => setTimeout(r, 0)))));
-    await prewarmPrefabs(engine, kits, () => inMatch, lootRoot); await prewarmMatch(engine, kits, title, () => inMatch); kr.warmDone = true; })(); }
+    await prewarmPrefabs(engine, kits, () => inMatch, lootRoot); await prewarmMatch(engine, kits, title, () => inMatch); if (!inMatch) warmer.flush(); kr.warmDone = true; })(); }
 
   // the loot generator's spots (shared/sim/loot-spots.ts, ~1.5-2 s of probes on the static world) are
   // built in ≤ 6 ms idle slices once the title is ready, so an offline PRACTICE never waits for them (the host's Match
@@ -933,6 +941,7 @@ async function prewarmPrefabs(engine: Engine, kits: Kits, isBusy: () => boolean,
   makers.push(() => kits.weapons.createLoot("ammo", "common").then((v) => put(v.object)));
   makers.push(() => kits.createGlider(engine).then((gl) => put(gl.object)));
   makers.push(async () => { if (!loadsLazily()) await loadHeli().catch((e) => console.error("[heli] model failed", e)); for (const o of renderPrefabs()) put(o); });
+  makers.push(async () => { const wx = kits.weapons as { createArrowView?(): THREE.Object3D }; if (wx.createArrowView) put(wx.createArrowView()); });
   for (const mk of makers) {
     if (isBusy()) { kr.prefabWarm = "stopped (match)"; return; }
     try { await mk(); } catch (e) { console.warn("[prewarm] prefab", e); }

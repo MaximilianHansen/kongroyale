@@ -67,7 +67,9 @@ export type Sfx =
   // overheated barrels sizzling while it is locked. ONE-SHOTS: `gun:stop` = the burst's last rounds + tail when the fire
   // loop ends, `gun:spinup` / `gun:spindown` = the motor winding the barrels up / the barrels coasting to a stop,
   // `gun:lock` = the quench hiss the moment it overheats, `gun:dry` = the empty belt's clack
-  | `gun:fire` | `gun:spin` | `gun:hot` | `gun:stop` | `gun:spinup` | `gun:spindown` | `gun:lock` | `gun:dry`;
+  | `gun:fire` | `gun:spin` | `gun:hot` | `gun:stop` | `gun:spinup` | `gun:spindown` | `gun:lock` | `gun:dry`
+  // VINE GRAPPLE & BANANA AIRSTRIKE cues
+  | `grapple:shoot` | `airstrike:warn`;
 
 /** the kinds of place with their own arrival phrase */
 export type PoiTheme = "coast" | "harbor" | "jungle" | "temple" | "volcano" | "town" | "swamp" | "lab" | "caves";

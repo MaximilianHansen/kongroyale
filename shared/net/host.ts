@@ -88,6 +88,10 @@ export function matchInfo(m: Match, seed: number, pids: Record<number, number>) 
     stands: m.econ ? m.econ.stands.map((s) => [+s.x.toFixed(3), +s.y.toFixed(3), +s.z.toFixed(3), +s.yaw.toFixed(4), s.poi]) : [],
     // the crate walls standing (a late joiner collides with the same ones): [id, owner, x, y, z, yaw, hp]
     covers: m.covers.list.filter((w) => w.live && !w.perm).map((w) => [w.id, w.owner, w.x, w.y, w.z, w.yaw, w.hp]),
+    // active smoke clouds (for late joiners / reconnects)
+    smokes: m.smokes.map((s) => [s.id, +s.x.toFixed(2), +s.y.toFixed(2), +s.z.toFixed(2), +s.left.toFixed(2)]),
+    // active banana airstrikes (for late joiners / reconnects)
+    airstrikes: m.airstrikes.map((a) => [a.id, a.owner, +a.x.toFixed(2), +a.y.toFixed(2), +a.z.toFixed(2), +a.yaw.toFixed(4), +a.t.toFixed(2)]),
   };
 }
 

@@ -51,7 +51,7 @@ export interface RackSlot { kind: 0 | 1 | 2; sub: number; rarity: number; count:
 const COL = 1.7, ROW = 2.1, RACK0 = RANGE_LINE_X - 4.5;
 /** the rack's MYTHIC column (under its label): one named mythic per gun — the camo can be
  *  tried in the range */
-const RACK_MYTHIC: Record<string, string> = { pistol: "CANOPY STINGER", smg: "AFTERBURNER", ar: "THE GOLDEN IDOL", shotgun: "THE HARBORMASTER", sniper: "THE STILTWALKER", rocket: "MAGMA BUNCH" };
+const RACK_MYTHIC: Record<string, string> = { pistol: "DAVY'S PEELER", smg: "AFTERBURNER", ar: "THE GOLDEN IDOL", shotgun: "THE HARBORMASTER", sniper: "THE STILTWALKER", rocket: "MAGMA BUNCH", bow: "CANOPY LONGBOW", minigun: "PROTOTYPE SHREDDER" };
 export const RANGE_RACK: RackSlot[] = [
   ...WEAPONS.flatMap((_, w) => RARITIES.slice(0, 5).map((_, r) => ({ kind: 0 as const, sub: w, rarity: r, count: 1, lx: RACK0 - w * ROW, lz: (r - 2) * COL }))),
   ...WEAPONS.map((wid, w) => ({ kind: 0 as const, sub: w, rarity: MYTHIC_R + Math.max(0, MYTHICS.findIndex((m) => m.name === RACK_MYTHIC[wid])), count: 1, lx: RACK0 - w * ROW, lz: 3 * COL })),

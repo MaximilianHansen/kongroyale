@@ -7,7 +7,7 @@ import type { Terrain } from "../world/terrain";
 import {
   CHEST_OPEN_DIST, CONSUMABLE_DEFS, DT, HISTORY_TICKS, INPUT_CREDIT_MAX, INPUT_MAX_PER_TICK, INPUT_QUEUE_MAX, INPUT_STARVE_TICKS,
   MAX_HP, MAX_PLAYERS, MAX_REWIND_TICKS, PICKUP_DIST, PLANE_ALT, PLANE_BAY_S, PLANE_CHORD_R, PLANE_SPEED, PLAYER_H, PLAYER_R,
-  REDEPLOY_ALT, RESULTS_S, RESURGENCE_WARN_S, resurgenceDelay, SOLO_REDEPLOYS, SQUAD_SIZE, matchSeats, WARMUP_S, WEAPON_DEFS, AMMO_PICKUP, AMMO_CAP, BOMB, ECON,
+  REDEPLOY_ALT, RESULTS_S, RESURGENCE_WARN_S, resurgenceDelay, SOLO_REDEPLOYS, SQUAD_SIZE, matchSeats, WARMUP_S, WEAPON_DEFS, AMMO_PICKUP, AMMO_CAP, BOMB, SMOKE, AIRSTRIKE, ECON,
   START_PISTOL_AMMO,
 } from "./const";
 import { CONSUMABLES } from "../world/map";
@@ -23,7 +23,7 @@ import { Rng } from "./rng";
 import { fillTeams } from "./teams";
 import { inStorm, makeStormState, planStorm, stormAt, STORM_TICK_S, type StormPlan, type StormState } from "./storm";
 import { makeHit, type StaticWorld } from "./world";
-import { ANN, Events, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, SURF_PLAYER, VK, histSlot, yawDec, yawEnc } from "../net/proto";
+import { ANN, Events, KILL_AIRSTRIKE, KILL_BOMB, KILL_GUN, KILL_HELI, KILL_TUK, SURF_PLAYER, VK, histSlot, yawDec, yawEnc } from "../net/proto";
 import {
   TUK, VE, VF, VH, VKind, VS, VehicleSet, blendVeh, enterVehicle, exitVehicle, flipVehicle, footDist, freeSeat, rayVehicle, recordVehicle,
   restVehicle, seatRider, seatRiderAt, spawnVehicle, specOf, stepVehicle, vehPose, vehicleInReach, type Vehicle,
@@ -44,9 +44,13 @@ import { GlassState, glassAim, glassBlast, glassPunch, glassShot, GC } from "./g
 import { killWeapon } from "./mythic";
 import { bombLaunch, bombStep, type BombBody } from "./bomb";
 import { COVER, CoverSet, PLACED } from "./cover";
-import { bananaStands, cashStacks, Economy, STAND_ID0, STAND_SIZE, type EconHost } from "./economy";
+import { AIRSTRIKE_TARGET, GRAPPLE_TARGET } from "./grapple";
+import { ANN_ECON, bananaStands, cashStacks, Economy, STAND_ID0, STAND_SIZE, type EconHost } from "./economy";
+import { hotDropPoi } from "./events-dyn";
 import type { ReplayRecorder } from "../net/replay";
 import * as dmath from "./dmath";
+
+const SPLASH_W = { dmg: 0 };
 
 /** resurgence ends early once this few squads (trios) / players (solo) are left in the match */
 const RES_END_SQUADS = 7, RES_END_SOLO = 20;
@@ -60,7 +64,7 @@ export const SPECTATE_SQUAD_ONLY = true;
 export const enum Phase { Warmup = 0, Plane = 1, Play = 2, Results = 3 }
 export type Mode = "solo" | "trios";
 
-export interface Rocket { id: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; rarity: number }
+export interface Rocket { id: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; rarity: number; /** 0 = rocket, 1 = explosive bamboo arrow */ kind?: 0 | 1; /** countdown after arrow sticks into a surface before its explosive tip detonates */ stuckT?: number }
 export interface MatchOpts { seed: number; mode: Mode; world: StaticWorld; humans: Array<{ id: number; name: string; team: number }>; botNames?: string[]; botDifficulty?: BotDifficulty; botDamageToHumans?: number;
   /** practice aim nerf: beyond this range (m) a bot shooting at a human sprays wider the farther away they are */
   botAimRange?: number;
@@ -113,8 +117,14 @@ export class Match {
     }
   }
   rockets: Rocket[] = []; nextRocketId = 1;
-  /** banana bombs in flight / rolling / lying with a burning fuse */
-  bombs: Array<BombBody & { id: number; owner: number; fuse: number }> = []; nextBombId = 1;
+  /** banana & smoke bombs in flight / rolling / lying with a burning fuse */
+  bombs: Array<BombBody & { id: number; owner: number; fuse: number; smoke?: boolean }> = []; nextBombId = 1;
+  /** active tactical smoke clouds (block bot LOS; synced to clients via EV.Smoke / matchInfo) */
+  readonly smokes: Array<{ id: number; x: number; y: number; z: number; r: number; left: number }> = [];
+  /** active Banana Airstrikes (6-bomb precision barrages stepped inside stepBombs) */
+  readonly airstrikes: Array<{ id: number; owner: number; x: number; y: number; z: number; yaw: number; t: number; dropped: number }> = [];
+  private nextAirstrikeId = 1;
+  private lastBombTick = 0;
   /** the crate walls of THIS match (shared/sim/cover.ts) — bound into the shared world before every step */
   readonly covers = new CoverSet(); nextCoverId = 1;
   /** (shared/sim/economy.ts) Banana Bucks, Banana Stands, bounties (null on the firing range) */
@@ -209,7 +219,7 @@ export class Match {
     if (this.range) { this.chests = []; this.items = []; this.nextItemId = 0; }
     else { const loot = placeLoot(o.seed, this.world); this.chests = loot.chests; this.items = loot.items; this.nextItemId = this.items.length; }
     // the stands stand all match long: solid counters in the cover set (permanent, never hurt)
-    this.econ = this.range ? null : new Economy(this.econHost(), bananaStands(this.world));
+    this.econ = this.range ? null : new Economy(this.econHost(), bananaStands(this.world), o.seed);
     if (this.econ) this.econ.stands.forEach((s, i) => this.covers.add(STAND_ID0 + i, 255, s.x, s.y, s.z, s.yaw, 1e9, 0, STAND_SIZE));
     this.enterWarmup();
     if (this.range) this.setupRange();
@@ -533,6 +543,8 @@ export class Match {
     if (p.fired > 0 && alive(p)) this.resolveShot(p, inp);
     if (p.thrown > 0 && alive(p)) this.throwBomb(p, p.thrown);
     if (p.placed > 0 && alive(p)) this.placeCover(p);
+    if (p.grappled > 0 && alive(p)) this.ev.grapple(p.id, p.x, eyeY(p) - 0.15, p.z, GRAPPLE_TARGET[0], GRAPPLE_TARGET[1], GRAPPLE_TARGET[2]);
+    if (p.airstrike > 0 && alive(p)) this.callAirstrike(p);
     // E on foot (one that grabbed a zipline or climbed out of a tuk-tuk does nothing else): the tuk-tuk under the
     // crosshair (climb in / heave it upright), else a window in arm's reach (punched out), a chest, a gun on the ground,
     // and failing all that a tuk-tuk you merely stand beside
@@ -617,13 +629,14 @@ export class Match {
     const w = weaponDef(p); if (!w) return;
     const s = p.slots[p.active];
     const shot = p.shotSeq - 1;
-    if ((p.shotSeq & 3) === 1 && this.phase === Phase.Play) this.addNoise(p);
+    if (!w.silent && (p.shotSeq & 3) === 1 && this.phase === Phase.Play) this.addNoise(p);
     const ox = p.x, oy = eyeY(p), oz = p.z;
     if (w.projectile) {
       const cp = dmath.cos(p.pitch), sp = dmath.sin(p.pitch), sy = dmath.sin(p.yaw), cy = dmath.cos(p.yaw);
       const dx = -sy * cp, dy = sp, dz = -cy * cp;
-      const r: Rocket = { id: this.nextRocketId++ & 0xffff, owner: p.id, x: ox + dx * 0.8, y: oy + dy * 0.8 - 0.15, z: oz + dz * 0.8, vx: dx * w.projectile.speed + p.vx * 0.5, vy: dy * w.projectile.speed, vz: dz * w.projectile.speed + p.vz * 0.5, life: 6, rarity: s.rarity };
-      this.rockets.push(r); this.ev.rocket(r.id, p.id, r.x, r.y, r.z, r.vx, r.vy, r.vz);
+      const isBow: 0 | 1 = w.id === "bow" ? 1 : 0;
+      const r: Rocket = { id: this.nextRocketId++ & 0xffff, owner: p.id, x: ox + dx * 0.8, y: oy + dy * 0.8 - 0.15, z: oz + dz * 0.8, vx: dx * w.projectile.speed + p.vx * 0.5, vy: dy * w.projectile.speed, vz: dz * w.projectile.speed + p.vz * 0.5, life: 6, rarity: s.rarity, kind: isBow };
+      this.rockets.push(r); this.ev.rocket(r.id, (p.id & 0x7f) | (isBow ? 0x80 : 0), r.x, r.y, r.z, r.vx, r.vy, r.vz);
       return;
     }
     // bots aim at the live state they just observed → evaluate at the latest tick; humans at what they were drawing
@@ -660,8 +673,8 @@ export class Match {
         if (killed) { T[victim.id * TARGET_STRIDE + 3] = 0; this.kill(victim, p.id, killWeapon(WEAPONS.indexOf(w.id), s.rarity)); }
         else this.brains[victim.id]?.onHurt(p.id);
       } else {
-        if (tuk >= 0) this.hurtTuk(this.vehs.list[tuk], pelletDamage(w, s.rarity, bestT, 0), p.id, ox + dx * bestT, oy + dy * bestT, oz + dz * bestT);
-        if (RES.cover >= 0) this.hurtCover(RES.cover, pelletDamage(w, s.rarity, bestT, 0));
+        if (tuk >= 0) this.hurtTuk(this.vehs.list[tuk], pelletDamage(w, s.rarity, bestT, 0) * (w.vehMul ?? 1), p.id, ox + dx * bestT, oy + dy * bestT, oz + dz * bestT);
+        if (RES.cover >= 0) this.hurtCover(RES.cover, pelletDamage(w, s.rarity, bestT, 0) * (w.coverMul ?? 1));
         this.ev.shot(p.id, WEAPONS.indexOf(w.id), ox, oy, oz, ox + dx * bestT, oy + dy * bestT, oz + dz * bestT, RES.worldHit ? RES.surf : 0, RES.worldHit);
       }
     }
@@ -699,50 +712,142 @@ export class Match {
   }
   private stepRockets() {
     for (let i = this.rockets.length - 1; i >= 0; i--) {
-      const r = this.rockets[i]; const w = WEAPON_DEFS.rocket.projectile!;
+      const r = this.rockets[i];
+      const isBow = r.kind === 1;
+      const wDef = isBow ? WEAPON_DEFS.bow : WEAPON_DEFS.rocket;
+      const wIdx = isBow ? 6 : 5;
+      const w = wDef.projectile!;
+      // sticky explosive bamboo arrow counting down after lodging into a surface
+      if (r.stuckT !== undefined) {
+        r.stuckT -= DT;
+        if (r.stuckT <= 0) {
+          SPLASH_W.dmg = w.splashDmg;
+          this.explode(r.x, r.y, r.z, w.splashR, weaponDamage(SPLASH_W, r.rarity), r.owner, killWeapon(wIdx, r.rarity));
+          this.ev.rocketEnd(r.id); this.rockets[i] = this.rockets[this.rockets.length - 1]; this.rockets.pop();
+        }
+        continue;
+      }
       r.vy -= w.gravity * DT; r.life -= DT;
       const nx = r.x + r.vx * DT, ny = r.y + r.vy * DT, nz = r.z + r.vz * DT;
       this.world.raycast(r.x, r.y, r.z, nx - r.x, ny - r.y, nz - r.z, 1, HIT, true);
       glassShot(this.glass, r.x, r.y, r.z, nx - r.x, ny - r.y, nz - r.z, HIT.hit ? HIT.t : 1, GC.Shot, r.owner);
       let boom = HIT.hit || r.life <= 0 || ny < -1;
+      let directKong = false;
       let bx = HIT.hit ? HIT.x : nx, by = HIT.hit ? HIT.y : ny, bz = HIT.hit ? HIT.z : nz;
       // a tuk-tuk in the way takes it on the nose (not the one the shooter sits in, while the rocket is still leaving it)
       { const sl = dmath.hypot3(nx - r.x, ny - r.y, nz - r.z), own = this.players[r.owner];
         if (sl > 1e-6) {
           const ux = (nx - r.x) / sl, uy = (ny - r.y) / sl, uz = (nz - r.z) / sl;
           const tk = this.rayTuks(own.st === PS.Ride && r.life > 5.5 ? own.veh : -1, r.x, r.y, r.z, ux, uy, uz, (HIT.hit ? HIT.t : 1) * sl, true);
-          if (tk >= 0) { boom = true; bx = r.x + ux * this.vt; by = r.y + uy * this.vt; bz = r.z + uz * this.vt; this.hurtTuk(this.vehs.list[tk], weaponDamage(WEAPON_DEFS.rocket, r.rarity) * specOf(this.vehs.list[tk].kind).ROCKET_MUL, r.owner, bx, by, bz); }
+          if (tk >= 0) { boom = true; bx = r.x + ux * this.vt; by = r.y + uy * this.vt; bz = r.z + uz * this.vt; this.hurtTuk(this.vehs.list[tk], weaponDamage(wDef, r.rarity) * (isBow ? 1.5 : specOf(this.vehs.list[tk].kind).ROCKET_MUL), r.owner, bx, by, bz); }
         } }
       if (!boom) {
         for (const q of this.players) {
           if (!alive(q) || q.id === r.owner || q.st === PS.Plane || q.team === this.players[r.owner].team) continue;
           const t = rayCapsule(r.x, r.y, r.z, nx - r.x, ny - r.y, nz - r.z, q.x, q.y, q.z, q.crouch || q.swim ? 1.3 : PLAYER_H, 1, q.yaw);
-          if (t >= 0) { boom = true; bx = r.x + (nx - r.x) * t; by = r.y + (ny - r.y) * t; bz = r.z + (nz - r.z) * t; const own = this.players[r.owner]; const dmg = weaponDamage(WEAPON_DEFS.rocket, r.rarity); const hadShield = q.shield > 0; const d = this.dealDamage(q, dmg, r.owner); own.damage += d; this.ev.hit(r.owner, q.id, 0, d, bx, by, bz, q.hp <= 0, hadShield && q.shield <= 0); if (q.hp <= 0) this.kill(q, r.owner, killWeapon(5, r.rarity)); break; }
+          if (t >= 0) {
+            boom = true; directKong = true;
+            bx = r.x + (nx - r.x) * t; by = r.y + (ny - r.y) * t; bz = r.z + (nz - r.z) * t;
+            const own = this.players[r.owner];
+            const head = isBow && by >= q.y + (q.crouch || q.swim ? 0.92 : 1.38);
+            const dmg = weaponDamage(wDef, r.rarity) * (head ? wDef.headMul : 1);
+            const hadShield = q.shield > 0;
+            const d = this.dealDamage(q, dmg, r.owner);
+            own.damage += d;
+            this.ev.hit(r.owner, q.id, head ? 1 : 0, d, bx, by, bz, q.hp <= 0, hadShield && q.shield <= 0);
+            if (q.hp <= 0) this.kill(q, r.owner, killWeapon(wIdx, r.rarity));
+            break;
+          }
         }
       }
       if (boom) {
-        this.explode(bx, by, bz, w.splashR, weaponDamage({ dmg: w.splashDmg }, r.rarity), r.owner, killWeapon(5, r.rarity));
+        if (isBow && w.delayS && !directKong && r.life > 0 && ny >= -1) {
+          // stick the explosive arrow into the impact point; detonates after delayS
+          r.x = bx; r.y = by; r.z = bz; r.vx = r.vy = r.vz = 0; r.stuckT = w.delayS;
+          continue;
+        }
+        SPLASH_W.dmg = w.splashDmg;
+        this.explode(bx, by, bz, w.splashR, weaponDamage(SPLASH_W, r.rarity), r.owner, killWeapon(wIdx, r.rarity));
         this.ev.rocketEnd(r.id); this.rockets[i] = this.rockets[this.rockets.length - 1]; this.rockets.pop();
       } else { r.x = nx; r.y = ny; r.z = nz; }
     }
   }
-  // ---------------------------------------------------------------- banana bombs (shared/sim/bomb.ts)
+  // ---------------------------------------------------------------- banana & smoke bombs (shared/sim/bomb.ts)
+  /** true when any dense active smoke cloud intersects the 3D segment A→B (blinds bots cleanly) */
+  smokeBlocks(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
+    const n = this.smokes.length; if (n === 0) return false;
+    const dx = bx - ax, dy = by - ay, dz = bz - az, l2 = dx * dx + dy * dy + dz * dz;
+    for (let i = 0; i < n; i++) {
+      const s = this.smokes[i];
+      if (s.left <= 1.2) continue;   // thinning out in the final second: bots start seeing again
+      const grow = Math.min(1, (SMOKE.durationS - s.left + 0.35) / SMOKE.growS);
+      const er = s.r * grow;
+      const cx = s.x, cy = s.y + SMOKE.height * 0.42, cz = s.z;
+      const t = l2 > 1e-6 ? Math.max(0, Math.min(1, ((cx - ax) * dx + (cy - ay) * dy + (cz - az) * dz) / l2)) : 0;
+      const px = ax + dx * t - cx, py = ay + dy * t - cy, pz = az + dz * t - cz;
+      if (px * px + py * py + pz * pz <= er * er) return true;
+    }
+    return false;
+  }
   /** a throw (stepPlayer counted the bomb out and set p.thrown = the seconds it cooked): the bomb leaves the hand with
    * what is left of its fuse — a bomb cooked to the end goes off in the hand */
   private throwBomb(p: Player, cooked: number) {
-    const b = { id: this.nextBombId++ & 0xffff, owner: p.id, fuse: BOMB.fuseS - cooked, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rest: false };
+    const smoke = p.thrownKind === 1, fuse0 = smoke ? SMOKE.fuseS : BOMB.fuseS;
+    const b = { id: this.nextBombId++ & 0xffff, owner: p.id, fuse: fuse0 - cooked, smoke, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rest: false };
     bombLaunch(this.world, p.x, eyeY(p), p.z, p.yaw, p.pitch, p.vx, p.vz, b);
     if (b.fuse <= 0.02) { b.x = p.x; b.y = p.y + 1.2; b.z = p.z; }
-    this.bombs.push(b); this.ev.bomb(b.id, p.id, b.x, b.y, b.z, b.vx, b.vy, b.vz, b.fuse);
+    this.bombs.push(b); this.ev.bomb(b.id, (p.id & 0x7f) | (smoke ? 0x80 : 0), b.x, b.y, b.z, b.vx, b.vy, b.vz, b.fuse);
+  }
+  /** Banana Airstrike designated by kong `p` (AIRSTRIKE_TARGET holds the target point and corridor yaw) */
+  private callAirstrike(p: Player) {
+    const id = this.nextAirstrikeId++ & 0xffff;
+    const x = Math.fround(AIRSTRIKE_TARGET[0]), y = Math.fround(AIRSTRIKE_TARGET[1]), z = Math.fround(AIRSTRIKE_TARGET[2]);
+    const yaw = yawDec(yawEnc(AIRSTRIKE_TARGET[3]));
+    this.airstrikes.push({ id, owner: p.id, x, y, z, yaw, t: 0, dropped: 0 });
+    this.ev.airstrike(id, p.id, x, y, z, yaw);
+    this.ev.announce(ANN_ECON.Airstrike, p.id & 0xff, 0);
   }
   private stepBombs() {
+    if (this.phase === Phase.Plane || this.tick < this.lastBombTick) {
+      if (this.smokes.length > 0) this.smokes.length = 0;
+      if (this.airstrikes.length > 0) this.airstrikes.length = 0;
+    }
+    this.lastBombTick = this.tick;
+    for (let i = this.smokes.length - 1; i >= 0; i--) {
+      this.smokes[i].left -= DT;
+      if (this.smokes[i].left <= 0) { this.smokes[i] = this.smokes[this.smokes.length - 1]; this.smokes.pop(); }
+    }
+    // Banana Airstrike barrages: after AIRSTRIKE.warnS s, drop 6 sequential heavy bombs along the designated corridor
+    const strikeEnd = AIRSTRIKE.warnS + AIRSTRIKE.bombs * AIRSTRIKE.intervalS + 1.5;
+    for (let i = this.airstrikes.length - 1; i >= 0; i--) {
+      const a = this.airstrikes[i];
+      a.t += DT;
+      while (a.dropped < AIRSTRIKE.bombs && a.t >= AIRSTRIKE.warnS + a.dropped * AIRSTRIKE.intervalS) {
+        const frac = AIRSTRIKE.bombs > 1 ? a.dropped / (AIRSTRIKE.bombs - 1) - 0.5 : 0;
+        const fx = -dmath.sin(a.yaw), fz = -dmath.cos(a.yaw);
+        const bx = a.x + fx * frac * AIRSTRIKE.span;
+        const bz = a.z + fz * frac * AIRSTRIKE.span;
+        this.world.raycast(bx, a.y + 120, bz, 0, -1, 0, 260, HIT, true);
+        const by = HIT.hit ? HIT.y : this.world.ground(bx, bz);
+        this.explode(bx, by + 0.2, bz, AIRSTRIKE.radius, AIRSTRIKE.dmg, this.players[a.owner] ? a.owner : -1, KILL_AIRSTRIKE, false, 1.8, 0.2);
+        a.dropped++;
+      }
+      if (a.dropped >= AIRSTRIKE.bombs && a.t >= strikeEnd) {
+        this.airstrikes[i] = this.airstrikes[this.airstrikes.length - 1]; this.airstrikes.pop();
+      }
+    }
     for (let i = this.bombs.length - 1; i >= 0; i--) {
       const b = this.bombs[i];
       b.fuse -= DT;
       if (b.fuse > 0) { bombStep(this.world, b, DT); continue; }
       this.bombs[i] = this.bombs[this.bombs.length - 1]; this.bombs.pop();
       this.ev.bombEnd(b.id);
-      this.explode(b.x, b.y + 0.15, b.z, BOMB.radius, BOMB.dmg, this.players[b.owner] ? b.owner : -1, KILL_BOMB, false, BOMB.core, BOMB.floor);
+      if (b.smoke) {
+        this.smokes.push({ id: b.id, x: b.x, y: b.y, z: b.z, r: SMOKE.radius, left: SMOKE.durationS });
+        this.ev.smoke(b.id, b.x, b.y, b.z, SMOKE.durationS);
+      } else {
+        this.explode(b.x, b.y + 0.15, b.z, BOMB.radius, BOMB.dmg, this.players[b.owner] ? b.owner : -1, KILL_BOMB, false, BOMB.core, BOMB.floor);
+      }
     }
   }
   // ---------------------------------------------------------------- crate walls (shared/sim/cover.ts)
@@ -768,11 +873,12 @@ export class Match {
   /** a kong killed with a pulled bomb drops it, still burning, where it fell */
   private dropCookedBomb(v: Player) {
     if (v.cookT <= 0) return;
-    const k = bombSlot(v), cooked = v.cookT; v.cookT = 0;
+    const smoke = v.cookKind === 1, fuse0 = smoke ? SMOKE.fuseS : BOMB.fuseS;
+    const k = bombSlot(v, smoke ? 1 : 0), cooked = v.cookT; v.cookT = 0; v.cookKind = 0;
     if (k < 0) return;
     const s = v.slots[k]; s.count--; if (s.count <= 0) { s.kind = SK.Empty; s.id = 0; s.count = 0; s.rarity = 0; }
-    const b = { id: this.nextBombId++ & 0xffff, owner: v.id, fuse: Math.max(0.05, BOMB.fuseS - cooked), x: v.x, y: v.y + 1.0, z: v.z, vx: 0, vy: 1, vz: 0, rest: false };
-    this.bombs.push(b); this.ev.bomb(b.id, v.id, b.x, b.y, b.z, b.vx, b.vy, b.vz, b.fuse);
+    const b = { id: this.nextBombId++ & 0xffff, owner: v.id, fuse: Math.max(0.05, fuse0 - cooked), smoke, x: v.x, y: v.y + 1.0, z: v.z, vx: 0, vy: 1, vz: 0, rest: false };
+    this.bombs.push(b); this.ev.bomb(b.id, (v.id & 0x7f) | (smoke ? 0x80 : 0), b.x, b.y, b.z, b.vx, b.vy, b.vz, b.fuse);
   }
   /** a punch at the pane under the crosshair within arm's reach (shared/sim/glass.ts glassPunch) */
   private punchGlass(p: Player): boolean {
@@ -1206,7 +1312,7 @@ export class Match {
     if (best) {
       best.opened = true; best.openedAt = this.time; this.ev.chest(best.id, p.id);
       const rng = new Rng(this.seed ^ (best.id * 2654435761) ^ this.tick);
-      const contents = best.box ? rollAmmoBox(rng) : rollChestContents(rng, best.rarity, best.poi);
+      const contents = best.box ? rollAmmoBox(rng) : rollChestContents(rng, best.rarity, best.poi, best.poi === hotDropPoi(this.seed));
       this.spillChest(best, p, contents);
       return true;
     }

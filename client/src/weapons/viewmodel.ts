@@ -114,6 +114,23 @@ export const VM_HOLD: Record<WeaponId, Hold> = {
     recoil: [0.13, 0.16, 0.03, 0.025, 10],
     ads: { sight: [0, 0.2, 0.1], dist: 0.36 }, reload: "warhead",
   },
+  bow: {
+    // held upright-diagonal across the right third, bamboo bow + glowing explosive arrow pointing at the crosshair
+    pos: [0.22, -0.17, -0.49], rot: [0.02, 0.14, 0.24], scale: 0.86, elR: [0.1, -1.0, -0.4], adsScale: 0.72,
+    r: { at: [0, 0.02, -0.14], up: [0, 1, 0], palm: [1, 0, 0], a: 0.026, b: 0.03 },
+    l: { at: [0, 0.11, 0.12], up: [0, 1, 0], palm: [-1, 0, 0], a: 0.024, b: 0.024 },
+    recoil: [0.04, 0.07, 0.02, 0.01, 22],
+    ads: { sight: [-0.02, 0.135, -0.16], dist: 0.32 }, reload: "warhead",
+  },
+  minigun: {
+    // heavy low-slung hip rotary gatling, barrels sweeping forward-left toward center
+    pos: [0.30, -0.25, -0.52], rot: [0.02, 0.16, -0.06], scale: 0.74, elR: [0.1, -1.0, -0.4], adsScale: 0.66,
+    r: { at: [0, -0.08, 0.26], up: [0, 0.92, -0.35], palm: [1, 0, 0], a: 0.03, b: 0.038 },
+    l: { at: [0, 0.155, -0.02], up: [0, 0.2, -1], palm: [0, -1, 0], a: 0.026, b: 0.026 },
+    recoil: [0.02, 0.02, 0.014, 0.014, 38],
+    ads: { sight: [0, 0.18, -0.08], dist: 0.38 }, reload: "mag",
+    magGrip: { at: [0, -0.14, 0.02], up: [0, 1, 0], palm: [-1, 0, 0], a: 0.06, b: 0.06 },
+  },
 };
 /** consumables are held in the right fist, low right; the use animation brings them up to the mouth */
 // right of centre like the guns (bbox centre >= 0.60), low, left of the hotbar's first slot
@@ -378,7 +395,7 @@ function makeFlash(size: number): THREE.Group {
   g.traverse((o) => { o.renderOrder = 12; (o as THREE.Mesh).frustumCulled = false; o.userData.castShadow = false; });
   return g;
 }
-const FLASH_SIZE: Record<WeaponId, number> = { pistol: 0.2, smg: 0.2, ar: 0.26, shotgun: 0.42, sniper: 0.36, rocket: 0 };
+const FLASH_SIZE: Record<WeaponId, number> = { pistol: 0.2, smg: 0.2, ar: 0.26, shotgun: 0.42, sniper: 0.36, rocket: 0, bow: 0, minigun: 0.3 };
 const flashOf = new WeakMap<object, THREE.Group>();
 
 // ------------------------------------------------------------------------------------------------ loadouts
@@ -394,6 +411,7 @@ interface Loadout {
   magGripLocal: THREE.Matrix4; magGripLocalInv: THREE.Matrix4;
   drop: THREE.Object3D | null;
   slide: THREE.Object3D | null; slideRest: number;
+  barrels: THREE.Object3D | null;
   bolt: THREE.Object3D | null; boltRest: THREE.Vector3; boltKnob: THREE.Vector3;
   prop: THREE.Object3D | null;
   accent: THREE.Mesh[];
@@ -487,6 +505,7 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
       inst.root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !accent.includes(m) && !(m.material as THREE.Material & { isMeshBasicMaterial?: boolean }).isMeshBasicMaterial) skinOf.push(m); });
       const eject = new THREE.Vector3(0.03, spec.sightY * 0.6, -spec.length * 0.12);
       const slide = inst.pivots["slide"] ?? null;
+      const barrels = inst.pivots["barrels"] ?? null;
       // ADS: look ALONG the top of the gun — the eye line just above its highest point (so the receiver /
       // stock never block the view), the sight point over the rear third; the sniper keeps its scope line
       if (hold.reload !== "bolt") {
@@ -525,7 +544,7 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
       lo = {
         id, root, gun, hold, kind: hold.reload, muzzle: spec.muzzle.clone(), eject, handR, handL, hk, restR, restL,
         mag, magParent, magParentInv: magParent.clone().invert(), magRest, magGripLocal, magGripLocalInv: magGripLocal.clone().invert(), drop,
-        slide, slideRest: slide ? slide.position.z : 0, bolt, boltRest, boltKnob, prop, accent, skin: skinOf, itemAB: [0, 0],
+        slide, slideRest: slide ? slide.position.z : 0, barrels, bolt, boltRest, boltKnob, prop, accent, skin: skinOf, itemAB: [0, 0],
       };
       if (flash) flashOf.set(lo, flash);
     } else {
@@ -545,7 +564,7 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
       lo = {
         id, root, gun: holder, hold: null, kind: null, muzzle: new THREE.Vector3(), eject: new THREE.Vector3(), handR, handL: null, hk: s, restR, restL: null,
         mag: null, magParent: new THREE.Matrix4(), magParentInv: new THREE.Matrix4(), magRest: new THREE.Matrix4(), magGripLocal: new THREE.Matrix4(), magGripLocalInv: new THREE.Matrix4(), drop: null,
-        slide: null, slideRest: 0, bolt: null, boltRest: new THREE.Vector3(), boltKnob: new THREE.Vector3(), prop: null, accent: [], skin: [], itemAB: ab,
+        slide: null, slideRest: 0, barrels: null, bolt: null, boltRest: new THREE.Vector3(), boltKnob: new THREE.Vector3(), prop: null, accent: [], skin: [], itemAB: ab,
       };
     }
     root.visible = false;
@@ -570,7 +589,7 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
   /** sprint / ADS blends are critically damped 2nd-order (no velocity step when they start = no pop) */
   let sprintV = 0, adsV = 0, shellTiltV = 0, scopeV = 0;
   const crit = (x: number, v: number, target: number, w: number, dt: number): [number, number] => { const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n; for (let i = 0; i < n; i++) { v += ((target - x) * w * w - 2 * w * v) * h; x += v * h; } return [x, v]; };
-  let rocketSpent = false, dropT = -1, shellTilt = 0, popK = 0, flashT = 0;
+  let rocketSpent = false, dropT = -1, shellTilt = 0, popK = 0, flashT = 0, spinRate = 0;
   // the muzzle light pop: a warm emissive flash on the gloves + forearm fur (VM-only materials) for ~2 frames per shot
   const HM = handMaterials(), POP = new THREE.Color(1.0, 0.55, 0.16);
   (HM.glove as THREE.MeshStandardMaterial).emissive = new THREE.Color(0); (HM.peel as THREE.MeshStandardMaterial).emissive = new THREE.Color(0); (HM.fur as THREE.MeshStandardMaterial).emissive = new THREE.Color(0);
@@ -1053,16 +1072,16 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
       kickPos.v.z += r[0] * r[4] * 0.9 * ak; kickPos.v.y += r[0] * r[4] * 0.12 * ak;
       kickRot.v.x += r[1] * r[4] * 0.9 * ak; kickRot.v.z += rnd() * r[2] * r[4] * ak; kickRot.v.y += rnd() * r[3] * r[4] * ak;
       kickPos.k = kickRot.k = r[4] * 8;
-      if (cur.id === "rocket") rocketSpent = true;
-      popK = cur.id === "shotgun" || cur.id === "rocket" || cur.id === "sniper" ? 1.4 : 1;
+      if (cur.id === "rocket" || cur.id === "bow") rocketSpent = true;
+      popK = cur.id === "bow" ? 0 : cur.id === "shotgun" || cur.id === "rocket" || cur.id === "sniper" ? 1.4 : 1;
       { const fl = flashOf.get(cur); if (fl) { flashT = FLASH_S; fl.visible = true; fl.rotation.z = Math.random() * Math.PI * 2; fl.scale.setScalar(0.85 + Math.random() * 0.3); } }
       if (cur.slide) cur.slide.position.z = cur.slideRest + 0.03;
       const fx = fxRef();
       if (fx) {
         cur.gun.updateWorldMatrix(true, false);
         const wid = cur.id as WeaponId;
-        if (fx.muzzleFlash) { _m.copy(cur.muzzle).applyMatrix4(cur.gun.matrixWorld); _d.set(0, 0, -1).transformDirection(cur.gun.matrixWorld); fx.muzzleFlash(_m, _d, wid, true); }
-        if (fx.shell && wid !== "rocket" && wid !== "shotgun") {
+        if (fx.muzzleFlash && wid !== "bow") { _m.copy(cur.muzzle).applyMatrix4(cur.gun.matrixWorld); _d.set(0, 0, -1).transformDirection(cur.gun.matrixWorld); fx.muzzleFlash(_m, _d, wid, true); }
+        if (fx.shell && wid !== "rocket" && wid !== "shotgun" && wid !== "bow") {
           _m.copy(cur.eject).applyMatrix4(cur.gun.matrixWorld);
           // a fan of brass: up and out in a fan (yaw / lift jitter) that arcs through the
           // upper right of the frame before it falls, instead of a flat line straight out of view
@@ -1088,6 +1107,7 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
     debugState() { return { reloadU: pending ? 0 : reloadT, reloadDur, equip: cur ? cur.id : null, ads: adsK, scope: scopeK, cancelling: cancelT >= 0 }; },
     use(seconds) { if (!cur || cur.hold) return; useT = 0; useDur = Math.max(0.3, seconds); },
     setScoped(on) { scoped = on && !!cur && cur.id === "sniper"; },
+    setSpin(s) { spinRate = Math.max(0, Math.min(1, s)); },
     setAds(on) { adsOn = on && !!cur && !!cur.hold && cur.id !== "sniper"; },
     muzzle(out) {
       if (!cur) return out.set(0.2, -0.15, -0.8).applyMatrix4(object.matrixWorld);
@@ -1118,6 +1138,7 @@ export async function createViewModel(fxRef: () => VmFx | null, onBuilt?: (o: TH
       object.userData.draw = airMode === 0 && holsterT < 0 ? equipT : 0;   // tools: 1 = the gun is fully drawn
       if (!cur) return;
       const lo = cur, hold = lo.hold;
+      if (lo.barrels && spinRate > 0.01) lo.barrels.rotation.z -= spinRate * 32 * dt;
       let aimHands = 0;
       // ---- locomotion blend
       const moving = m.grounded ? Math.min(1, m.speed / 4.5) : 0;

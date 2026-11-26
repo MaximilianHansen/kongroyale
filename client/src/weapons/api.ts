@@ -28,6 +28,8 @@ export interface ViewModel {
   use(seconds: number): void;
   /** sniper → scope overlay state is gameplay/HUD; this lowers/raises the model */
   setScoped(on: boolean): void;
+  /** rotary barrel spin 0..1 for the Banana Shredder minigun */
+  setSpin?(spin: number): void;
   update(dt: number, m: ViewModelMotion): void;
   /** world-space muzzle point for 1P tracers */
   muzzle(out: THREE.Vector3): THREE.Vector3;

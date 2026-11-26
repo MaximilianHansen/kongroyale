@@ -83,12 +83,13 @@ export type Rarity = (typeof RARITIES)[number];
 export const RARITY_COLOR: Record<Rarity, string> = {
   common: "#b8bec6", uncommon: "#46d160", rare: "#3b9dff", epic: "#b45cff", legendary: "#ffbf2e", mythic: "#ff2f6d",
 };
-export const WEAPONS = ["pistol", "smg", "ar", "shotgun", "sniper", "rocket"] as const;
+export const WEAPONS = ["pistol", "smg", "ar", "shotgun", "sniper", "rocket", "bow", "minigun"] as const;
 export type WeaponId = (typeof WEAPONS)[number];
 // two heals: leaf bundle = health (red cross), banana smoothie = shield (blue shield); the golden banana is the rare jackpot
 // the RED BANANA: a short burst of ~1.85× speed and a much higher, longer jump — wire index 3
 export const CONSUMABLES = ["leaf-bundle", "smoothie", "golden-banana", "red-banana",
-  // the Banana Bomb frag grenade, the Coconut Crate Wall portable cover
-  "banana-bomb", "crate-wall",
+  // the Banana Bomb frag grenade, the Coconut Crate Wall portable cover, the Smoke Banana tactical canister,
+  // the Vine Grapple traversal hook, and the Banana Airstrike designator
+  "banana-bomb", "crate-wall", "smoke-bomb", "vine-grapple", "airstrike",
 ] as const;
 export type ConsumableId = (typeof CONSUMABLES)[number];

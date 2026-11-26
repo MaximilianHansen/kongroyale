@@ -75,6 +75,7 @@ export function botThink(m: Match, p: Player, b: BotBrain, inp: Input) {
       const dx = q.x - p.x, dz = q.z - p.z, d = dmath.hypot(dx, dz); if (d > (air ? Math.min(bd, 110) : bd)) continue;
       if (d > 30 && (dx * fx + dz * fz) / (d || 1) < -0.17) continue;           // behind us: unseen
       if (!m.world.clear(p.x, ey, p.z, q.x, q.y + PLAYER_H * 0.7, q.z)) continue;
+      if (m.smokeBlocks(p.x, ey, p.z, q.x, q.y + PLAYER_H * 0.7, q.z)) continue;
       bd = d; best = q.id;
     }
     if (best >= 0) { if (best !== b.enemy) { b.enemy = best; b.reactT = (0.16 + (1 - b.skill) * 0.36) * BOT_DIFFICULTY[b.difficulty].reaction; b.engagedT = 0; b.flick(); } b.enemySeenT = 0; }
@@ -311,6 +312,8 @@ function ride(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retur
 
 function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: ReturnType<typeof weaponDef>) {
   const e = m.players[b.enemy]; if (!e || !alive(e) || e.team === p.team) { b.enemy = -1; b.hasCover = false; return; }
+  const smoked = m.smokeBlocks(p.x, eyeY(p), p.z, e.x, e.y + 1.1, e.z);
+  if (smoked && b.enemySeenT > 1.5) { b.enemy = -1; b.hasCover = false; return; }
   b.reactT -= dt; b.engagedT += dt;
   let dx = e.x - p.x, dz = e.z - p.z;
   const dist = dmath.hypot(dx, dz);
@@ -355,14 +358,20 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
   if (w && s.kind === SK.Weapon) {
     if (s.mag === 0) inp.buttons |= B.RELOAD;
     // (the SMG falls off from 12 m and blooms wide — no hosing past 60 m)
-    else if (b.reactT <= 0 && onTarget && dist < (w.id === "shotgun" ? 26 : w.id === "sniper" ? 320 : w.id === "pistol" ? 90 : w.id === "smg" ? 60 : w.id === "rocket" ? 62 : 140)
-      // a rocket needs a clear flight path (a crouched bot behind cover blew itself up on the cover) and some room
-      && (w.id !== "rocket" || (dist > 9 && m.world.clear(p.x, eyeY(p), p.z, p.x + dx, e.y + Math.max(0.35, aimH), p.z + dz)))) {
+    else if (!smoked && b.reactT <= 0 && onTarget && dist < (w.id === "shotgun" ? 26 : w.id === "sniper" ? 320 : w.id === "pistol" ? 90 : w.id === "smg" ? 60 : w.id === "rocket" ? 62 : w.id === "bow" ? 120 : w.id === "minigun" ? 85 : 140)
+      // a rocket or bow needs a clear flight path (a crouched bot behind cover blew itself up on the cover) and some room
+      && ((w.id !== "rocket" && w.id !== "bow") || (dist > 9 && m.world.clear(p.x, eyeY(p), p.z, p.x + dx, e.y + Math.max(0.35, aimH), p.z + dz)))) {
       // fire discipline for the handling model (bloom per shot, first-shot accuracy on the AR / pistol):
       // close = hold the trigger; mid range = bursts that shorten with skill and
       // range; long range = a skilled bot taps (waits ~0.28 s so every shot is a first shot), an average one bursts
       const tapGun = w.id === "ar" || w.id === "pistol";
       if (tapGun && dist > 35 && b.skill > 0.55) { if (p.shotAgo >= 0.28 && ((m.tick / 2) | 0) % 2 === 0) inp.buttons |= B.FIRE; }
+      else if (w.spinUpS) {
+        // minigun needs sustained trigger hold past its spinUpS window
+        b.fireHold -= dt;
+        if (b.fireHold <= -0.35) b.fireHold = 1.45;
+        if (b.fireHold > 0) inp.buttons |= B.FIRE;
+      }
       else if (w.auto) {
         b.fireHold -= dt;
         const burst = dist < 15 ? 0.45 : dist < 40 ? 0.16 + b.rng.next() * 0.16 : 0.08 + b.rng.next() * 0.1;
@@ -386,7 +395,7 @@ function fight(m: Match, p: Player, b: BotBrain, inp: Input, dt: number, w: Retu
     if (cd > 1.2) { moveToward(p, inp, b.coverX, b.coverZ, true); inp.yaw = b.aimYaw; avoidHazards(m, p, inp); return; }
     inp.mx = 0; inp.mz = 0; inp.buttons |= B.CROUCH;
     // out of sight + hurt: heal (the heal state takes over once the enemy loses us)
-    if (hurt && hasConsumable(p) && !m.world.clear(p.x, eyeY(p), p.z, e.x, e.y + 1.4, e.z)) { b.enemySeenT = 3; b.state = S.Heal; }
+    if (hurt && hasConsumable(p) && (smoked || !m.world.clear(p.x, eyeY(p), p.z, e.x, e.y + 1.4, e.z))) { b.enemySeenT = 3; b.state = S.Heal; }
     return;
   }
   if (!hurt && !reloading) b.hasCover = false;
@@ -418,7 +427,7 @@ function findCover(m: Match, p: Player, e: Player, b: BotBrain) {
   }
 }
 /** how much a bot wants a weapon, independent of range (loot decisions): pistol < smg ≈ sniper < shotgun < ar < rocket */
-const WEAPON_VALUE: Record<string, number> = { pistol: 1, smg: 2.2, sniper: 2.3, shotgun: 2.4, ar: 2.8, rocket: 2.9 };
+const WEAPON_VALUE: Record<string, number> = { pistol: 1, smg: 2.2, sniper: 2.3, shotgun: 2.4, bow: 2.6, ar: 2.8, rocket: 2.9, minigun: 3.1 };
 export const weaponValue = (sub: number, rarity: number) => (WEAPON_VALUE[WEAPONS[sub]] ?? 1) * (1 + 0.12 * rarityTier(rarity));
 function bestWeaponValue(p: Player): number {
   let v = 0; for (const s of p.slots) if (s.kind === SK.Weapon) v = Math.max(v, weaponValue(s.id, s.rarity)); return v;

@@ -194,9 +194,19 @@ export interface WeaponDef {
   recoil: [number, number, number];
   /** damage falloff: full until `a` m, `min` multiplier from `b` m */
   falloff: [number, number, number];
-  /** projectile: speed m/s, gravity, splash radius, splash dmg (undefined = hitscan) */
-  projectile?: { speed: number; gravity: number; splashR: number; splashDmg: number };
+  /** projectile: speed m/s, gravity, splash radius, splash dmg, optional sticky fuse delayS (undefined = hitscan) */
+  projectile?: { speed: number; gravity: number; splashR: number; splashDmg: number; delayS?: number };
   scope?: number;
+  /** silent weapon (Bamboo Bow): skips gunfire noise alerts and distant radar pings */
+  silent?: boolean;
+  /** rotary barrel spin-up time before firing begins (s) — Banana Shredder minigun */
+  spinUpS?: number;
+  /** ground movement speed multiplier while spun up / firing */
+  moveMul?: number;
+  /** bonus damage multiplier against vehicles (tuk-tuks, helicopters) */
+  vehMul?: number;
+  /** bonus damage multiplier against deployable crate walls */
+  coverMul?: number;
   /** viewmodel bullet speed for tracers (hitscan is still instant) */
   tracer: number;
 }
@@ -214,6 +224,10 @@ export const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
   // moving / jumping scope wider (×1.4); still the best class from 150 m
   sniper:  { id: "sniper",  name: "LONGSTEM",   ammo: "heavy",   auto: false, dmg: 80,  pellets: 1, rpm: 30, mag: 4,  reloadS: 2.7,  headMul: 2.6,  spread: [4.0, 6.0, 9.0],   ads: 0.04, bloom: [0, 0, 1],        fsa: 0,    recoil: [4.5, 0.6, 6],   falloff: [250, 400, 0.85], scope: 6, adsSpread: [0.05, 1.4, 3.5], tracer: 900 },
   rocket:  { id: "rocket",  name: "BUNCH LAUNCHER", ammo: "rockets", auto: false, dmg: 60, pellets: 1, rpm: 40, mag: 1, reloadS: 2.3, headMul: 1.0, spread: [0.2, 0.6, 1.5], ads: 1, bloom: [0, 0, 1], fsa: 0, recoil: [5, 1, 5], falloff: [400, 400, 1], projectile: { speed: 48, gravity: 5, splashR: 3.8, splashDmg: 70 }, tracer: 48 },
+  // BAMBOO BOW: silent ballistic explosive arrow — curved drop, sticky 0.55 s explosive tip, lethal headshot (72×2.2 + 52)
+  bow:     { id: "bow",     name: "BAMBOO BOW", ammo: "heavy",   auto: false, dmg: 72,  pellets: 1, rpm: 52, mag: 1, reloadS: 0.95, headMul: 2.2,  spread: [0.15, 0.55, 1.4], ads: 0.25, bloom: [0, 0, 1],        fsa: 0,    recoil: [1.8, 0.2, 8],   falloff: [200, 350, 0.85], silent: true, projectile: { speed: 78, gravity: 15, splashR: 3.4, splashDmg: 52, delayS: 0.55 }, tracer: 78 },
+  // BANANA SHREDDER: 6-barrel rotary minigun — 0.52 s spin-up (RMB pre-spins), 900 RPM, shreds vehicles & walls, slows move
+  minigun: { id: "minigun", name: "BANANA SHREDDER", ammo: "light", auto: true, dmg: 14, pellets: 1, rpm: 900, mag: 100, reloadS: 3.4, headMul: 1.4, spread: [1.5, 2.3, 4.2], ads: 0.72, bloom: [0.06, 0.9, 3.0], fsa: 0,    recoil: [0.42, 0.55, 11], falloff: [25, 85, 0.55], spinUpS: 0.52, moveMul: 0.58, vehMul: 1.8, coverMul: 2.2, tracer: 460 },
 };
 /** scope sway (client aim wander while scoped, client/src/game/render.ts): amplitude in degrees
  * (world angle) = steady + enter × e^(−t / tau), t = time since the scope settled (scoping in, and after every bolt).
@@ -248,12 +262,21 @@ export const CONSUMABLE_DEFS: Record<ConsumableId, ConsumableDef> = {
   // --- throwables and placeables --- (no heal: G / fire throws the bomb, fire places the wall — player.ts stepHands)
   "banana-bomb":   { id: "banana-bomb",   name: "BANANA BOMB",     hp: 0,   shield: 0,   useS: 0,   stack: 4 },
   "crate-wall":    { id: "crate-wall",    name: "COCONUT CRATE WALL", hp: 0, shield: 0,  useS: 0,   stack: 1 },
+  "smoke-bomb":    { id: "smoke-bomb",    name: "SMOKE BANANA",    hp: 0,   shield: 0,   useS: 0,   stack: 3 },
+  "vine-grapple":  { id: "vine-grapple",  name: "VINE GRAPPLE",    hp: 0,   shield: 0,   useS: 0,   stack: 6 },
+  "airstrike":     { id: "airstrike",     name: "BANANA AIRSTRIKE", hp: 0,  shield: 0,   useS: 0,   stack: 1 },
 };
 /** the BANANA BOMB: a frag grenade with a 3 s peel fuse that starts burning when you
  * pull it (G / fire with it in hand) — hold to cook, let go to throw; it bounces and rolls; area damage with falloff and
  * line of sight (Match.explode, like a rocket's splash). speed / up: throw velocity along the look + an upward lob (m/s);
  * gravity m/s²; restitution / friction per bounce; radius / core (full damage) / floor (damage share at the rim) */
 export const BOMB = { fuseS: 3.0, speed: 22, up: 3.5, gravity: 19, restitution: 0.35, friction: 0.55, radius: 6.0, core: 1.4, dmg: 105, floor: 0.15, cooldownS: 0.45 };
+/** the SMOKE BANANA: short-fuse tactical canister that blooms into a dense smoke cloud blocking player & bot sight */
+export const SMOKE = { fuseS: 1.5, durationS: 12.0, growS: 1.2, fadeS: 2.2, radius: 6.5, height: 4.6 } as const;
+/** the VINE GRAPPLE: fires a jungle vine to surfaces/trees up to maxDist m and slings the kong cleanly into the air */
+export const GRAPPLE = { maxDist: 38, minDist: 2.5, cooldownS: 0.85, speedMin: 16, speedMax: 25, liftBase: 7.4, liftMax: 18.5 } as const;
+/** the BANANA AIRSTRIKE: designates a ground strike corridor; after warnS s (3.0 s), 6 bombs drop in sequence along span m */
+export const AIRSTRIKE = { maxDist: 180, minDist: 6, warnS: 3.0, bombs: 6, intervalS: 0.28, span: 34, radius: 6.8, dmg: 125, dropAlt: 78, dropSpeed: 64 } as const;
 
 /** BANANA BUCKS (shared/sim/economy.ts) */
 export const ECON = {

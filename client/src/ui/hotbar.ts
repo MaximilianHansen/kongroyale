@@ -152,6 +152,7 @@ html.kr-pad .kr-hotbar .padcyc:not(:empty) { display: inline-flex; }
   border-radius: var(--kong-radius-key); border: var(--kong-outline-sm) solid var(--kong-outline); box-shadow: var(--kong-drop-pill);
   background: var(--kong-text); color: var(--kong-outline); font: 900 ${T(15)} / 1 var(--kong-font-ui); }
 .kr-lethal.cook { border-color: var(--kong-warning); box-shadow: var(--kong-drop-pill), 0 0 ${T(18)} color-mix(in srgb, var(--kong-warning) 70%, transparent); }
+.kr-lethal.cook.smoke { border-color: #5cf2ff; box-shadow: var(--kong-drop-pill), 0 0 ${T(18)} rgba(92, 242, 255, 0.7); }
 `;
 
 export function createHotbar(root: HTMLElement) {
@@ -321,8 +322,8 @@ export function createHotbar(root: HTMLElement) {
       const useV = sel && s.using && s.using.total > 0 ? Math.round(Math.min(1, s.using.t / s.using.total) * 200) / 200 : 0;
       if (useV !== sl.useV) { sl.useV = useV; sl.use.style.transform = `scaleY(${useV})`; }
     }
-    { const L = s.lethal; const sig = L ? `${L.count}|${L.key}|${L.cooking ? 1 : 0}` : "";
-      if (sig !== lethalSig) { lethalSig = sig; tog(lethal, "kr-hide", !L); if (L) { lethalN.textContent = `×${L.count}`; lethalK.textContent = L.key; tog(lethal, "cook", L.cooking); } } }
+    { const L = s.lethal; const lid = L?.id ?? "banana-bomb"; const sig = L ? `${lid}|${L.count}|${L.key}|${L.cooking ? 1 : 0}` : "";
+      if (sig !== lethalSig) { lethalSig = sig; tog(lethal, "kr-hide", !L); if (L) { const u2 = itemIconUrl(lid); if (lethalImg.src !== u2) { lethalImg.src = u2; fitArt(lethalImg, 1, 0.92); } lethalN.textContent = `×${L.count}`; lethalK.textContent = L.key; tog(lethal, "cook", L.cooking); tog(lethal, "smoke", lid === "smoke-bomb"); } } }
   }
 
   return {

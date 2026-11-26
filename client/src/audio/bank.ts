@@ -147,6 +147,10 @@ const GUN: Record<WeaponId, GunMix> = {
   // 80 m); its 1P boom is 80-250 Hz chest (the sub sits under it, not over it, or the shot reads as mostly boom)
   sniper: { body: 2.3, sub: -26.0, mech: -37.7, tail: 1.2, max: 1300, echo: 1, duck: 1.0, hear: 3.0, pitch: 0.25, a: 2.5, knee: 80, b: 3.4, far: 1.5, dist: 2.5, ftail: -14, rise: 6, nearBand: [40, 120] },
   rocket: { body: 0.3, sub: -16.9, mech: -33.7, tail: -1.9, max: 820, echo: -1, duck: 1.0, hear: -3, pitch: 0.3, a: 4.5, knee: 60, b: 3.0, far: 0, dist: -2, ftail: -14, rise: 6, nearBand: [30, 95] },
+  // silent stealth bow: soft close release, inaudible past 55 m
+  bow: { body: -11.5, sub: -60.0, mech: -34.0, tail: -30.0, max: 55, echo: -40, duck: 0.25, hear: -12, pitch: 0.6, a: 7.0, knee: 20, b: 6.0, far: -24, dist: -30, ftail: -30, rise: 2 },
+  // heavy rotary minigun: punchy sustained bark
+  minigun: { body: -1.8, sub: -26.0, mech: -32.0, tail: -9.5, max: 800, echo: -2, duck: 0.85, hear: -2.0, pitch: 0.5, a: 4.0, knee: 65, b: 3.2, far: 0, dist: -2, ftail: -13, rise: 6 },
 };
 
 /** the sniper's BOLT CYCLE after every shot (s after the shot; the rifle fires every 1.43 s): handle up (lugs
@@ -160,36 +164,52 @@ export const SNIPER_BOLT: { part: "up" | "back" | "fwd" | "down"; t: number; db:
  * relative to it) and the 1P take's own offset in it. The takes keep their real pressure spike (crest 18-23 dB), so the
  * event sits 2-5.5 dB lower and the take is set for a true peak ≈ -2.5 dBTP with no limiting at all
  * (measured on 1P renders: pistol -24, SMG -23.5, AR / shotgun / rocket -22.5, sniper -20.3 I100) */
-const OWN: Record<WeaponId, number> = { pistol: -9.5, smg: -8.0, ar: -8.1, shotgun: -5.6, sniper: -12.5, rocket: -2.7 };
-const P1_DB: Record<WeaponId, number> = { pistol: 0, smg: 0, ar: 0, shotgun: 0, sniper: 0, rocket: 0 };
-const TAIL_1P: Record<WeaponId, number> = { pistol: 3, smg: 5, ar: 5, shotgun: 4, sniper: 9, rocket: 3 };
-const MECH_T: Record<WeaponId, number> = { pistol: 0.024, smg: 0.022, ar: 0.032, shotgun: 0.036, sniper: 0.03, rocket: 0.03 };
-const CASE_T: Record<WeaponId, number> = { pistol: 0.2, smg: 0.3, ar: 0.46, shotgun: 0, sniper: 0, rocket: 0 };
+const OWN: Record<WeaponId, number> = { pistol: -9.5, smg: -8.0, ar: -8.1, shotgun: -5.6, sniper: -12.5, rocket: -2.7, bow: -10.5, minigun: -7.2 };
+const P1_DB: Record<WeaponId, number> = { pistol: 0, smg: 0, ar: 0, shotgun: 0, sniper: 0, rocket: 0, bow: 0, minigun: -0.5 };
+const TAIL_1P: Record<WeaponId, number> = { pistol: 3, smg: 5, ar: 5, shotgun: 4, sniper: 9, rocket: 3, bow: 6, minigun: 5 };
+const MECH_T: Record<WeaponId, number> = { pistol: 0.024, smg: 0.022, ar: 0.032, shotgun: 0.036, sniper: 0.03, rocket: 0.03, bow: 0.015, minigun: 0.018 };
+const CASE_T: Record<WeaponId, number> = { pistol: 0.2, smg: 0.3, ar: 0.46, shotgun: 0, sniper: 0, rocket: 0, bow: 0, minigun: 0.28 };
 // (the sniper's send is -21, not -12: its bright yard return filled 4-8 kHz of YOUR shot's first 120 ms 10 dB over the take
 // itself and buried the boom; the room / valley tails are the tail layers' job)
-const SEND: Record<WeaponId, number> = { pistol: -30, smg: -26, ar: -20, shotgun: -18, sniper: -21, rocket: -16 };
+const SEND: Record<WeaponId, number> = { pistol: -30, smg: -26, ar: -20, shotgun: -18, sniper: -21, rocket: -16, bow: -42, minigun: -19 };
 
 function gunDef(w: WeaponId): EventDef {
   const m = GUN[w];
-  const body = `w/${w}/body`;
+  if (w === "bow") {
+    // Silent Bamboo Bow: taut jungle bowstring snap + crisp air whoosh, audibly stealthy (55 m max)
+    return {
+      bus: "p3", busLocal: "p1", db: m.hear, dbLocal: OWN.bow, duck: m.duck, cap: 12, group: "gun", send: SEND.bow, prio: 2,
+      layers: [
+        { g: "w/zip/attach", db: -2, pitch: 0.6, rate: 1.32, who: "local" },
+        { g: "move/jump", db: -4, pitch: 0.8, rate: 1.45, delay: 0.01, who: "local" },
+        { g: "w/pistol/mech", db: -14, pitch: 0.5, rate: 0.85, delay: 0.015, who: "local" },
+        { g: "w/zip/attach", db: -4, pitch: 0.6, rate: 1.28, who: "remote" },
+        { g: "move/jump", db: -7, pitch: 0.8, rate: 1.4, who: "remote" },
+      ],
+      spatial: { ref: 3, max: m.max, rolloff: 1.3, curve: { a: m.a, knee: m.knee, b: m.b }, air: 140, occl: true, hrtf: 35 },
+    };
+  }
+  const srcW = w === "minigun" ? "ar" : w;
+  const rate = w === "minigun" ? 0.84 : undefined;
+  const body = `w/${srcW}/body`;
   const layers: Layer[] = [
     // your own gun has its OWN 1P body (stereo, with presence + crack — w/<g>/p1, falls back to the 3P body); others
     // hear the mono 3P body that crossfades into the far report
     // (no pitch jitter on YOUR shot — a resampled source interpolates the 2-4-sample pressure spike down by up to
     // 3 dB, which flattened the sniper's first peak to the blast's height; the 8-10 round-robins are the variation)
-    { g: `w/${w}/p1`, db: 2.5 + P1_DB[w], pitch: 0, who: "local" },
-    { g: body, db: 0, pitch: m.pitch, band: "near", who: "remote" },
+    { g: `w/${srcW}/p1`, db: 2.5 + P1_DB[w], pitch: 0, rate, who: "local" },
+    { g: body, db: 0, pitch: m.pitch, rate, band: "near", who: "remote" },
     // NO separate 1P sub: one from another take peaks 3-6 ms
     // after p1's spike (a flam); the boom is p1's own low end. The real mechanism (bolt carrier /
     // slide / action) cycles 22-40 ms after the shot, under the blast — never inside the first-peak window
-    { g: `w/${w}/mech`, db: m.mech - m.body, who: "local", delay: MECH_T[w], pitch: 0.5 },
+    { g: `w/${w === "minigun" ? "smg" : srcW}/mech`, db: m.mech - m.body, who: "local", delay: MECH_T[w], pitch: 0.5 },
     // YOUR tail sits TAIL_1P dB lower than the one others hear — the range's reflections (45 ms on) filled the first
     // 120 ms of your own shot with their bright roll and blurred every gun's signature (the octave shapes read 2-4 dB apart)
-    { g: `w/${w}/tail`, db: m.tail - m.body - TAIL_1P[w], band: "tail", pitch: 0.4, delay: 0.05, jitter: 0.004, inDb: (w === "sniper" ? 9 : 4) + TAIL_1P[w], who: "local" },
-    { g: `w/${w}/tail`, db: m.tail - m.body, band: "tail", pitch: 0.4, jitter: 0.004, inDb: w === "sniper" ? 9 : 4, who: "remote" },
-    { g: `w/${w}/far`, db: m.far, band: "far", who: "remote", pitch: 0.4, match: body },
-    { g: `w/${w}/dist`, db: m.dist, band: "dist", who: "remote", pitch: 0.3, match: body },
-    { g: `w/${w}/far-tail`, db: m.ftail, band: "ftail", who: "remote", pitch: 0.3, jitter: 0.01, match: body },
+    { g: `w/${srcW}/tail`, db: m.tail - m.body - TAIL_1P[w], band: "tail", pitch: 0.4, delay: 0.05, jitter: 0.004, inDb: (w === "sniper" ? 9 : 4) + TAIL_1P[w], who: "local" },
+    { g: `w/${srcW}/tail`, db: m.tail - m.body, band: "tail", pitch: 0.4, jitter: 0.004, inDb: w === "sniper" ? 9 : 4, who: "remote" },
+    { g: `w/${srcW}/far`, db: m.far, band: "far", who: "remote", pitch: 0.4, rate, match: body },
+    { g: `w/${srcW}/dist`, db: m.dist, band: "dist", who: "remote", pitch: 0.3, rate, match: body },
+    { g: `w/${srcW}/far-tail`, db: m.ftail, band: "ftail", who: "remote", pitch: 0.3, jitter: 0.01, match: body },
   ];
   // the spent case hits the ground: each gun ejects its own way (a pistol's case drops close and early, the AR's flies
   // further) — the ring-outs end at different times
@@ -238,6 +258,8 @@ export const RELOAD_KEYS: Record<WeaponId, { g: string; u: number; db?: number; 
   sniper: [{ g: "w/sniper/bolt-up", u: 0.14 }, { g: "w/sniper/bolt-back", u: 0.22 }, { g: "w/sniper/rl-round", u: 0.47 }, { g: "w/sniper/rl-round", u: 0.68 },
     { g: "w/sniper/bolt-fwd", u: 0.78 }, { g: "w/sniper/bolt-down", u: 0.82 }],
   rocket: [{ g: "w/rocket/rl-out", u: 0.3 }, { g: "w/rocket/rl-in", u: 0.55 }, { g: "w/rocket/rl-rack", u: 0.66 }],
+  bow: [{ g: "w/rocket/rl-out", u: 0.25, db: -6, pitch: 0.6 }, { g: "w/rocket/rl-in", u: 0.62, db: -5, pitch: 0.5 }],
+  minigun: [{ g: "w/ar/rl-out", u: 0.24 }, { g: "w/ar/rl-in", u: 0.62 }, { g: "w/ar/rl-rack", u: 0.84, db: -2 }],
 };
 /** the HANDS between the keyframe clicks: per-move foley one-shots sized to each move of the viewmodel ~11 dB under the
  * clicks — the hand onto the gun, the empty mag hitting the ground (~70 ms after it is let go), the fresh one out of the
@@ -249,15 +271,17 @@ export const RELOAD_FOLEY: Record<WeaponId, { g: string; u: number; db: number }
   shotgun: [{ g: "w/shotgun/rl-grip", u: 0.05, db: -10 }],
   sniper: [{ g: "w/sniper/rl-grip", u: 0.06, db: -11 }, { g: "w/sniper/rl-pouch", u: 0.34, db: -11 }, { g: "w/sniper/rl-hand", u: 0.88, db: -12 }],
   rocket: [{ g: "w/rocket/rl-grip", u: 0.08, db: -11 }, { g: "w/rocket/rl-pouch", u: 0.3, db: -11 }],
+  bow: [{ g: "w/rocket/rl-grip", u: 0.1, db: -12 }],
+  minigun: [{ g: "w/ar/rl-grip", u: 0.14, db: -10 }, { g: "w/ar/rl-drop", u: 0.34, db: -8 }, { g: "w/ar/rl-pouch", u: 0.46, db: -10 }, { g: "w/ar/rl-hand", u: 0.72, db: -11 }],
 };
 /** the sim's reload time per weapon (shared/sim/const.ts reloadS) — the keyframes are fractions of it */
-export const RELOAD_S: Record<WeaponId, number> = { pistol: 1.25, smg: 1.7, ar: 2.1, shotgun: 0.55, sniper: 2.7, rocket: 2.3 };
+export const RELOAD_S: Record<WeaponId, number> = { pistol: 1.25, smg: 1.7, ar: 2.1, shotgun: 0.55, sniper: 2.7, rocket: 2.3, bow: 0.95, minigun: 3.4 };
 const reloadDef = (w: WeaponId): EventDef => ({
   bus: "p3", busLocal: "p1", db: -6, dbLocal: -12, cap: 6, group: "reload",
   layers: [
     ...RELOAD_KEYS[w].map((k): Layer => ({ g: k.g, u: k.u, db: k.db ?? 0, pitch: k.pitch ?? 0.25 })),
     ...RELOAD_FOLEY[w].map((k): Layer => ({ g: k.g, u: k.u, db: k.db, pitch: 0.3 })),
-    { g: `w/${w}/reload`, pitch: 0.2, ifMissing: RELOAD_KEYS[w][0].g },
+    { g: `w/${w === "bow" ? "rocket" : w === "minigun" ? "ar" : w}/reload`, pitch: 0.2, ifMissing: RELOAD_KEYS[w][0].g },
   ],
   // (no reverb send: a reload is close foley in your hands, and nothing may ring on after the reload ends)
   spatial: { ref: 2, max: 28, rolloff: 1.3, occl: true, hrtf: 28 }, send: -99,
@@ -617,6 +641,8 @@ export const BANK: Record<string, EventDef> = {
   "gun:hot": S({ bus: "p3", busLocal: "p1", db: -4, dbLocal: -6, layers: [{ g: "gun/hot" }], loop: "plain", spatial: { ref: 5, max: 120, rolloff: 1.0, curve: { a: 4.5, knee: 40, b: 6 }, occl: true, hrtf: 40 } }),
   "gun:lock": S({ bus: "p3", busLocal: "p1", db: -2, dbLocal: -5, layers: [{ g: "gun/lock" }], gap: 0.5, cap: 3, group: "gun-heli", spatial: { ref: 5, max: 120, rolloff: 1.0, curve: { a: 4.5, knee: 40, b: 6 }, occl: true, hrtf: 40 } }),
   "gun:dry": S({ bus: "p3", busLocal: "p1", db: -12, dbLocal: -10, layers: [{ g: "gun/dry" }], gap: 0.05, spatial: { ref: 3, max: 40, rolloff: 1.2 } }),
+  "grapple:shoot": S({ bus: "p3", busLocal: "p1", db: -3, dbLocal: -6, layers: [{ g: "w/zip/attach", pitch: 0.5, rate: 1.15 }, { g: "w/zip/detach", db: -3, delay: 0.06, pitch: 0.5 }, { g: "move/jump", db: -5, delay: 0.08, rate: 1.25 }], gap: 0.15, cap: 6, group: "grapple", spatial: { ref: 4, max: 70, rolloff: 1.0, occl: true, hrtf: 40 } }),
+  "airstrike:warn": S({ bus: "world", busLocal: "ui", db: 1, dbLocal: -4, layers: [{ g: "heli/alarm", db: -2, rate: 1.15 }, { g: "heli/alarm", db: -2, delay: 1.0, rate: 1.28 }, { g: "air/ramp", db: -5, delay: 0.25 }, { g: "air/plane-ext", db: -2, delay: 1.15, rate: 1.2 }], gap: 0.4, cap: 4, group: "airstrike", prio: 3, spatial: { ref: 24, max: 450, rolloff: 0.85, air: 500, hrtf: 120 }, send: -14 }),
   "tuk:backfire": S({ bus: "p3", busLocal: "p1", db: -1, dbLocal: -7, layers: [{ g: "veh/backfire", pitch: 1.5 }], gap: 0.07, cap: 4, group: "tuk", spatial: { ref: 5, max: 120, rolloff: 1.0, curve: { a: 5, knee: 40, b: 7 }, air: 200, occl: true, hrtf: 40 } }),
 };
 for (const w of WEAPONS) {

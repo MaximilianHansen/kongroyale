@@ -25,7 +25,10 @@ export const enum EV { Hit = 1, Shot = 2, Kill = 3, Chest = 4, SpawnItem = 5, Ta
   /** a crate wall was set down: [id u16][owner u8][x y z f32][yaw u16][hp u16] */ Cover = 42,
   /** a crate wall is gone: [id u16][why u8: 0 crumbled (time / replaced), 1 broken] */ CoverEnd = 43,
   /** a crate wall took damage: [id u16][hp u16] */ CoverHit = 44,
-  /** end-game loot regen: an opened chest / ammo box closed again, restocked (glow + hum back): [id u16] */ ChestReset = 45 }
+  /** end-game loot regen: an opened chest / ammo box closed again, restocked (glow + hum back): [id u16] */ ChestReset = 45,
+  /** smoke banana cloud deployed: [id u16][x f32][y f32][z f32][durMs u16] */ Smoke = 47,
+  /** vine grapple shot: [owner u8][x y z f32][tx ty tz f32] */ Grapple = 48,
+  /** banana airstrike designated: [id u16][owner u8][x y z f32][yaw u16] */ Airstrike = 49 }
 /** EV.Veh kinds. `a`: Enter / Exit / Flip = the kong, Crash / Land = how hard (m/s × 12, capped) */
 export const enum VK { Enter = 1, Exit = 2, Tip = 3, Flip = 4, Boom = 5, Crash = 6, Land = 7, Slam = 8, Sunk = 9, Burn = 10,
   /** a helicopter's rotor cut a kong down: a = the kong, (x, y, z) = where */ Chop = 11 }
@@ -336,6 +339,9 @@ export class Events {
   coverEnd(id: number, why: number) { this.begin(EV.CoverEnd).u16(id).u8(why); }
   coverHit(id: number, hp: number) { this.begin(EV.CoverHit).u16(id).u16(Math.max(0, Math.min(65535, Math.ceil(hp)))); }
   chestReset(id: number) { this.begin(EV.ChestReset).u16(id); }
+  smoke(id: number, x: number, y: number, z: number, dur: number) { this.begin(EV.Smoke).u16(id).f32(x).f32(y).f32(z).u16(Math.max(0, Math.min(65535, Math.round(dur * 1000)))); }
+  grapple(owner: number, x: number, y: number, z: number, tx: number, ty: number, tz: number) { this.begin(EV.Grapple).u8(owner & 0xff).f32(x).f32(y).f32(z).f32(tx).f32(ty).f32(tz); }
+  airstrike(id: number, owner: number, x: number, y: number, z: number, yaw: number) { this.begin(EV.Airstrike).u16(id).u8(owner & 0xff).f32(x).f32(y).f32(z).u16(yawEnc(yaw)); }
   vehHit(shooter: number, veh: number, dmg: number, x: number, y: number, z: number) { this.begin(EV.VehHit).u8(shooter & 0xff).u8(veh).u16(Math.min(65535, Math.round(dmg * 4))).f32(x).f32(y).f32(z); }
 }
 /** the kill feed's cause for a tuk-tuk: run over by one, or caught in its blast — and a helicopter's: its rotor, its
@@ -345,13 +351,15 @@ export const KILL_TUK = 253;
 export const KILL_BOMB = 252;
 /** (250: off KILL_BOMB) */
 export const KILL_HELI = 250;
+/** the kill feed's cause for a Banana Airstrike barrage */
+export const KILL_AIRSTRIKE = 249;
 /** a helicopter's door gun, TOP BANANA: the kill feed's cause and EV.Shot's weapon byte for its rounds */
 export const KILL_GUN = 251;
 /** EV.Shot surface code for "a player was hit" (7 bits on the wire: terrain 255 arrives as 127, so this is 126) */
 export const SURF_PLAYER = 126;
 export const enum ANN { ResurgenceOff = 1, ResurgenceWarn = 2, PlaneOpen = 3, PlaneClosing = 4, Final = 5, Victory = 6, MatchStart = 7, SquadEliminated = 8 }
 /** bytes of each event body after its kind byte (for parsers that skip events) */
-export const EV_BYTES: Record<number, number> = { 1: 17, 2: 27, 3: 4, 4: 3, 5: 18, 6: 3, 7: 13, 8: 27, 9: 2, 10: 13, 11: 1, 12: 2, 13: 2, 14: 3, 15: 4, 16: 15, 17: 16, 40: 29, 41: 2, 42: 19, 43: 3, 44: 4, 45: 2 };
+export const EV_BYTES: Record<number, number> = { 1: 17, 2: 27, 3: 4, 4: 3, 5: 18, 6: 3, 7: 13, 8: 27, 9: 2, 10: 13, 11: 1, 12: 2, 13: 2, 14: 3, 15: 4, 16: 15, 17: 16, 40: 29, 41: 2, 42: 19, 43: 3, 44: 4, 45: 2, 46: 20, 47: 16, 48: 25, 49: 17 };
 
 // ---- caster (commentator seats, client/src/caster): a seat holds no player. It gets the events every player gets, plus
 // two frames of its own. CastSnap = the snapshot header minus lastSeq, then EVERY player in the match with exact hp +

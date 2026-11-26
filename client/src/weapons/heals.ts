@@ -14,7 +14,7 @@ import { PartBuilder, type Built } from "./lib/builder";
 import { rng, paintKong, addGlint } from "./lib/mats";
 import { bunchPath } from "./chest-tex";
 import { bananaGeometry, bananaAt, catmull1, gridGeometry, lathe, polarAt, rope, roundedPolyPolar, tf, filletCyl } from "./lib/geo";
-import { bananaBomb, crateWallPack } from "./loot-lane";
+import { airstrikeBeacon, bananaBomb, crateWallPack, smokeBanana, vineGrapple } from "./loot-lane";
 
 /** average colours of textured parts, for the single-mesh far LOD */
 const LOD_COLOR: Record<string, string> = {
@@ -631,7 +631,7 @@ export function buildHeal(id: ConsumableId): Built {
   let hit = cache.get(id);
   if (!hit) {
     // the banana bomb and the crate wall pack live in ./loot-lane.ts
-    hit = id === "smoothie" ? smoothie() : id === "leaf-bundle" ? leafBundle() : id === "red-banana" ? redBanana() : id === "banana-bomb" ? bananaBomb() : id === "crate-wall" ? crateWallPack() : goldenBanana();
+    hit = id === "smoothie" ? smoothie() : id === "leaf-bundle" ? leafBundle() : id === "red-banana" ? redBanana() : id === "banana-bomb" ? bananaBomb() : id === "smoke-bomb" ? smokeBanana() : id === "vine-grapple" ? vineGrapple() : id === "airstrike" ? airstrikeBeacon() : id === "crate-wall" ? crateWallPack() : goldenBanana();
     hit.root.traverse((o) => {
       if (!(o as THREE.Mesh).isMesh) return;
       const x = o as THREE.Mesh; x.castShadow = x.castShadow !== false; x.receiveShadow = true;

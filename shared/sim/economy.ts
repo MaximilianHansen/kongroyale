@@ -2,23 +2,33 @@
 // the Match owns an Economy; the client only shows what the inventory frame / events / match info carry and sends a
 // purchase request (INV.Buy). Deterministic like the rest of the sim (the match RNG, the static world).
 import { CONSUMABLES, POIS, WEAPONS } from "../world/map";
-import { AMMO_PICKUP, CONSUMABLE_DEFS, ECON, PLAYER_R } from "./const";
+import { AMMO_PICKUP, CONSUMABLE_DEFS, ECON, PLAYER_R, WEAPON_DEFS } from "./const";
 export { ECON };
 import { lootSpots, SpotKind } from "./loot-spots";
 import { AMMO_TYPES, PS, SK, alive, giveAmmo, weaponDef, type Player } from "./player";
 import { makeHit, surfaceIndex, type StaticWorld } from "./world";
 import { IK } from "./loot";
+import { HOT_DROP_KILL_BONUS, inHotDrop, matchEventPlan, salePrice } from "./events-dyn";
 import * as dmath from "./dmath";
 
 /** the buy menu (index = the offer id on the wire) */
-export const enum Offer { BuyBack = 0, Bounty = 1, Smoothies = 2, Leaves = 3, Bombs = 4, Wall = 5, Ammo = 6 }
+export const enum Offer { BuyBack = 0, Bounty = 1, Smoothies = 2, Leaves = 3, Bombs = 4, Wall = 5, Ammo = 6, Upgrade = 7, Radar = 8, Smoke = 9, Grapple = 10, Airstrike = 11 }
 export interface OfferDef { id: Offer; name: string; price: number; desc: string; icon: string }
+/** tiered Banana Stand upgrade prices indexed by current weapon rarity (0 Common→Uncommon … 3 Epic→Legendary) */
+export const UPGRADE_PRICES = [500, 750, 1100, 1600] as const;
+/** Radar Pulse (UAV): reveals enemies within `radius` m on minimap & full map for `durationS` s */
+export const RADAR_UAV = { durationS: 12, radius: 320 } as const;
 export const OFFERS: readonly OfferDef[] = [
   { id: Offer.BuyBack, name: "BUY BACK", price: 2500, desc: "An eliminated squadmate redeploys from the sky above you", icon: "buyback" },
   { id: Offer.Bounty, name: "BOUNTY CONTRACT", price: 800, desc: "Mark an enemy squad for 90 s — kill one for $1,500 + loot", icon: "bounty" },
+  { id: Offer.Upgrade, name: "UPGRADE WEAPON", price: UPGRADE_PRICES[0], desc: "Boost held gun +1 rarity tier & refill magazine", icon: "upgrade" },
+  { id: Offer.Radar, name: "RADAR PULSE (UAV)", price: 1000, desc: "Reveal enemies within 320 m on map for 12 s", icon: "radar" },
+  { id: Offer.Airstrike, name: "BANANA AIRSTRIKE", price: 2200, desc: "Call a 6-bomb precision air barrage onto any target", icon: "airstrike" },
+  { id: Offer.Grapple, name: "VINE GRAPPLE ×3", price: 650, desc: "Jungle vine hook — sling onto roofs, cliffs & trees", icon: "vine-grapple" },
   { id: Offer.Smoothies, name: "SHIELD SMOOTHIES ×2", price: 300, desc: "+25 shield each", icon: "smoothie" },
   { id: Offer.Leaves, name: "LEAF BUNDLES ×2", price: 200, desc: "+25 health each", icon: "leaf-bundle" },
   { id: Offer.Bombs, name: "BANANA BOMBS ×2", price: 400, desc: "Frag grenades — hold G to cook", icon: "banana-bomb" },
+  { id: Offer.Smoke, name: "SMOKE BANANAS ×2", price: 300, desc: "Smoke screen — blocks sight & blinds bots", icon: "smoke-bomb" },
   { id: Offer.Wall, name: "COCONUT CRATE WALL", price: 600, desc: "Portable cover you set down anywhere flat", icon: "crate-wall" },
   { id: Offer.Ammo, name: "AMMO ×2", price: 150, desc: "Two stacks for the gun in your hands", icon: "ammo" },
 ];
@@ -114,21 +124,43 @@ export interface EconHost {
   /** the eliminated kong `q` comes back now (the redeploy from the sky, over its squad) */
   buyBack(q: Player): void;
 }
-/** EV.Announce codes of the economy (the a / b bytes carry team ids — each client checks its own) */
-export const enum ANN_ECON { Bounty = 40, BountyDone = 41, BountyOver = 42, BuyBack = 43, Hunted = 44 }
+/** EV.Announce codes of the economy & dynamic match events */
+export const enum ANN_ECON {
+  Bounty = 40, BountyDone = 41, BountyOver = 42, BuyBack = 43, Hunted = 44,
+  Upgrade = 45, Radar = 46, FireSaleStart = 47, FireSaleEnd = 48, SupplyFrenzy = 49, HotDropBonus = 50,
+  Airstrike = 51,
+}
 
 interface Contract { target: number; until: number; ox: number; oz: number; cx: number; cz: number; next: number }
 export class Economy {
   /** live contracts by HUNTER team */
   readonly contracts = new Map<number, Contract>();
-  constructor(private readonly h: EconHost, readonly stands: Stand[]) {}
-  reset() { this.contracts.clear(); }
+  /** active Radar Pulse (UAV) end time by team */
+  readonly radarUntil = new Map<number, number>();
+  /** Fire Sale state: 0 pending, 1 active, 2 ended */
+  private fireSaleState: 0 | 1 | 2 = 0;
+  fireSaleUntil = 0;
+  private lastStepT = 0;
+  constructor(private readonly h: EconHost, readonly stands: Stand[], private readonly seed = 0) {}
+  reset() { this.contracts.clear(); this.radarUntil.clear(); this.fireSaleState = 0; this.fireSaleUntil = 0; this.lastStepT = 0; }
+  isFireSale(): boolean { return this.fireSaleState === 1 && this.h.time < this.fireSaleUntil; }
+  fireSaleLeft(): number { return this.isFireSale() ? Math.max(0, this.fireSaleUntil - this.h.time) : 0; }
+  basePriceOf(p: Player, offer: number): number {
+    const def = OFFERS.find((o) => o.id === offer); if (!def) return 0;
+    if (offer === Offer.BuyBack && this.h.mode === "solo") return SOLO_LIFE.price;
+    if (offer === Offer.Upgrade) {
+      const s = p.slots[p.active];
+      return s.kind === SK.Weapon && s.rarity >= 0 && s.rarity < 4 ? UPGRADE_PRICES[s.rarity] : UPGRADE_PRICES[0];
+    }
+    return def.price;
+  }
+  priceOf(p: Player, offer: number): number { return salePrice(this.basePriceOf(p, offer), this.isFireSale()); }
   /** a purchase request from kong `p` at stand `si` (validated here: the client's menu is a convenience) */
   buy(p: Player, si: number, offer: number): boolean {
     const st = this.stands[si];
     if (!st || !alive(p) || p.st !== PS.Ground || dmath.hypot(p.x - st.x, p.z - st.z) > ECON.standReach + STAND_SIZE[2] / 2 || Math.abs(p.y - st.y) > 2.5) return false;
-    const def = OFFERS[offer]; if (!def) return false;
-    const price = offer === Offer.BuyBack && this.h.mode === "solo" ? SOLO_LIFE.price : def.price;
+    const def = OFFERS.find((o) => o.id === offer); if (!def) return false;
+    const price = this.priceOf(p, offer);
     if (p.cash < price) return false;
     if (!this.apply(p, offer)) return false;
     p.cash -= price; this.h.inventory(p.id);
@@ -160,9 +192,26 @@ export class Economy {
         this.h.announce(ANN_ECON.Bounty, p.team & 0xff, t & 0xff);
         return true;
       }
+      case Offer.Upgrade: {
+        const s = p.slots[p.active];
+        if (s.kind !== SK.Weapon || s.rarity >= 4) return false;
+        s.rarity++;
+        s.mag = WEAPON_DEFS[WEAPONS[s.id]].mag;
+        this.h.announce(ANN_ECON.Upgrade, p.id & 0xff, (s.id & 0x0f) | ((s.rarity & 0x0f) << 4));
+        return true;
+      }
+      case Offer.Radar: {
+        if ((this.radarUntil.get(p.team) ?? 0) > this.h.time) return false;
+        this.radarUntil.set(p.team, this.h.time + RADAR_UAV.durationS);
+        this.h.announce(ANN_ECON.Radar, p.team & 0xff, RADAR_UAV.durationS);
+        return true;
+      }
       case Offer.Smoothies: give("smoothie", 2); return true;
       case Offer.Leaves: give("leaf-bundle", 2); return true;
       case Offer.Bombs: give("banana-bomb", 2); return true;
+      case Offer.Smoke: give("smoke-bomb", 2); return true;
+      case Offer.Grapple: give("vine-grapple", 3); return true;
+      case Offer.Airstrike: give("airstrike", 1); return true;
       case Offer.Wall: give("crate-wall", 1); return true;
       case Offer.Ammo: { const w = weaponDef(p); if (!w) return false; const got = giveAmmo(p, w.ammo, AMMO_PICKUP[w.ammo] * 2); return got > 0; }
     }
@@ -188,6 +237,20 @@ export class Economy {
     c.next = this.h.time + ECON.bounty.refreshS;
   }
   step() {
+    // Dynamic mid-match Fire Sale (deterministic from match seed)
+    if (this.seed !== 0) {
+      if (this.h.time < this.lastStepT) { this.fireSaleState = 0; this.fireSaleUntil = 0; }
+      this.lastStepT = this.h.time;
+      const plan = matchEventPlan(this.seed);
+      if (this.fireSaleState === 0 && this.h.time >= plan.fireSaleAt) {
+        this.fireSaleState = 1;
+        this.fireSaleUntil = this.h.time + plan.fireSaleDur;
+        this.h.announce(ANN_ECON.FireSaleStart, plan.fireSaleDur, 0);
+      } else if (this.fireSaleState === 1 && this.h.time >= this.fireSaleUntil) {
+        this.fireSaleState = 2;
+        this.h.announce(ANN_ECON.FireSaleEnd, 0, 0);
+      }
+    }
     for (const [team, c] of this.contracts) {
       const targetAlive = this.h.players.some((q) => q.team === c.target && alive(q));
       if (this.h.time >= c.until || !targetAlive) {
@@ -199,9 +262,14 @@ export class Economy {
       if (this.h.time >= c.next) this.refresh(team);
     }
   }
-  /** kong `v` knocked out by `by`: a hunter squad that got its mark is paid + a reward drop where the mark fell */
+  /** kong `v` knocked out by `by`: Hot Drop kill bonus + bounty payout */
   onKill(v: Player, by: number) {
     const k = by >= 0 ? this.h.players[by] : null; if (!k || k.team === v.team) return;
+    if (this.seed !== 0 && inHotDrop(this.seed, v.x, v.z)) {
+      k.cash = Math.min(ECON.cap, k.cash + HOT_DROP_KILL_BONUS);
+      this.h.inventory(k.id);
+      this.h.announce(ANN_ECON.HotDropBonus, k.id & 0xff, Math.round(HOT_DROP_KILL_BONUS / 10));
+    }
     const c = this.contracts.get(k.team); if (!c || c.target !== v.team) return;
     this.contracts.delete(k.team);
     for (const q of this.h.players) if (q.team === k.team && (alive(q) || q.respawnAt >= 0)) { q.cash = Math.min(ECON.cap, q.cash + ECON.bounty.reward); this.h.inventory(q.id); }

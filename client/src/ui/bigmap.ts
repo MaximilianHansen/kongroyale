@@ -8,7 +8,8 @@ import type { POIS } from "../../../shared/world/map";
 import { drawGlyph, svgGlyph } from "./icons";
 import { drawPoiIcon } from "./poiicons";
 import { UI, U, addCss } from "./styles";
-import { bountyRing, drawPin, heliDot, mateMarker, planeAt, playerArrow, shotDot, standDot, tukDot, tukMe, SQUAD_COLOURS } from "./minimap";
+import { airstrikeOverlay, bountyRing, drawPin, heliDot, hotDropHalo, mateMarker, planeAt, playerArrow, shotDot, standDot, tukDot, tukMe, uavEnemyDot, uavOverlay, SQUAD_COLOURS } from "./minimap";
+import { AIRSTRIKE } from "../../../shared/sim/const";
 import { preferences } from "../settings/preferences";
 import { backText, bindingText, glyphFamily, onLabelsChange } from "../settings/labels";
 import { device } from "../settings/device";
@@ -133,6 +134,8 @@ export class BigMap {
     stSw.appendChild(sc); row(stSw, "BANANA STAND (BUY)"); standDot(sc.getContext("2d")!, 40, 22, 14);
     const bSw = sw(""); const bc = document.createElement("canvas"); bc.width = 80; bc.height = 44; bc.style.cssText = "width:100%;height:100%";
     bSw.appendChild(bc); row(bSw, "BOUNTY TARGET AREA"); bountyRing(bc.getContext("2d")!, 40, 22, 17, 0.4);
+    const hdSw = sw(""); const hdc = document.createElement("canvas"); hdc.width = 80; hdc.height = 44; hdc.style.cssText = "width:100%;height:100%";
+    hdSw.appendChild(hdc); row(hdSw, "HOT DROP (2× CASH)"); hotDropHalo(hdc.getContext("2d")!, 40, 22, 17, 0.5);
     lg.append(this.phEl, tm, rows);
     this.el.appendChild(lg);
     const keys = document.createElement("div"); keys.className = "keys";
@@ -378,6 +381,11 @@ export class BigMap {
       g.strokeStyle = "#ffffff"; g.lineWidth = 3.4 * u;
       g.beginPath(); g.arc(nx, ny, nz.r * k, 0, Math.PI * 2); g.stroke();
     }
+    // Hot Drop POI golden zone halo
+    if (s.hotDrop) {
+      const [hx, hy] = this.toScreen(s.hotDrop.x, s.hotDrop.z);
+      hotDropHalo(g, hx, hy, s.hotDrop.r * k, now);
+    }
     // flight path: rounded yellow dashes + arrowheads, plane riding it
     if (s.plane) {
       const p = s.plane;
@@ -453,18 +461,43 @@ export class BigMap {
         g.fillStyle = "rgba(12,10,6,0.9)"; g.beginPath(); g.arc(x, y, 7 * u, 0, Math.PI * 2); g.fill();
         g.fillStyle = "#ffd400"; g.beginPath(); g.arc(x, y, 4.5 * u, 0, Math.PI * 2); g.fill();
       }
-      g.lineWidth = 9 * u; g.strokeStyle = "rgba(12,10,6,0.92)";
-      g.shadowColor = "rgba(0,0,0,0.5)"; g.shadowBlur = 6 * u; g.shadowOffsetY = 3 * u;
+      const isHot = s.hotDrop?.id === p.id;
+      g.lineWidth = 9 * u; g.strokeStyle = isHot ? "rgba(38,20,0,0.95)" : "rgba(12,10,6,0.92)";
+      g.shadowColor = isHot ? "rgba(255,204,0,0.75)" : "rgba(0,0,0,0.5)"; g.shadowBlur = (isHot ? 14 : 6) * u; g.shadowOffsetY = 3 * u;
       g.strokeText(p.name, bx + iw / 2, by);
       g.shadowBlur = 0; g.shadowOffsetY = 0;
-      g.fillStyle = "#ffffff";
+      g.fillStyle = isHot ? "#ffd21f" : "#ffffff";
       g.fillText(p.name, bx + iw / 2, by);
       drawPoiIcon(g, p.id, best[0] + 7 * u + ir, by, ir);
+      if (isHot) {
+        g.save();
+        g.font = `900 ${19 * u}px 'Barlow Condensed', sans-serif`;
+        const tag = "★ HOT DROP · 2× CASH";
+        const tagW = g.measureText(tag).width + 18 * u, tagH = 26 * u, ty = by + fs * 0.68;
+        g.fillStyle = "#ffd21f"; g.strokeStyle = "#17120a"; g.lineWidth = 3 * u;
+        g.beginPath(); g.roundRect(bx + iw / 2 - tagW / 2, ty - tagH / 2, tagW, tagH, 13 * u); g.fill(); g.stroke();
+        g.fillStyle = "#17120a"; g.fillText(tag, bx + iw / 2, ty + 1 * u);
+        g.restore();
+        g.font = `800 ${fs}px 'Barlow Condensed', 'Arial Narrow', sans-serif`;
+      }
     }
     // (economy) Banana Stands + the bounty circle
     if (s.econ) {
       for (const q of s.econ.stands) { const [x, y] = this.toScreen(q.x, q.z); standDot(g, x, y, 12 * u); }
       const B = s.econ.bounty; if (B) { const [x, y] = this.toScreen(B.x, B.z); bountyRing(g, x, y, Math.max(14 * u, B.r * this.ppm), performance.now() / 1000); }
+    }
+    if (s.airstrikes) {
+      const nowS = performance.now() / 1000;
+      for (const a of s.airstrikes) {
+        const [ax, ay] = this.toScreen(a.x, a.z);
+        airstrikeOverlay(g, ax, ay, -a.yaw, AIRSTRIKE.span * k, Math.max(8 * u, AIRSTRIKE.radius * k), nowS);
+      }
+    }
+    // Radar Pulse (UAV): sonar ring + enemy diamonds
+    if (s.uav && s.me.alive) {
+      const [ux, uy] = this.toScreen(s.me.x, s.me.z);
+      uavOverlay(g, ux, uy, s.uav.radius * k, now);
+      for (const e of s.uav.enemies) { const [ex, ey] = this.toScreen(e.x, e.z); uavEnemyDot(g, ex, ey, 11 * u, now); }
     }
     // tuk-tuks (the taxi ranks this client has heard of)
     // (the one I ride is drawn as me, below)

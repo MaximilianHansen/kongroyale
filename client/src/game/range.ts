@@ -206,12 +206,16 @@ export class RangeView {
       const per = w.pellets > 1 ? ` ×${w.pellets}` : "";
       const splash = w.projectile ? ` + ${(w.projectile.splashDmg * body / w.dmg).toFixed(1)} splash (${w.projectile.splashR} m)` : "";
       E.stats.innerHTML = `${body.toFixed(1)}${per} body${w.projectile ? "" : ` · ${head.toFixed(1)}${per} head`}${splash}<br>${w.rpm} RPM · ${w.mag} mag · ${w.reloadS} s reload · ${w.auto ? "auto" : "semi"}<br>`
-        + (w.projectile ? `rocket ${w.projectile.speed} m/s, no falloff` : `full damage to ${w.falloff[0]} m · ${Math.round(w.falloff[2] * 100)}% from ${w.falloff[1]} m`)
+        + (w.projectile ? `${w.id === "bow" ? "silent explosive arrow" : "rocket"} ${w.projectile.speed} m/s, no falloff` : `full damage to ${w.falloff[0]} m · ${Math.round(w.falloff[2] * 100)}% from ${w.falloff[1]} m`)
         + (aimName ? `<br><span style="color:var(--kong-accent)">at ${aimD.toFixed(0)} m: ${pelletDamage(w, s.rarity, aimD, 0).toFixed(1)}${per} body · ${expected(w, s.rarity, aimD, 100).shots} to kill 100 · ${expected(w, s.rarity, aimD, 200).shots} to kill 200</span>` : "");
     } else if (s.kind === SK.Consumable) {
       const c = CONSUMABLE_DEFS[CONSUMABLES[s.id]];
       E.gun.innerHTML = `${c.name} <span style="color:${col}">· ${rar.toUpperCase()}</span>`;
-      E.stats.innerHTML = `${c.hp ? `+${c.hp} HP ` : ""}${c.shield ? `+${c.shield} SHIELD ` : ""}· ${c.useS} s to use · stacks to ${c.stack}<br>fire to use (only when it would restore something)`;
+      E.stats.innerHTML = c.id === "vine-grapple"
+        ? `38 m jungle hook · sling onto roofs & cliffs · stacks to ${c.stack}<br>aim at a surface and press fire to launch`
+        : c.id === "airstrike"
+          ? `6-bomb barrage · 125 dmg per blast · 180 m range<br>aim at ground and press fire to call bomber`
+          : `${c.hp ? `+${c.hp} HP ` : ""}${c.shield ? `+${c.shield} SHIELD ` : ""}· ${c.useS} s to use · stacks to ${c.stack}<br>fire to use (only when it would restore something)`;
     } else { E.gun.textContent = "EMPTY HANDS"; E.stats.textContent = `grab something from the rack behind you (${bindingText("use", 0)})`; }
     E.aim.innerHTML = aimName ? `AIMING AT <b style="color:var(--kong-accent)">${aimName}</b> · ${aimD.toFixed(1)} m` : `<span style="opacity:.6">aim at a target for its range</span>`;
     const h = this.lastHit;

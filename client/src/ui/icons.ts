@@ -8,7 +8,7 @@ import { uiAsset } from "./styles";
 
 export type ItemId = WeaponId | ConsumableId | "banana";
 
-export const ITEM_IDS: ItemId[] = ["pistol", "smg", "ar", "shotgun", "sniper", "rocket", "leaf-bundle", "smoothie", "golden-banana", "red-banana", "banana", "banana-bomb", "crate-wall"];
+export const ITEM_IDS: ItemId[] = ["pistol", "smg", "ar", "shotgun", "sniper", "rocket", "bow", "minigun", "leaf-bundle", "smoothie", "golden-banana", "red-banana", "banana", "banana-bomb", "crate-wall", "smoke-bomb", "vine-grapple", "airstrike"];
 
 // ------------------------------------------------------------------------------------------------ glyphs
 interface Glyph { vb: [number, number]; paths: Array<{ d: string; fill?: string; stroke?: string; sw?: number; op?: number }> }
@@ -70,6 +70,18 @@ export const GLYPHS = {
   fall: { vb: [100, 100], paths: [{ d: "M50 96L20 58H38V6H62V58H80Z", fill: C }] },
   // a map pin: the named place you are in, by the minimap
   pin: { vb: [80, 100], paths: [{ d: "M40 2C19 2 4 17 4 37C4 62 40 98 40 98C40 98 76 62 76 37C76 17 61 2 40 2ZM40 22a15 15 0 1 1 0 30a15 15 0 1 1 0-30Z", fill: C }] },
+  // Banana Stand: weapon upgrade (+1 tier upward chevron + star spark)
+  upgrade: { vb: [100, 100], paths: [
+    { d: "M50 8L84 44H64V88H36V44H16Z", fill: C },
+    { d: "M22 68L50 40L78 68", stroke: "#ffd400", sw: 8 },
+  ] },
+  // Banana Stand: radar pulse (UAV concentric sonar rings + sweep needle)
+  radar: { vb: [100, 100], paths: [
+    { d: "M50 8a42 42 0 1 1 0 84a42 42 0 1 1 0-84Z", stroke: C, sw: 7 },
+    { d: "M50 24a26 26 0 1 1 0 52a26 26 0 1 1 0-52Z", stroke: C, sw: 6, op: 0.7 },
+    { d: "M50 50L80 24", stroke: "#5cf2ff", sw: 8 },
+    { d: "M50 41a9 9 0 1 1 0 18a9 9 0 1 1 0-18Z", fill: C },
+  ] },
 } satisfies Record<string, Glyph>;
 export type GlyphId = keyof typeof GLYPHS;
 

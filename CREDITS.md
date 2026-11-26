@@ -37,7 +37,10 @@ CC0 means no credit is required, but these people made the game sound and look b
 ## Made with AI tools
 
 Some textures, props and concept work were generated with OpenAI image models and Tripo. Some short stings were
-generated with ElevenLabs. These are part of the game's own assets and are covered by the MIT licence.
+generated with ElevenLabs. Custom 3D-style item icons (`public/assets/ui/icons/bow.webp`,
+`public/assets/ui/icons/minigun.webp`, `public/assets/ui/icons/vine-grapple.webp`,
+`public/assets/ui/icons/airstrike.webp`, `public/assets/ui/icons/smoke-bomb.webp`) are original project assets
+generated with AI image tools. These are part of the game's own assets and are covered by the MIT licence.
 
 ## Not affiliated
 
