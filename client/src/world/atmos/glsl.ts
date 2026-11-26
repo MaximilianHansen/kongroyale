@@ -94,6 +94,10 @@ export interface AtmosUniforms {
   uAtmIntVol: THREE.IUniform<THREE.Texture | null>;
   uAtmIntO: THREE.IUniform<THREE.Vector4>;
   uAtmIntInv: THREE.IUniform<THREE.Vector3>;
+  /** 2D top-of-roof heightmap (interior.ts / roof-grid.ts) for rain occlusion: R32F max solid Y per 0.5 m cell;
+   *  uAtmRoofO = (minX, minZ, 1 / cellSize, valid) */
+  uAtmRoofMap: THREE.IUniform<THREE.Texture | null>;
+  uAtmRoofO: THREE.IUniform<THREE.Vector4>;
   /** screen-space GI (the AO pass's 2nd target): rgb = one-bounce irradiance gathered from the last frame, a = the
    *  interior sky visibility; params x = on, y = bounce strength, z = interior fill loss (0..1), w = 0 */
   uAtmGI: THREE.IUniform<THREE.Texture | null>;
@@ -169,6 +173,8 @@ export function makeAtmosUniforms(): AtmosUniforms {
     uAtmIntVol: { value: null },
     uAtmIntO: { value: new THREE.Vector4(0, 0, 0, 0) },
     uAtmIntInv: { value: new THREE.Vector3(1, 1, 1) },
+    uAtmRoofMap: { value: null },
+    uAtmRoofO: { value: new THREE.Vector4(0, 0, 0, 0) },
     uAtmGI: { value: null },
     uAtmGIParams: { value: new THREE.Vector4(0, 0, 0, 0) },
     uAtmWet: { value: 0 },

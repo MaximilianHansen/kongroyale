@@ -102,14 +102,20 @@ const mod: WorldModule = {
     ctx.setPost(post);
     // lit materials read AO + the cloud shadow from the post's screen-space texture when there is one
     shadows.ssao = post.ssCapable; // (AO can be switched on / off live — a runtime uniform for the materials)
-    // the interior occupancy grid (only where the AO pass runs the GI / interior term)
-    const interior = post.ao?.gi && !flags.has("nointerior") ? new InteriorVolume(u) : null;
+    // the interior occupancy grid + 2D rain roof heightmap (at boot when GI runs, or lazily whenever rain is active)
+    let interior = post.ao?.gi && !flags.has("nointerior") ? new InteriorVolume(u) : null;
+    const ensureInterior = () => {
+      if (interior || flags.has("nointerior")) return;
+      interior = new InteriorVolume(u);
+      interior.update(ctx.camera.position, !!post.ao?.gi);
+      if (kr) kr.atmosInterior = interior;
+    };
     if (interior) {
       // screenshot captures wait for the first grid (≤ 8 s)
       const release = ctx.hold("atmos:interior");
       const t0 = performance.now();
-      const poll = () => { if (interior.stats.n > 0 || performance.now() - t0 > 8000) release(); else setTimeout(poll, 50); };
-      interior.update(ctx.camera.position);
+      const poll = () => { if (interior!.stats.n > 0 || performance.now() - t0 > 8000) release(); else setTimeout(poll, 50); };
+      interior.update(ctx.camera.position, true);
       poll();
     }
 
@@ -163,6 +169,7 @@ const mod: WorldModule = {
       flies.on = (p.fireflies ?? 0) > 0;
       beam.on = (p.lighthouseBeam ?? 0) > 0;
       if (flags.has("nocloudshadow")) u.uAtmCloudShadowParams.value.w = 0;
+      if ((p.rainStreaks ?? 0) > 0 || (p.puddles ?? 0) > 0) ensureInterior();
       post.applyPreset();
     };
     state.onChange(applyAll);
@@ -189,6 +196,7 @@ const mod: WorldModule = {
         // post level: epic = bloom + light shafts + one-bounce GI (+ sharpen), high = bloom + shafts, medium = bloom,
         // low = the grade only
         post.configure({ aa: v.aa, ao: v.ao, bloom: v.post !== "low", shafts: v.post === "epic" || v.post === "high", gi: v.post === "epic" });
+        if (post.ao?.gi) ensureInterior();
         shadows!.setQuality(v.shadows);
         flies.enabled = v.effects !== "low";
         return { ...v, aa: post.opts.aa, ao: !!post.ao };
@@ -230,7 +238,7 @@ const mod: WorldModule = {
       skirt.update(ctx.camera); lap("skirt");
       clouds.update(ctx.camera, t, ctx.renderer.domElement.height); lap("clouds");
       shadows!.update(); lap("shadows");
-      interior?.update(ctx.camera.position);
+      interior?.update(ctx.camera.position, !!post.ao?.gi);
       { const k = Math.min(1, Math.max(0, _dt) * 4);
         if (interior && (vmEnv.n++ % 3) === 0) vmEnv.vis += (interior.visAt(ctx.camera.position) - vmEnv.vis) * Math.min(1, k * 3);
         vmEnv.cloud += (cloudAt(ctx.camera.position) - vmEnv.cloud) * k;

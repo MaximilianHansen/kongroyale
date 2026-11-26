@@ -799,6 +799,9 @@ uniform float uAerial, uAerialLC;
 // rain: x = streaks, y = rainbow, z = puddles, w = time (s)
 uniform vec4 uRain;
 uniform vec3 uRainSky, uRainSkyLow;
+// 2D top-of-roof heightmap (interior.ts / roof-grid.ts): R32F max solid Y per 0.5 m cell; xy = minXZ, z = 1/cell, w = valid
+uniform highp sampler2D uAtmRoofMap;
+uniform vec4 uAtmRoofO;
 #ifdef USE_SHAFTS
 uniform sampler2D tShaft;
 uniform vec2 uShaftSize;
@@ -936,14 +939,40 @@ float puddleMask(vec2 xz) {
   float n = rnoise(xz * 0.13) * 0.55 + rnoise(xz * 0.37 + 7.3) * 0.33 + rnoise(xz * 1.3 + 2.1) * 0.12;
   return smoothstep(0.645, 0.675, n);
 }
+// 0 under any roof / ceiling / overhang / cave dome, 1 under open sky (or on top of an exposed roof)
+float rainOpen(vec3 p) {
+  if (uAtmRoofO.w < 0.5) return 1.0;
+  vec2 tc = (p.xz - uAtmRoofO.xy) * uAtmRoofO.z;
+  if (tc.x < 0.0 || tc.y < 0.0 || tc.x >= 256.0 || tc.y >= 256.0) return 1.0;
+  float ry = texelFetch(uAtmRoofMap, clamp(ivec2(floor(tc)), ivec2(0), ivec2(255)), 0).r;
+  return smoothstep(ry - 0.15, ry + 0.35, p.y);
+}
+// 4-tap PCF-style smooth sky exposure for floor puddles (feathers cleanly over 0.5 m at eaves/doorways without height-averaging artifacts)
+float rainOpenPuddle(vec3 p) {
+  if (uAtmRoofO.w < 0.5) return 1.0;
+  vec2 tc = (p.xz - uAtmRoofO.xy) * uAtmRoofO.z - 0.5;
+  if (tc.x < -0.5 || tc.y < -0.5 || tc.x > 255.5 || tc.y > 255.5) return 1.0;
+  vec2 b = floor(tc), f = tc - b;
+  ivec2 i0 = clamp(ivec2(b), ivec2(0), ivec2(255)), i1 = min(i0 + 1, ivec2(255));
+  float r00 = texelFetch(uAtmRoofMap, i0, 0).r;
+  float r10 = texelFetch(uAtmRoofMap, ivec2(i1.x, i0.y), 0).r;
+  float r01 = texelFetch(uAtmRoofMap, ivec2(i0.x, i1.y), 0).r;
+  float r11 = texelFetch(uAtmRoofMap, i1, 0).r;
+  float s00 = smoothstep(r00 - 0.5, r00 - 0.15, p.y), s10 = smoothstep(r10 - 0.5, r10 - 0.15, p.y);
+  float s01 = smoothstep(r01 - 0.5, r01 - 0.15, p.y), s11 = smoothstep(r11 - 0.5, r11 - 0.15, p.y);
+  return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+}
 // rain streaks: 3 layers of slanted streaks in screen space (near = long, bright, sparse), each hidden behind geometry
-// closer than its layer depth
-float rainStreaks(vec2 fc, float zScene, float t) {
+// closer than its layer depth AND masked whenever its 3D world point sits under a roof / ceiling / cave dome
+float rainStreaks(vec2 fc, float zScene, vec3 vv, float t) {
   float acc = 0.0;
   for (int L = 0; L < 3; L++) {
     float fl = float(L);
     float dep = 2.5 * pow(2.6, fl);
     if (zScene < dep) continue;
+    vec3 lp = (uCamWorld * vec4(vv * dep, 1.0)).xyz;
+    float open = rainOpen(lp);
+    if (open < 0.01) continue;
     float colW = 34.0 / (1.0 + fl * 0.9), rowH = 150.0 / (1.0 + fl * 1.1), wpx = 1.3 - fl * 0.25;
     vec2 q = vec2(fc.x + fc.y * 0.16, fc.y) * (1440.0 / uRes.y);
     q.y += t * (2400.0 - fl * 700.0);
@@ -955,7 +984,7 @@ float rainStreaks(vec2 fc, float zScene, float t) {
     float dx = abs(f.x - x0) * colW;
     float y0 = rh(cell + 9.1) * 0.5, len = 0.35 + 0.3 * rh(cell + 5.3);
     float along = smoothstep(y0, y0 + 0.08, f.y) * (1.0 - smoothstep(y0 + len - 0.1, y0 + len, f.y));
-    acc += (1.0 - smoothstep(0.0, wpx, dx)) * along * (0.55 + 0.45 * h) * (1.0 - fl * 0.25);
+    acc += (1.0 - smoothstep(0.0, wpx, dx)) * along * (0.55 + 0.45 * h) * (1.0 - fl * 0.25) * open;
   }
   return acc;
 }
@@ -1245,7 +1274,7 @@ void main() {
       vec3 Nv = normalize(cross(Px - P, Py - P));
       if (dot(Nv, P) > 0.0) Nv = -Nv;
       vec3 Nw = (uCamWorld * vec4(Nv, 0.0)).xyz;
-      float pm = Nw.y > 0.965 ? puddleMask(wp.xz) * uRain.z * smoothstep(90.0, 50.0, zs) : 0.0;
+      float pm = Nw.y > 0.965 ? puddleMask(wp.xz) * uRain.z * smoothstep(90.0, 50.0, zs) * rainOpenPuddle(wp) : 0.0;
       if (pm > 0.001) {
         vec3 up = vec3(uCamWorld[0][1], uCamWorld[1][1], uCamWorld[2][1]);
         vec3 V = normalize(P), R = reflect(V, up);
@@ -1276,9 +1305,9 @@ void main() {
       c += rainbowCol(clamp(t, 0.0, 1.0)) * env * uRain.y * hz * (0.18 + 0.5 * l);
       c *= 1.0 + hz * uRain.y * (0.07 * (1.0 - smoothstep(38.0, 40.5, th)) - 0.05 * smoothstep(42.5, 44.0, th) * (1.0 - smoothstep(49.0, 51.0, th)));
     }
-    // ---- rain streaks (sunlit, a touch brighter toward the sun)
+    // ---- rain streaks (sunlit, a touch brighter toward the sun; masked under roofs/ceilings)
     if (uRain.x > 0.0) {
-      float st = rainStreaks(gl_FragCoord.xy, zs, uRain.w);
+      float st = rainStreaks(gl_FragCoord.xy, zs, vv, uRain.w);
       float sunward = pow(max(dot(rdw, uAtmSunDir), 0.0), 3.0);
       c += vec3(0.85, 0.9, 1.0) * st * uRain.x * (0.5 + 0.8 * sunward + 0.4 * dot(c, LUMA));
     }
@@ -1522,6 +1551,7 @@ class AtmosFinalPass extends Pass {
       uAtmCamPos: au.uAtmCamPos, uAtmFogColor: au.uAtmFogColor, uAtmGlowColor: au.uAtmGlowColor, uAtmSunDir: au.uAtmSunDir, uAtmFogHeight: au.uAtmFogHeight,
       tShaft: { value: this.shaftRT.texture }, uShaftSize: { value: new THREE.Vector2(1, 1) }, uShaftOn: { value: 0 },
       uRain: { value: new THREE.Vector4() }, uRainSky: { value: new THREE.Color() }, uRainSkyLow: { value: new THREE.Color() }, uAerial: { value: 0 }, uAerialLC: { value: 1 },
+      uAtmRoofMap: au.uAtmRoofMap, uAtmRoofO: au.uAtmRoofO,
     };
     const mk = (d: Record<string, number | string>) => {
       const m = mat(FINAL_FRAG, { ...common, tColor: { value: null }, tHist: { value: null } }, d);
